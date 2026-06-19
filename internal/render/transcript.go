@@ -46,33 +46,40 @@ func MessageText(message session.MessageData) string {
 
 // ToolCallLines returns a compact human rendering for one tool invocation.
 func ToolCallLines(call session.ToolCallData) []string {
+	return []string{"-> " + ToolCallText(call)}
+}
+
+// ToolCallText returns a compact human label for one tool invocation.
+func ToolCallText(call session.ToolCallData) string {
 	switch call.Name {
 	case "ls":
-		return []string{
-			"-> ls " + stringArg(call.Arguments, "path", "."),
-		}
+		return "ls " + stringArg(call.Arguments, "path", ".")
 
 	case "read":
-		return []string{"-> read " + readTarget(call.Arguments)}
+		return "read " + readTarget(call.Arguments)
+
+	case "find":
+		return "find " + stringArg(call.Arguments, "query", "") +
+			" " + stringArg(call.Arguments, "path", ".")
+
+	case "grep":
+		return "grep " + stringArg(call.Arguments, "pattern", "") +
+			" " + stringArg(call.Arguments, "path", ".")
 
 	case "write":
-		return []string{
-			"-> write " + stringArg(call.Arguments, "path", ""),
-		}
+		return "write " + stringArg(call.Arguments, "path", "")
 
 	case "edit":
-		return []string{fmt.Sprintf("-> edit %s%s",
+		return fmt.Sprintf("edit %s%s",
 			stringArg(call.Arguments, "path", ""),
-			editCountSuffix(call.Arguments))}
+			editCountSuffix(call.Arguments))
 
 	case "bash":
-		return []string{
-			"-> bash " + stringArg(call.Arguments, "command", ""),
-		}
+		return "bash " + stringArg(call.Arguments, "command", "")
 
 	default:
-		return []string{fmt.Sprintf("-> %s %s", call.Name,
-			strings.TrimSpace(call.Arguments))}
+		return fmt.Sprintf("%s %s", call.Name,
+			strings.TrimSpace(call.Arguments))
 	}
 }
 

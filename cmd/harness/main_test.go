@@ -429,14 +429,14 @@ func TestRunChatProcessesMultipleTurns(t *testing.T) {
 		t.Fatalf("chat failed: code=%d stdout=%q stderr=%q", code,
 			stdout.String(), stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "assistant: hello") {
+	if !strings.Contains(stdout.String(), "• hello") {
 		t.Fatalf("missing first answer: %q", stdout.String())
 	}
-	if !strings.Contains(stdout.String(), "harness> \nassistant: hello") {
+	if !strings.Contains(stdout.String(), "> \n• hello") {
 		t.Fatalf("assistant output was not separated from prompt: %q",
 			stdout.String())
 	}
-	if !strings.Contains(stdout.String(), "assistant: follow-up") {
+	if !strings.Contains(stdout.String(), "• follow-up") {
 		t.Fatalf("missing second answer: %q", stdout.String())
 	}
 }
@@ -500,7 +500,9 @@ func TestRunChatContextAndCompactCommands(t *testing.T) {
 // local tool call with its result instead of batching call headers first.
 func TestChatObserverRendersToolEvents(t *testing.T) {
 	var stdout bytes.Buffer
-	observer := &chatObserver{stdout: &stdout}
+	observer := &chatObserver{
+		renderer: newLiveChatRenderer(&stdout, false),
+	}
 
 	observer.EventAppended(messageEvent(t,
 		session.EventAssistantMessage,
@@ -523,7 +525,7 @@ func TestChatObserverRendersToolEvents(t *testing.T) {
 	)
 
 	got := stdout.String()
-	want := "-> bash go test ./...\n\n   exit code: 0\n"
+	want := "• Ran bash go test ./...\n\n   exit code: 0\n"
 	if got != want {
 		t.Fatalf("render mismatch:\nwant %q\ngot  %q", want, got)
 	}
@@ -533,7 +535,9 @@ func TestChatObserverRendersToolEvents(t *testing.T) {
 // is visually separated from prior tool output.
 func TestChatObserverSeparatesAssistantReplies(t *testing.T) {
 	var stdout bytes.Buffer
-	observer := &chatObserver{stdout: &stdout}
+	observer := &chatObserver{
+		renderer: newLiveChatRenderer(&stdout, false),
+	}
 
 	observer.ReasoningCompleted("checking the README")
 	observer.ToolCallStarted(model.ToolCall{
@@ -556,8 +560,8 @@ func TestChatObserverSeparatesAssistantReplies(t *testing.T) {
 
 	got := stdout.String()
 	if !strings.Contains(
-		got, "thinking:\n   checking the README\n\n-> read "+
-			"README.md\n\n   read 1 lines\n\nassistant: done\n",
+		got, "• checking the README\n\n• Ran read README.md\n\n   "+
+			"read 1 lines\n\n• done\n",
 	) {
 
 		t.Fatalf("assistant reply was not separated: %q", got)

@@ -210,8 +210,8 @@ OPENAI_API_KEY=... go run ./cmd/harness chat \
 ```
 
 The harness treats these as displayable summaries, not raw hidden
-chain-of-thought. It renders them as live `thinking:` blocks in chat mode and
-does not persist them into the JSONL transcript in this first version.
+chain-of-thought. Chat mode renders them as muted dot-led live blocks and does
+not persist them into the JSONL transcript in this first version.
 
 Local or proxy-compatible endpoints can override the base URL:
 
@@ -522,8 +522,11 @@ agent show <session-id-prefix>
 agent show --json <session-id-prefix>
 ```
 
-The terminal should stream assistant text, show tool calls compactly, collapse
-large tool output by default, and support cancellation.
+The terminal should stream assistant text, show dot-led tool and reasoning
+blocks compactly, collapse large tool output by default, and support
+cancellation. Live chat rendering is intentionally separate from transcript
+rendering: chat can use terminal tone, small markdown styling, capped tool
+output, and turn footers, while `show` remains a plain durable transcript view.
 
 A local HTTP server can come later. If we add one, it should expose the same
 session log, model stream, and tool registry as the terminal uses. The server

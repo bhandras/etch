@@ -303,6 +303,10 @@ func runChat(cfg cliConfig, stdin io.Reader, stdout io.Writer,
 			continue
 		}
 
+		observer := &chatObserver{
+			renderer: newLiveChatRenderer(stdout, true),
+		}
+		startedAt := time.Now()
 		result, err := core.RunTurn(
 			context.Background(), core.TurnRequest{
 				Prompt:        line,
@@ -313,10 +317,7 @@ func runChat(cfg cliConfig, stdin io.Reader, stdout io.Writer,
 				Model:         modelClient,
 				Tools:         tool.DefaultRegistry(),
 				MaxToolRounds: cfg.maxToolRounds,
-				Observer: &chatObserver{
-					stdout:          stdout,
-					prefixBlankLine: true,
-				},
+				Observer:      observer,
 			},
 		)
 		if err != nil {
@@ -324,6 +325,7 @@ func runChat(cfg cliConfig, stdin io.Reader, stdout io.Writer,
 
 			return 1
 		}
+		observer.Finish(time.Since(startedAt))
 		sessionPath = result.SessionPath
 		printChatPrompt(stdout)
 	}
@@ -338,14 +340,8 @@ func runChat(cfg cliConfig, stdin io.Reader, stdout io.Writer,
 
 // chatObserver renders appended assistant and tool messages during a turn.
 type chatObserver struct {
-	// stdout receives rendered transcript lines.
-	stdout io.Writer
-
-	// prefixBlankLine requests a leading blank line before first output.
-	prefixBlankLine bool
-
-	// printed reports whether the current turn has rendered any block yet.
-	printed bool
+	// renderer owns transient terminal formatting for one chat turn.
+	renderer *liveChatRenderer
 }
 
 // EventAppended renders model-visible assistant and tool events.
@@ -359,7 +355,7 @@ func (o *chatObserver) EventAppended(event session.Event) {
 
 	message, err := decodeMessage(event)
 	if err != nil {
-		fmt.Fprintf(o.stdout, "render error: %v\n", err)
+		fmt.Fprintf(o.renderer.stdout, "render error: %v\n", err)
 
 		return
 	}
@@ -368,45 +364,31 @@ func (o *chatObserver) EventAppended(event session.Event) {
 		render.MessageText(message) == "" {
 		return
 	}
-	o.printSeparator()
-	for _, line := range render.MessageLines(message) {
-		fmt.Fprintln(o.stdout, line)
+	switch message.Role {
+	case session.RoleAssistant:
+		o.renderer.renderAssistant(render.MessageText(message))
+
+	case session.RoleTool:
+		o.renderer.renderToolResult(message)
+
+	default:
+		o.renderer.renderAssistant(render.MessageText(message))
 	}
 }
 
 // ToolCallStarted renders one live tool call immediately before execution.
 func (o *chatObserver) ToolCallStarted(call model.ToolCall) {
-	o.printSeparator()
-	for _, line := range render.ToolCallLines(session.ToolCallData{
-		ID:        call.ID,
-		Name:      call.Name,
-		Arguments: call.Arguments,
-	}) {
-		fmt.Fprintln(o.stdout, line)
-	}
+	o.renderer.renderToolCall(call)
 }
 
 // ReasoningCompleted renders one model-provided thinking summary block.
 func (o *chatObserver) ReasoningCompleted(text string) {
-	o.printSeparator()
-	fmt.Fprintln(o.stdout, "thinking:")
-	for _, line := range strings.Split(strings.TrimRight(text, "\n"), "\n") {
-		if strings.TrimSpace(line) == "" {
-			fmt.Fprintln(o.stdout)
-			continue
-		}
-		fmt.Fprintln(o.stdout, "   "+line)
-	}
+	o.renderer.renderReasoning(text)
 }
 
-// printSeparator inserts a blank line between live chat output blocks.
-func (o *chatObserver) printSeparator() {
-	if o.printed {
-		fmt.Fprintln(o.stdout)
-	} else if o.prefixBlankLine {
-		fmt.Fprintln(o.stdout)
-	}
-	o.printed = true
+// Finish renders terminal-only end-of-turn decoration.
+func (o *chatObserver) Finish(elapsed time.Duration) {
+	o.renderer.finish(elapsed)
 }
 
 // handleChatCommand executes one slash command and returns whether to continue.
@@ -501,7 +483,7 @@ func handleChatCommand(cfg cliConfig, line string, sessionPath string,
 
 // printChatPrompt writes the fixed line-mode prompt.
 func printChatPrompt(stdout io.Writer) {
-	fmt.Fprint(stdout, "harness> ")
+	fmt.Fprint(stdout, "> ")
 }
 
 // listSessions renders the local session index in text or JSON form.
