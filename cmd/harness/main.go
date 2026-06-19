@@ -14,6 +14,7 @@ import (
 	"harness/internal/core"
 	"harness/internal/model"
 	"harness/internal/provider/openai"
+	"harness/internal/render"
 	"harness/internal/session"
 	"harness/internal/tool"
 )
@@ -253,7 +254,7 @@ func showSession(cfg cliConfig, stdout io.Writer, stderr io.Writer) int {
 
 			return 1
 		}
-		for _, line := range renderMessage(message) {
+		for _, line := range render.MessageLines(message) {
 			fmt.Fprintln(stdout, line)
 		}
 	}
@@ -608,50 +609,6 @@ func decodeMessage(event session.Event) (session.MessageData, error) {
 	}
 
 	return message, nil
-}
-
-// messageText joins text content parts for human transcript rendering.
-func messageText(message session.MessageData) string {
-	var parts []string
-	for _, part := range message.Content {
-		if part.Type == session.ContentText {
-			parts = append(parts, part.Text)
-		}
-	}
-
-	return strings.Join(parts, "")
-}
-
-// renderMessage returns human transcript lines for one session message.
-func renderMessage(message session.MessageData) []string {
-	text := messageText(message)
-	switch message.Role {
-	case session.RoleAssistant:
-		if text != "" {
-			return []string{"assistant: " + text}
-		}
-
-		var lines []string
-		for _, call := range message.ToolCalls {
-			lines = append(
-				lines, fmt.Sprintf("assistant tool_call "+
-					"%s: %s", call.Name, call.Arguments),
-			)
-		}
-
-		return lines
-
-	case session.RoleTool:
-		name := message.Name
-		if name == "" {
-			name = "tool"
-		}
-
-		return []string{fmt.Sprintf("tool %s: %s", name, text)}
-
-	default:
-		return []string{message.Role + ": " + text}
-	}
 }
 
 // formatSessionTime renders index timestamps for compact terminal lists.
