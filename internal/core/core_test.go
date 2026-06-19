@@ -128,8 +128,8 @@ func TestRunTurnExecutesToolCalls(t *testing.T) {
 		t.Fatalf("expected two model requests, got %d",
 			len(client.requests))
 	}
-	if len(client.requests[0].Tools) != 1 {
-		t.Fatalf("expected first request to include tools: %#v",
+	if !hasToolSpec(client.requests[0].Tools, tool.NameLS) {
+		t.Fatalf("expected first request to include ls tool: %#v",
 			client.requests[0].Tools)
 	}
 	last := client.requests[1].Messages[len(client.requests[1].Messages)-1]
@@ -148,6 +148,17 @@ func TestRunTurnExecutesToolCalls(t *testing.T) {
 	if events[3].Type != session.EventToolMessage {
 		t.Fatalf("expected tool message event, got %q", events[3].Type)
 	}
+}
+
+// hasToolSpec reports whether a request advertised the named tool.
+func hasToolSpec(specs []model.ToolSpec, name string) bool {
+	for _, spec := range specs {
+		if spec.Name == name {
+			return true
+		}
+	}
+
+	return false
 }
 
 // scriptedToolClient returns predetermined event streams and records requests.

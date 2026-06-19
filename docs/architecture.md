@@ -252,25 +252,37 @@ patching can come later once the simple path is proven.
 
 Read-only filesystem operations should copy Pi's semantics but not its backend
 dependencies. Pi uses wrappers around tools such as `rg` and `fd`; this harness
-keeps the builtin core self-contained. The first operation is `ls`, implemented
-in pure Go under `internal/tools/fs`. It lists one directory, includes ordinary
-dotfiles, sorts case-insensitively, marks directories with `/`, skips internal
-directories such as `.git`, `.harness`, `node_modules`, and `vendor`, and emits
-explicit truncation or empty-directory notices.
+keeps the builtin core self-contained.
 
-The builtin tool registry lives under `internal/tool`. The first registered tool
-wraps `internal/tools/fs.List` as model-callable `ls`, and the CLI exposes the
-same operation for direct smoke testing:
+The first operation is `ls`, implemented in pure Go under `internal/tools/fs`.
+It lists one directory, includes ordinary dotfiles, sorts case-insensitively,
+marks directories with `/`, skips internal directories such as `.git`,
+`.harness`, `node_modules`, and `vendor`, and emits explicit truncation or
+empty-directory notices.
+
+The second operation is `read`, also implemented in pure Go under
+`internal/tools/fs`. It reads text files with Pi-style `offset` and `limit`
+arguments, uses 1-indexed line offsets, caps default output at 2000 lines or
+50KB, and appends continuation hints when more content remains. Image support is
+intentionally left out for now because it needs MIME detection, resizing, and
+model multimodal content handling that should not bloat the first core tool
+slice.
+
+The builtin tool registry lives under `internal/tool`. Registered tools wrap
+`internal/tools/fs` operations as model-callable functions, and the CLI exposes
+the same operations for direct smoke testing:
 
 ```bash
 go run ./cmd/harness tool ls .
 go run ./cmd/harness tool ls --limit 20 .
+go run ./cmd/harness tool read AGENTS.md
+go run ./cmd/harness tool read --offset 20 --limit 40 AGENTS.md
 ```
 
-When using the OpenAI-compatible provider, the CLI includes the `ls` function
-schema in model requests. If the model calls it, the core executes the pure-Go
-tool, appends a `message.tool` event, and sends the tool result back to the
-model for a final answer.
+When using the OpenAI-compatible provider, the CLI includes builtin function
+schemas in model requests. If the model calls one, the core executes the
+pure-Go tool, appends a `message.tool` event, and sends the tool result back to
+the model for a final answer.
 
 The model should see one unified tool list regardless of where a tool comes
 from:

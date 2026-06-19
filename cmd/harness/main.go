@@ -52,6 +52,7 @@ type cliConfig struct {
 	apiKey     string
 	toolName   string
 	toolPath   string
+	toolOffset int
 	toolLimit  int
 }
 
@@ -291,7 +292,11 @@ func parseToolFlags(args []string, stderr io.Writer) (cliConfig, error) {
 	)
 	fs.IntVar(
 		&cfg.toolLimit, "limit", 0,
-		"maximum entries for tools that support limits",
+		"maximum entries or lines for tools that support limits",
+	)
+	fs.IntVar(
+		&cfg.toolOffset, "offset", 0,
+		"1-indexed line offset for tools that support offsets",
 	)
 	if err := fs.Parse(args[1:]); err != nil {
 		return cliConfig{}, err
@@ -306,6 +311,13 @@ func parseToolFlags(args []string, stderr io.Writer) (cliConfig, error) {
 		if fs.NArg() == 1 {
 			cfg.toolPath = fs.Arg(0)
 		}
+
+	case tool.NameRead:
+		if fs.NArg() != 1 {
+			return cliConfig{}, fmt.Errorf("read accepts exactly " +
+				"one path")
+		}
+		cfg.toolPath = fs.Arg(0)
 
 	default:
 		return cliConfig{}, fmt.Errorf("unknown tool %q", cfg.toolName)
@@ -328,6 +340,23 @@ func toolArguments(cfg cliConfig) (string, error) {
 		encoded, err := json.Marshal(args)
 		if err != nil {
 			return "", fmt.Errorf("marshal ls arguments: %w", err)
+		}
+
+		return string(encoded), nil
+
+	case tool.NameRead:
+		args := struct {
+			Path   string `json:"path"`
+			Offset int    `json:"offset,omitempty"`
+			Limit  int    `json:"limit,omitempty"`
+		}{
+			Path:   cfg.toolPath,
+			Offset: cfg.toolOffset,
+			Limit:  cfg.toolLimit,
+		}
+		encoded, err := json.Marshal(args)
+		if err != nil {
+			return "", fmt.Errorf("marshal read arguments: %w", err)
 		}
 
 		return string(encoded), nil

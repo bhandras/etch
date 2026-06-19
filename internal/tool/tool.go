@@ -14,6 +14,9 @@ import (
 const (
 	// NameLS is the model-facing name for the directory listing tool.
 	NameLS = "ls"
+
+	// NameRead is the model-facing name for the text file reading tool.
+	NameRead = "read"
 )
 
 // Result is the text returned by a builtin tool execution.
@@ -40,6 +43,7 @@ type Registry struct {
 func DefaultRegistry() *Registry {
 	registry := NewRegistry()
 	registry.Register(lsTool{})
+	registry.Register(readTool{})
 
 	return registry
 }
@@ -117,6 +121,55 @@ func (lsTool) Execute(ctx context.Context, arguments string) (Result, error) {
 	}
 
 	text, err := fs.List(ctx, req)
+	if err != nil {
+		return Result{}, err
+	}
+
+	return Result{Text: text}, nil
+}
+
+// readTool wraps the pure-Go filesystem read operation as a model tool.
+type readTool struct{}
+
+// Spec returns the model-facing schema for the read tool.
+func (readTool) Spec() model.ToolSpec {
+	return model.ToolSpec{
+		Name: NameRead,
+		Description: "Read a local text file. Output is bounded by lines " +
+			"and bytes; use offset and limit to continue through large " +
+			"files.",
+		Parameters: json.RawMessage(`{
+			"type":"object",
+			"properties":{
+				"path":{
+					"type":"string",
+					"description":"File to read. Relative paths resolve from the current working directory."
+				},
+				"offset":{
+					"type":"integer",
+					"description":"1-indexed line number to start reading from."
+				},
+				"limit":{
+					"type":"integer",
+					"description":"Maximum lines to return before the default truncation limit is considered."
+				}
+			},
+			"required":["path"]
+		}`),
+	}
+}
+
+// Execute decodes read arguments and returns bounded file content.
+func (readTool) Execute(ctx context.Context, arguments string) (Result, error) {
+	var req fs.ReadRequest
+	if strings.TrimSpace(arguments) != "" {
+		if err := json.Unmarshal([]byte(arguments), &req); err != nil {
+			return Result{}, fmt.Errorf("decode read arguments: %w",
+				err)
+		}
+	}
+
+	text, err := fs.Read(ctx, req)
 	if err != nil {
 		return Result{}, err
 	}
