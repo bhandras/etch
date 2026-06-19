@@ -14,6 +14,7 @@ import (
 
 	"harness/internal/core"
 	"harness/internal/model"
+	promptctx "harness/internal/prompt"
 	"harness/internal/provider/openai"
 	"harness/internal/render"
 	"harness/internal/session"
@@ -118,11 +119,18 @@ func runPrompt(cfg cliConfig, stdout io.Writer, stderr io.Writer) int {
 
 		return 1
 	}
+	systemText, err := promptctx.SystemText(cwd)
+	if err != nil {
+		fmt.Fprintln(stderr, "error:", err)
+
+		return 1
+	}
 
 	result, err := core.RunTurn(context.Background(), core.TurnRequest{
 		Prompt:     cfg.prompt,
 		SessionDir: cfg.sessionDir,
 		CWD:        cwd,
+		SystemText: systemText,
 		Model:      modelClient,
 		Tools:      tool.DefaultRegistry(),
 	})
@@ -200,6 +208,12 @@ func runChat(cfg cliConfig, stdin io.Reader, stdout io.Writer,
 
 		return 1
 	}
+	systemText, err := promptctx.SystemText(cwd)
+	if err != nil {
+		fmt.Fprintln(stderr, "error:", err)
+
+		return 1
+	}
 
 	var sessionPath string
 	if cfg.sessionID != "" {
@@ -243,6 +257,7 @@ func runChat(cfg cliConfig, stdin io.Reader, stdout io.Writer,
 				SessionDir:  cfg.sessionDir,
 				SessionPath: sessionPath,
 				CWD:         cwd,
+				SystemText:  systemText,
 				Model:       modelClient,
 				Tools:       tool.DefaultRegistry(),
 			},

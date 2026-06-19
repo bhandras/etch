@@ -195,6 +195,27 @@ The CLI also reads `HARNESS_PROVIDER`, `OPENAI_MODEL`, `OPENAI_BASE_URL`, and
 work; this step only proves the provider HTTP stream behind the existing model
 interface.
 
+## Context Building
+
+Context is the bounded model request assembled from durable state and local
+project inputs. It is not the same thing as the full session log. The session
+log remains the append-only source of truth, while `internal/prompt` projects
+the active session messages and instruction files into provider-neutral model
+messages.
+
+The first context builder is deliberately small. It prepends a base coding-agent
+system prompt with tool-use guidance, then loads `AGENTS.md` files from the
+current working directory and its ancestors. Parent instructions appear before
+child instructions so more local files can refine broader rules. Each
+instruction file is capped at 32KB to keep project guidance from dominating the
+first context implementation.
+
+Session continuation replays prior user, assistant, and tool messages into the
+next model request. Assistant tool calls and tool results are preserved in the
+provider-neutral message shape so OpenAI-compatible history remains valid. Later
+compaction should append summary events and project context metadata rather than
+rewriting or deleting older JSONL events.
+
 ## OpenAI And Codex Auth
 
 OpenAI support is bundled, not a third-party plugin. It is the main dogfooding
