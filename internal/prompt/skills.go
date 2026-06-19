@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 )
 
 const (
@@ -13,6 +14,12 @@ const (
 
 	// maxSkillMetadataBytes caps the amount read while parsing metadata.
 	maxSkillMetadataBytes = 16 * 1024
+
+	// maxSkillNameChars is the Agent Skills name length limit.
+	maxSkillNameChars = 64
+
+	// maxSkillDescriptionChars is the Agent Skills description limit.
+	maxSkillDescriptionChars = 1024
 )
 
 // Skill describes one discovered skill package available to the model.
@@ -85,7 +92,7 @@ func loadSkillsFromRoot(root string) ([]Skill, error) {
 	return skills, nil
 }
 
-// readSkillMetadata reads compact frontmatter for one SKILL.md file.
+// readSkillMetadata reads and validates compact frontmatter for one SKILL.md.
 func readSkillMetadata(path string, fallbackName string) (Skill, bool, error) {
 	content, err := os.ReadFile(path)
 	if err != nil {
@@ -106,12 +113,14 @@ func readSkillMetadata(path string, fallbackName string) (Skill, bool, error) {
 	}
 
 	name := strings.TrimSpace(metadata["name"])
-	if name == "" {
-		name = fallbackName
+	if err := validateSkillName(name, fallbackName); err != nil {
+		return Skill{}, false, fmt.Errorf("invalid skill %s: %w", path,
+			err)
 	}
 	description := strings.TrimSpace(metadata["description"])
-	if description == "" {
-		return Skill{}, false, nil
+	if err := validateSkillDescription(description); err != nil {
+		return Skill{}, false, fmt.Errorf("invalid skill %s: %w", path,
+			err)
 	}
 
 	return Skill{
@@ -129,7 +138,8 @@ func parseSkillFrontmatter(text string) (map[string]string, bool) {
 	}
 
 	metadata := make(map[string]string)
-	for _, line := range lines[1:] {
+	for i := 1; i < len(lines); i++ {
+		line := lines[i]
 		if strings.TrimSpace(line) == "---" {
 			return metadata, true
 		}
@@ -139,8 +149,96 @@ func parseSkillFrontmatter(text string) (map[string]string, bool) {
 		}
 		key = strings.TrimSpace(strings.ToLower(key))
 		value = strings.TrimSpace(value)
+		if value == "|" || value == ">" {
+			block, next := parseSkillBlockValue(
+				lines, i+1, value == ">",
+			)
+			metadata[key] = block
+			i = next - 1
+
+			continue
+		}
 		metadata[key] = strings.Trim(value, `"'`)
 	}
 
 	return nil, false
+}
+
+// parseSkillBlockValue parses a simple indented YAML block scalar.
+func parseSkillBlockValue(lines []string, start int,
+	folded bool) (string, int) {
+
+	var block []string
+	for i := start; i < len(lines); i++ {
+		line := lines[i]
+		if strings.TrimSpace(line) == "---" {
+			return joinSkillBlock(block, folded), i
+		}
+		if strings.TrimSpace(line) != "" &&
+			!strings.HasPrefix(line, " ") &&
+			!strings.HasPrefix(line, "\t") {
+			return joinSkillBlock(block, folded), i
+		}
+		block = append(block, strings.TrimSpace(line))
+	}
+
+	return joinSkillBlock(block, folded), len(lines)
+}
+
+// joinSkillBlock joins block scalar lines according to the scalar style.
+func joinSkillBlock(lines []string, folded bool) string {
+	if folded {
+		return strings.Join(lines, " ")
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+// validateSkillName enforces the Agent Skills name field constraints.
+func validateSkillName(name string, folder string) error {
+	if name == "" {
+		return fmt.Errorf("name is required")
+	}
+	if utf8.RuneCountInString(name) > maxSkillNameChars {
+		return fmt.Errorf("name exceeds %d characters",
+			maxSkillNameChars)
+	}
+	if name != folder {
+		return fmt.Errorf("name %q must match parent directory %q",
+			name, folder)
+	}
+	if strings.HasPrefix(name, "-") || strings.HasSuffix(name, "-") {
+		return fmt.Errorf("name must not start or end with hyphen")
+	}
+	if strings.Contains(name, "--") {
+		return fmt.Errorf("name must not contain consecutive hyphens")
+	}
+	for _, r := range name {
+		if r >= 'a' && r <= 'z' {
+			continue
+		}
+		if r >= '0' && r <= '9' {
+			continue
+		}
+		if r == '-' {
+			continue
+		}
+
+		return fmt.Errorf("name contains invalid character %q", r)
+	}
+
+	return nil
+}
+
+// validateSkillDescription enforces the Agent Skills description constraints.
+func validateSkillDescription(description string) error {
+	if description == "" {
+		return fmt.Errorf("description is required")
+	}
+	if utf8.RuneCountInString(description) > maxSkillDescriptionChars {
+		return fmt.Errorf("description exceeds %d characters",
+			maxSkillDescriptionChars)
+	}
+
+	return nil
 }

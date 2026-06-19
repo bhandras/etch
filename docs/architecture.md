@@ -246,13 +246,17 @@ first context implementation. These instruction files are pinned context: they
 are prepended before any compacted conversation summary and are not removed by
 session compaction.
 
-Skill packages are discovered as metadata, not eagerly loaded as full prompt
-text. The first supported project roots are `.harness/skills/*/SKILL.md` and
-`.agents/skills/*/SKILL.md` in the current working directory and its ancestors.
-The harness parses only a small frontmatter subset, currently `name` and
-`description`, and adds a compact catalog with each skill path to the system
-prompt. Full skill bodies remain outside the default context until a later
-on-demand loading path reads the referenced `SKILL.md`.
+Skill packages follow the Agent Skills `SKILL.md` convention and are discovered
+as metadata, not eagerly loaded as full prompt text. The first supported project
+roots are `.harness/skills/*/SKILL.md` and `.agents/skills/*/SKILL.md` in the
+current working directory and its ancestors. The harness parses a small
+stdlib-only frontmatter subset, currently `name` and `description`, and enforces
+the core naming rules: lowercase letters, numbers, and hyphens only, no leading,
+trailing, or consecutive hyphens, a 64-character maximum, and a name that matches
+the parent directory. Descriptions are required and capped at 1024 characters.
+The prompt receives only a compact catalog with each skill path. Full skill
+bodies remain outside the default context until a later on-demand loading path
+reads the referenced `SKILL.md`.
 
 Session continuation replays prior user, assistant, and tool messages into the
 next model request. Assistant tool calls and tool results are preserved in the

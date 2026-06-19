@@ -89,14 +89,15 @@ func TestLoadSkillsDiscoversProjectSkillRoots(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeFile(
-		t,
-		filepath.Join(root, ".harness", "skills", "root", "SKILL.md"),
+		t, filepath.Join(
+			root, ".harness", "skills", "root-skill", "SKILL.md",
+		),
 		"---\nname: root-skill\ndescription: Use at root.\n---\n",
 	)
 	writeFile(
 		t,
 		filepath.Join(child, ".agents", "skills", "child", "SKILL.md"),
-		"---\ndescription: Use at child.\n---\n",
+		"---\nname: child\ndescription: Use at child.\n---\n",
 	)
 
 	skills, err := LoadSkills(child)
@@ -109,6 +110,53 @@ func TestLoadSkillsDiscoversProjectSkillRoots(t *testing.T) {
 	}
 	if skills[0].Name != "root-skill" || skills[1].Name != "child" {
 		t.Fatalf("unexpected skill order or names: %#v", skills)
+	}
+}
+
+// TestLoadSkillsRejectsInvalidSkillMetadata verifies discovery reports
+// standard violations instead of quietly loading malformed skills.
+func TestLoadSkillsRejectsInvalidSkillMetadata(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(
+		t, filepath.Join(
+			dir, ".harness", "skills", "Bad_Name", "SKILL.md",
+		),
+		"---\nname: Bad_Name\ndescription: Use badly.\n---\n",
+	)
+
+	_, err := LoadSkills(dir)
+	if err == nil {
+		t.Fatal("expected invalid skill metadata error")
+	}
+	if !strings.Contains(err.Error(), "invalid character") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// TestLoadSkillsParsesBlockDescription verifies the tiny stdlib parser accepts
+// common YAML block descriptions used by Agent Skills examples.
+func TestLoadSkillsParsesBlockDescription(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(
+		t,
+		filepath.Join(dir, ".harness", "skills", "blocky", "SKILL.md"),
+		"---\nname: blocky\ndescription: |\n  Use for block "+
+			"descriptions.\n  Trigger on multiline "+
+			"metadata.\n---\n",
+	)
+
+	skills, err := LoadSkills(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(skills) != 1 {
+		t.Fatalf("expected one skill, got %d", len(skills))
+	}
+	if !strings.Contains(
+		skills[0].Description, "Trigger on multiline metadata.",
+	) {
+
+		t.Fatalf("missing block description: %#v", skills[0])
 	}
 }
 
