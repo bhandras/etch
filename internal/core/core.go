@@ -79,6 +79,13 @@ type Observer interface {
 	EventAppended(event session.Event)
 }
 
+// ToolCallObserver receives live progress before local tool execution.
+type ToolCallObserver interface {
+	// ToolCallStarted receives one model-requested tool call immediately
+	// before the core executes it locally.
+	ToolCallStarted(call model.ToolCall)
+}
+
 // RunTurn executes one prompt against a model client and persists the exchange.
 func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 	if strings.TrimSpace(req.Prompt) == "" {
@@ -163,6 +170,7 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 
 		parentID = assistant.ID
 		for _, call := range response.ToolCalls {
+			notifyToolCallStarted(req.Observer, call)
 			result, err := executeTool(ctx, req.Tools, call)
 			if err != nil {
 				if errors.Is(err, context.Canceled) ||
@@ -220,6 +228,17 @@ func toolRoundLimit(requested int) int {
 func notifyEvent(observer Observer, event *session.Event) {
 	if observer != nil && event != nil {
 		observer.EventAppended(*event)
+	}
+}
+
+// notifyToolCallStarted sends live progress to observers that support it.
+func notifyToolCallStarted(observer Observer, call model.ToolCall) {
+	if observer == nil {
+		return
+	}
+	toolObserver, ok := observer.(ToolCallObserver)
+	if ok {
+		toolObserver.ToolCallStarted(call)
 	}
 }
 

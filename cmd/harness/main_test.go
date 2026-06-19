@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"harness/internal/model"
 	"harness/internal/session"
 )
 
@@ -431,6 +432,10 @@ func TestRunChatProcessesMultipleTurns(t *testing.T) {
 	if !strings.Contains(stdout.String(), "assistant: hello") {
 		t.Fatalf("missing first answer: %q", stdout.String())
 	}
+	if !strings.Contains(stdout.String(), "harness> \nassistant: hello") {
+		t.Fatalf("assistant output was not separated from prompt: %q",
+			stdout.String())
+	}
 	if !strings.Contains(stdout.String(), "assistant: follow-up") {
 		t.Fatalf("missing second answer: %q", stdout.String())
 	}
@@ -491,8 +496,8 @@ func TestRunChatContextAndCompactCommands(t *testing.T) {
 	}
 }
 
-// TestChatObserverRendersToolEvents verifies that live chat feedback uses the
-// shared human transcript renderer.
+// TestChatObserverRendersToolEvents verifies that live chat feedback pairs each
+// local tool call with its result instead of batching call headers first.
 func TestChatObserverRendersToolEvents(t *testing.T) {
 	var stdout bytes.Buffer
 	observer := &chatObserver{stdout: &stdout}
@@ -505,6 +510,11 @@ func TestChatObserverRendersToolEvents(t *testing.T) {
 			Arguments: `{"command":"go test ./..."}`,
 		}}),
 	))
+	observer.ToolCallStarted(model.ToolCall{
+		ID:        "call_1",
+		Name:      "bash",
+		Arguments: `{"command":"go test ./..."}`,
+	})
 	observer.EventAppended(
 		messageEvent(
 			t, session.EventToolMessage,
@@ -513,11 +523,43 @@ func TestChatObserverRendersToolEvents(t *testing.T) {
 	)
 
 	got := stdout.String()
-	if !strings.Contains(got, "-> bash go test ./...") {
-		t.Fatalf("missing tool call: %q", got)
+	want := "-> bash go test ./...\n\n   exit code: 0\n"
+	if got != want {
+		t.Fatalf("render mismatch:\nwant %q\ngot  %q", want, got)
 	}
-	if !strings.Contains(got, "   exit code: 0") {
-		t.Fatalf("missing tool result: %q", got)
+}
+
+// TestChatObserverSeparatesAssistantReplies verifies that final assistant text
+// is visually separated from prior tool output.
+func TestChatObserverSeparatesAssistantReplies(t *testing.T) {
+	var stdout bytes.Buffer
+	observer := &chatObserver{stdout: &stdout}
+
+	observer.ToolCallStarted(model.ToolCall{
+		ID:        "call_1",
+		Name:      "read",
+		Arguments: `{"path":"README.md"}`,
+	})
+	observer.EventAppended(
+		messageEvent(
+			t, session.EventToolMessage,
+			session.ToolMessage("call_1", "read", "hello\n"),
+		),
+	)
+	observer.EventAppended(
+		messageEvent(
+			t, session.EventAssistantMessage,
+			session.TextMessage(session.RoleAssistant, "done"),
+		),
+	)
+
+	got := stdout.String()
+	if !strings.Contains(
+		got,
+		"-> read README.md\n\n   read 1 lines\n\nassistant: done\n",
+	) {
+
+		t.Fatalf("assistant reply was not separated: %q", got)
 	}
 }
 

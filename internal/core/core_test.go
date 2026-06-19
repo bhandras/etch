@@ -272,6 +272,14 @@ func TestRunTurnNotifiesObserver(t *testing.T) {
 		t.Fatalf("observer event mismatch:\nwant %#v\ngot  %#v", want,
 			got)
 	}
+	if len(observer.toolCalls) != 1 {
+		t.Fatalf("expected one live tool call, got %d",
+			len(observer.toolCalls))
+	}
+	if observer.toolCalls[0].Name != tool.NameLS {
+		t.Fatalf("unexpected live tool call: %#v",
+			observer.toolCalls[0])
+	}
 }
 
 // TestRunTurnFeedsToolErrorsBackToModel verifies that ordinary tool failures
@@ -393,11 +401,19 @@ func hasToolSpec(specs []model.ToolSpec, name string) bool {
 type recordingObserver struct {
 	// events stores notifications in arrival order.
 	events []session.Event
+
+	// toolCalls stores live tool-start notifications in arrival order.
+	toolCalls []model.ToolCall
 }
 
 // EventAppended records one persisted event.
 func (o *recordingObserver) EventAppended(event session.Event) {
 	o.events = append(o.events, event)
+}
+
+// ToolCallStarted records one local tool execution start notification.
+func (o *recordingObserver) ToolCallStarted(call model.ToolCall) {
+	o.toolCalls = append(o.toolCalls, call)
 }
 
 // types returns recorded event types in arrival order.

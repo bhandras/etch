@@ -311,7 +311,8 @@ func runChat(cfg cliConfig, stdin io.Reader, stdout io.Writer,
 				Tools:         tool.DefaultRegistry(),
 				MaxToolRounds: cfg.maxToolRounds,
 				Observer: &chatObserver{
-					stdout: stdout,
+					stdout:          stdout,
+					prefixBlankLine: true,
 				},
 			},
 		)
@@ -336,6 +337,12 @@ func runChat(cfg cliConfig, stdin io.Reader, stdout io.Writer,
 type chatObserver struct {
 	// stdout receives rendered transcript lines.
 	stdout io.Writer
+
+	// prefixBlankLine requests a leading blank line before first output.
+	prefixBlankLine bool
+
+	// printed reports whether the current turn has rendered any block yet.
+	printed bool
 }
 
 // EventAppended renders model-visible assistant and tool events.
@@ -353,9 +360,37 @@ func (o *chatObserver) EventAppended(event session.Event) {
 
 		return
 	}
+	if message.Role == session.RoleAssistant &&
+		len(message.ToolCalls) > 0 &&
+		render.MessageText(message) == "" {
+		return
+	}
+	o.printSeparator()
 	for _, line := range render.MessageLines(message) {
 		fmt.Fprintln(o.stdout, line)
 	}
+}
+
+// ToolCallStarted renders one live tool call immediately before execution.
+func (o *chatObserver) ToolCallStarted(call model.ToolCall) {
+	o.printSeparator()
+	for _, line := range render.ToolCallLines(session.ToolCallData{
+		ID:        call.ID,
+		Name:      call.Name,
+		Arguments: call.Arguments,
+	}) {
+		fmt.Fprintln(o.stdout, line)
+	}
+}
+
+// printSeparator inserts a blank line between live chat output blocks.
+func (o *chatObserver) printSeparator() {
+	if o.printed {
+		fmt.Fprintln(o.stdout)
+	} else if o.prefixBlankLine {
+		fmt.Fprintln(o.stdout)
+	}
+	o.printed = true
 }
 
 // handleChatCommand executes one slash command and returns whether to continue.
