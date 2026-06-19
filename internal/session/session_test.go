@@ -2,13 +2,14 @@ package session
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
 // TestCreateWritesSessionStart verifies that a new store immediately persists
 // its durable session header.
 func TestCreateWritesSessionStart(t *testing.T) {
-	store, started, err := Create(t.TempDir(), "/work/project")
+	store, started, err := Create(t.TempDir(), "/work/project", "hello")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +43,7 @@ func TestCreateWritesSessionStart(t *testing.T) {
 // TestAppendChainsMessageParents verifies that appended messages can form a
 // parent-linked turn chain.
 func TestAppendChainsMessageParents(t *testing.T) {
-	store, started, err := Create(t.TempDir(), "/work/project")
+	store, started, err := Create(t.TempDir(), "/work/project", "hello")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,5 +81,72 @@ func TestAppendChainsMessageParents(t *testing.T) {
 	if store.LastID() != assistant.ID {
 		t.Fatalf("last id mismatch: want %q got %q", assistant.ID,
 			store.LastID())
+	}
+}
+
+// TestCreateAppendsIndexEntry verifies that session creation also records the
+// summary metadata used by list and show commands.
+func TestCreateAppendsIndexEntry(t *testing.T) {
+	dir := t.TempDir()
+	store, _, err := Create(dir, "/work/project", "hello from the index")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	entries, err := List(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected one index entry, got %d", len(entries))
+	}
+	if entries[0].ID != store.ID() {
+		t.Fatalf("index id mismatch: want %q got %q", store.ID(),
+			entries[0].ID)
+	}
+	if entries[0].Path != store.Path() {
+		t.Fatalf("index path mismatch: want %q got %q", store.Path(),
+			entries[0].Path)
+	}
+	if entries[0].Title != "hello from the index" {
+		t.Fatalf("unexpected title: %q", entries[0].Title)
+	}
+}
+
+// TestResolveFindsUniquePrefix verifies that callers can use short session IDs
+// when the prefix is unambiguous.
+func TestResolveFindsUniquePrefix(t *testing.T) {
+	dir := t.TempDir()
+	store, _, err := Create(dir, "/work/project", "hello")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	entry, err := Resolve(dir, store.ID()[:8])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entry.ID != store.ID() {
+		t.Fatalf("resolve mismatch: want %q got %q", store.ID(),
+			entry.ID)
+	}
+}
+
+// TestTitleFromPromptNormalizesWhitespace verifies that titles are compact and
+// bounded before they enter the local index.
+func TestTitleFromPromptNormalizesWhitespace(t *testing.T) {
+	title := TitleFromPrompt("  hello\n\nfrom\tprompt  ")
+	if title != "hello from prompt" {
+		t.Fatalf("unexpected title: %q", title)
+	}
+
+	long := TitleFromPrompt(strings.Repeat("x", titleLimit+20))
+	if len([]rune(long)) != titleLimit {
+		t.Fatalf("unexpected truncated length: %d", len([]rune(long)))
+	}
+	if long[len(long)-3:] != "..." {
+		t.Fatalf("expected ellipsis suffix, got %q", long)
 	}
 }

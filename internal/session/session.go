@@ -8,10 +8,15 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
 const (
+	// IndexFileName is the session directory file that stores session
+	// summaries.
+	IndexFileName = "index.jsonl"
+
 	// EventSessionStarted records the creation of a new session log.
 	EventSessionStarted = "session.started"
 
@@ -38,6 +43,10 @@ const (
 
 	// dirPermissions keeps session directories private by default.
 	dirPermissions = 0o700
+
+	// titleLimit is the maximum number of runes kept in a session index
+	// title.
+	titleLimit = 60
 )
 
 // Event is one durable JSONL record in a session log.
@@ -83,15 +92,37 @@ type MessageData struct {
 	Content []ContentPart `json:"content"`
 }
 
+// IndexEntry is one summary row in the local session index.
+type IndexEntry struct {
+	// ID is the session identifier and JSONL file basename.
+	ID string `json:"id"`
+
+	// Path stores the session JSONL path.
+	Path string `json:"path"`
+
+	// CreatedAt records when the session file was created.
+	CreatedAt time.Time `json:"createdAt"`
+
+	// CWD records the working directory active when the session began.
+	CWD string `json:"cwd"`
+
+	// Title is a short human-readable label derived from the initial
+	// prompt.
+	Title string `json:"title"`
+}
+
 // Store appends events to one session file and tracks the current leaf event.
 type Store struct {
+	dir    string
+	id     string
 	path   string
 	file   *os.File
 	lastID string
 }
 
-// Create opens a new session log in dir and writes its session.started event.
-func Create(dir string, cwd string) (*Store, *Event, error) {
+// Create opens a new session log in dir, writes its session.started event, and
+// appends a summary row to the local index.
+func Create(dir string, cwd string, title string) (*Store, *Event, error) {
 	if err := os.MkdirAll(dir, dirPermissions); err != nil {
 		return nil, nil, fmt.Errorf("create session dir: %w", err)
 	}
@@ -111,6 +142,8 @@ func Create(dir string, cwd string) (*Store, *Event, error) {
 	}
 
 	store := &Store{
+		dir:  dir,
+		id:   sessionID,
 		path: path,
 		file: file,
 	}
@@ -127,7 +160,34 @@ func Create(dir string, cwd string) (*Store, *Event, error) {
 		return nil, nil, fmt.Errorf("append session start: %w", err)
 	}
 
+	entry := IndexEntry{
+		ID:        sessionID,
+		Path:      path,
+		CreatedAt: event.Time,
+		CWD:       cwd,
+		Title:     TitleFromPrompt(title),
+	}
+	if err := appendIndexEntry(dir, entry); err != nil {
+		closeErr := file.Close()
+		if closeErr != nil {
+			return nil, nil, fmt.Errorf("append session index: "+
+				"%w; close session file: %v", err, closeErr)
+		}
+
+		return nil, nil, fmt.Errorf("append session index: %w", err)
+	}
+
 	return store, event, nil
+}
+
+// ID returns the stable identifier for the session log.
+func (s *Store) ID() string {
+	return s.id
+}
+
+// Dir returns the directory containing the session log and index.
+func (s *Store) Dir() string {
+	return s.dir
 }
 
 // Path returns the filesystem path backing the session log.
@@ -207,6 +267,65 @@ func ReadAll(path string) ([]Event, error) {
 	return events, nil
 }
 
+// List reads the session index from dir and returns every known session entry.
+func List(dir string) ([]IndexEntry, error) {
+	file, err := os.Open(indexPath(dir))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+
+		return nil, fmt.Errorf("open session index: %w", err)
+	}
+	defer file.Close()
+
+	var entries []IndexEntry
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		var entry IndexEntry
+		if err := json.Unmarshal(scanner.Bytes(), &entry); err != nil {
+			return nil, fmt.Errorf("decode session index entry: %w",
+				err)
+		}
+		entries = append(entries, entry)
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("read session index: %w", err)
+	}
+
+	return entries, nil
+}
+
+// Resolve finds the one index entry whose ID has the supplied prefix.
+func Resolve(dir string, prefix string) (*IndexEntry, error) {
+	prefix = strings.TrimSpace(prefix)
+	if prefix == "" {
+		return nil, fmt.Errorf("session id prefix must not be empty")
+	}
+
+	entries, err := List(dir)
+	if err != nil {
+		return nil, err
+	}
+
+	var matched *IndexEntry
+	for i := range entries {
+		if !strings.HasPrefix(entries[i].ID, prefix) {
+			continue
+		}
+		if matched != nil {
+			return nil, fmt.Errorf("session id prefix %q is "+
+				"ambiguous", prefix)
+		}
+		matched = &entries[i]
+	}
+	if matched == nil {
+		return nil, fmt.Errorf("session id prefix %q not found", prefix)
+	}
+
+	return matched, nil
+}
+
 // TextMessage creates a single-part plain text message payload.
 func TextMessage(role string, text string) MessageData {
 	return MessageData{
@@ -218,6 +337,21 @@ func TextMessage(role string, text string) MessageData {
 	}
 }
 
+// TitleFromPrompt creates the short title used in the session index.
+func TitleFromPrompt(prompt string) string {
+	title := strings.Join(strings.Fields(prompt), " ")
+	if title == "" {
+		return "untitled"
+	}
+
+	runes := []rune(title)
+	if len(runes) <= titleLimit {
+		return title
+	}
+
+	return string(runes[:titleLimit-3]) + "..."
+}
+
 // NewID returns a random hex identifier suitable for session and event IDs.
 func NewID() (string, error) {
 	var bytes [16]byte
@@ -226,6 +360,33 @@ func NewID() (string, error) {
 	}
 
 	return hex.EncodeToString(bytes[:]), nil
+}
+
+// indexPath returns the session index path for a session directory.
+func indexPath(dir string) string {
+	return filepath.Join(dir, IndexFileName)
+}
+
+// appendIndexEntry appends one summary row to the session index.
+func appendIndexEntry(dir string, entry IndexEntry) error {
+	file, err := os.OpenFile(
+		indexPath(dir), os.O_CREATE|os.O_WRONLY|os.O_APPEND,
+		filePermissions,
+	)
+	if err != nil {
+		return fmt.Errorf("open session index: %w", err)
+	}
+	defer file.Close()
+
+	encoded, err := json.Marshal(entry)
+	if err != nil {
+		return fmt.Errorf("marshal session index entry: %w", err)
+	}
+	if _, err := file.Write(append(encoded, '\n')); err != nil {
+		return fmt.Errorf("write session index entry: %w", err)
+	}
+
+	return nil
 }
 
 // writeEvent appends one JSON-encoded event followed by a newline.

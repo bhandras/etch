@@ -31,7 +31,7 @@ type TurnResult struct {
 	// SessionPath is the JSONL file written for the turn.
 	SessionPath string `json:"sessionPath"`
 
-	// SessionID is the ID of the session.started event.
+	// SessionID is the stable session file and index identifier.
 	SessionID string `json:"sessionId"`
 
 	// UserEventID is the durable ID of the user message event.
@@ -57,7 +57,9 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 		return nil, fmt.Errorf("model client must not be nil")
 	}
 
-	store, started, err := session.Create(req.SessionDir, req.CWD)
+	store, started, err := session.Create(
+		req.SessionDir, req.CWD, req.Prompt,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -95,7 +97,7 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 
 	return &TurnResult{
 		SessionPath:      store.Path(),
-		SessionID:        started.ID,
+		SessionID:        store.ID(),
 		UserEventID:      user.ID,
 		AssistantEventID: assistant.ID,
 		AssistantText:    text,

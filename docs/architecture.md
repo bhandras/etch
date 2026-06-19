@@ -100,6 +100,15 @@ session.
 Sessions are append-only JSONL files. Each line is one event. The in-memory
 session is a projection of the log, not the source of truth.
 
+By default local sessions live under:
+
+```text
+.harness/sessions/
+```
+
+The `.harness/` directory is ignored by git because transcripts can contain
+sensitive local work. Callers can override the location with `--session-dir`.
+
 Events should include stable IDs and parent IDs so a session can branch:
 
 ```json
@@ -115,6 +124,17 @@ next turn, it should be recoverable from the log.
 We should not start with a database. JSONL is easy to diff, repair, export,
 sync, and replay. A server or index can be built later as a projection over the
 same files.
+
+The first local index is also JSONL:
+
+```text
+.harness/sessions/index.jsonl
+```
+
+Each new session appends an index row with the session ID, path, creation time,
+working directory, and a short title derived from the first prompt. The index is
+for local listing and prefix resolution only. The session file remains the
+durable transcript.
 
 ## Model Stream
 
@@ -312,6 +332,10 @@ The first interface should be a CLI with a minimal interactive mode:
 agent
 agent -p "question"
 agent --json -p "question"
+agent sessions
+agent sessions --json
+agent show <session-id-prefix>
+agent show --json <session-id-prefix>
 ```
 
 The terminal should stream assistant text, show tool calls compactly, collapse
@@ -330,6 +354,8 @@ and core turn runner through a non-interactive CLI:
 ```bash
 go run ./cmd/harness -p "hello"
 go run ./cmd/harness --json -p "hello"
+go run ./cmd/harness sessions
+go run ./cmd/harness show <session-id-prefix>
 ```
 
 The model is an echo client. That is deliberate. The echo client lets the
