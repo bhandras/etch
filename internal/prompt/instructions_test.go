@@ -53,9 +53,71 @@ func TestLoadInstructionFilesTruncatesLargeFiles(t *testing.T) {
 	}
 }
 
+// TestSystemTextIncludesSkillCatalog verifies skill metadata is pinned while
+// full skill bodies stay out of the default prompt context.
+func TestSystemTextIncludesSkillCatalog(t *testing.T) {
+	dir := t.TempDir()
+	skillDir := filepath.Join(dir, ".harness", "skills", "go-style")
+	writeFile(
+		t, filepath.Join(skillDir, "SKILL.md"),
+		"---\nname: go-style\ndescription: Use for Go "+
+			"edits.\n---\n\n# Secret Body\n\nDetailed workflow "+
+			"stays unloaded.\n",
+	)
+
+	text, err := SystemText(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(text, "Available skills:") {
+		t.Fatalf("missing skill catalog: %q", text)
+	}
+	if !strings.Contains(text, "go-style: Use for Go edits.") {
+		t.Fatalf("missing skill metadata: %q", text)
+	}
+	if strings.Contains(text, "Detailed workflow stays unloaded.") {
+		t.Fatalf("skill body leaked into system text: %q", text)
+	}
+}
+
+// TestLoadSkillsDiscoversProjectSkillRoots verifies both supported project
+// skill directories contribute SKILL.md metadata.
+func TestLoadSkillsDiscoversProjectSkillRoots(t *testing.T) {
+	root := t.TempDir()
+	child := filepath.Join(root, "child")
+	if err := os.Mkdir(child, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(
+		t,
+		filepath.Join(root, ".harness", "skills", "root", "SKILL.md"),
+		"---\nname: root-skill\ndescription: Use at root.\n---\n",
+	)
+	writeFile(
+		t,
+		filepath.Join(child, ".agents", "skills", "child", "SKILL.md"),
+		"---\ndescription: Use at child.\n---\n",
+	)
+
+	skills, err := LoadSkills(child)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(skills) != 2 {
+		t.Fatalf("expected two skills, got %d: %#v", len(skills),
+			skills)
+	}
+	if skills[0].Name != "root-skill" || skills[1].Name != "child" {
+		t.Fatalf("unexpected skill order or names: %#v", skills)
+	}
+}
+
 // writeFile writes one test fixture file.
 func writeFile(t *testing.T, path string, content string) {
 	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}

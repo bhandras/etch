@@ -27,14 +27,37 @@ Do not claim filesystem changes unless a tool result confirms them.`
 	instructionFileName = "AGENTS.md"
 )
 
+// ProjectContext describes project-derived prompt context pinned each turn.
+type ProjectContext struct {
+	// SystemText is the complete system prompt sent to the model.
+	SystemText string
+
+	// InstructionFiles stores AGENTS.md files included in SystemText.
+	InstructionFiles []InstructionFile
+
+	// Skills stores discovered skill packages summarized in SystemText.
+	Skills []Skill
+}
+
 // SystemText returns base instructions plus discovered project instructions.
 func SystemText(cwd string) (string, error) {
-	files, err := LoadInstructionFiles(cwd)
+	project, err := LoadProjectContext(cwd)
 	if err != nil {
 		return "", err
 	}
-	if len(files) == 0 {
-		return BaseSystemPrompt, nil
+
+	return project.SystemText, nil
+}
+
+// LoadProjectContext returns pinned instructions and summarized skills.
+func LoadProjectContext(cwd string) (ProjectContext, error) {
+	files, err := LoadInstructionFiles(cwd)
+	if err != nil {
+		return ProjectContext{}, err
+	}
+	skills, err := LoadSkills(cwd)
+	if err != nil {
+		return ProjectContext{}, err
 	}
 
 	var out strings.Builder
@@ -45,8 +68,36 @@ func SystemText(cwd string) (string, error) {
 		out.WriteString(":\n")
 		out.WriteString(file.Text)
 	}
+	appendSkillCatalog(&out, skills)
 
-	return out.String(), nil
+	return ProjectContext{
+		SystemText:       out.String(),
+		InstructionFiles: append([]InstructionFile{}, files...),
+		Skills:           append([]Skill{}, skills...),
+	}, nil
+}
+
+// appendSkillCatalog adds compact skill metadata without full skill bodies.
+func appendSkillCatalog(out *strings.Builder, skills []Skill) {
+	if len(skills) == 0 {
+		return
+	}
+
+	out.WriteString("\n\nAvailable skills:\n")
+	out.WriteString("The following skill packages are available by ")
+	out.WriteString("description. Read the referenced SKILL.md only when ")
+	out.WriteString(
+		"the task matches or the user explicitly asks for it.\n",
+	)
+	for _, skill := range skills {
+		out.WriteString("- ")
+		out.WriteString(skill.Name)
+		out.WriteString(": ")
+		out.WriteString(skill.Description)
+		out.WriteString(" (")
+		out.WriteString(skill.Path)
+		out.WriteString(")\n")
+	}
 }
 
 // InstructionFile stores one loaded project instruction file.

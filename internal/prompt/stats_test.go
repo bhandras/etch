@@ -45,3 +45,30 @@ func TestBuildStatsReportsActiveSummary(t *testing.T) {
 		t.Fatalf("missing context bytes: %q", text)
 	}
 }
+
+// TestFormatProjectContextReportsPinnedInputs verifies context stats include
+// the durable project layer kept outside compaction.
+func TestFormatProjectContextReportsPinnedInputs(t *testing.T) {
+	project := ProjectContext{
+		InstructionFiles: []InstructionFile{{
+			Path: "AGENTS.md",
+			Text: "repo rules",
+		}},
+		Skills: []Skill{{
+			Name:        "go-style",
+			Description: "Use for Go edits.",
+			Path:        ".harness/skills/go-style/SKILL.md",
+		}},
+	}
+
+	text := FormatProjectContext(project)
+	if !strings.Contains(text, "pinned instruction files: 1") {
+		t.Fatalf("missing instruction count: %q", text)
+	}
+	if !strings.Contains(text, "available skills: 1") {
+		t.Fatalf("missing skill count: %q", text)
+	}
+	if !strings.Contains(text, "go-style: Use for Go edits.") {
+		t.Fatalf("missing skill summary: %q", text)
+	}
+}

@@ -242,7 +242,17 @@ system prompt with tool-use guidance, then loads `AGENTS.md` files from the
 current working directory and its ancestors. Parent instructions appear before
 child instructions so more local files can refine broader rules. Each
 instruction file is capped at 32KB to keep project guidance from dominating the
-first context implementation.
+first context implementation. These instruction files are pinned context: they
+are prepended before any compacted conversation summary and are not removed by
+session compaction.
+
+Skill packages are discovered as metadata, not eagerly loaded as full prompt
+text. The first supported project roots are `.harness/skills/*/SKILL.md` and
+`.agents/skills/*/SKILL.md` in the current working directory and its ancestors.
+The harness parses only a small frontmatter subset, currently `name` and
+`description`, and adds a compact catalog with each skill path to the system
+prompt. Full skill bodies remain outside the default context until a later
+on-demand loading path reads the referenced `SKILL.md`.
 
 Session continuation replays prior user, assistant, and tool messages into the
 next model request. Assistant tool calls and tool results are preserved in the
@@ -259,9 +269,10 @@ go run ./cmd/harness compact --session <id-prefix>
 
 Inside `harness chat`, `/compact` appends a summary for the active session and
 `/context` prints approximate context stats such as total events, whether a
-summary is active, raw replay events, and projected context bytes. Future
-automatic compaction should build on this append-only event shape rather than
-rewriting or deleting older JSONL events.
+summary is active, raw replay events, projected context bytes, pinned
+instruction files, and available skills. Future automatic compaction should
+build on this append-only event shape rather than rewriting or deleting older
+JSONL events.
 
 ## OpenAI And Codex Auth
 

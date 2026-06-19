@@ -133,7 +133,7 @@ func runPrompt(cfg cliConfig, stdout io.Writer, stderr io.Writer) int {
 
 		return 1
 	}
-	systemText, err := promptctx.SystemText(cwd)
+	projectContext, err := promptctx.LoadProjectContext(cwd)
 	if err != nil {
 		fmt.Fprintln(stderr, "error:", err)
 
@@ -144,7 +144,7 @@ func runPrompt(cfg cliConfig, stdout io.Writer, stderr io.Writer) int {
 		Prompt:        cfg.prompt,
 		SessionDir:    cfg.sessionDir,
 		CWD:           cwd,
-		SystemText:    systemText,
+		SystemText:    projectContext.SystemText,
 		Model:         modelClient,
 		Tools:         tool.DefaultRegistry(),
 		MaxToolRounds: cfg.maxToolRounds,
@@ -259,7 +259,7 @@ func runChat(cfg cliConfig, stdin io.Reader, stdout io.Writer,
 
 		return 1
 	}
-	systemText, err := promptctx.SystemText(cwd)
+	projectContext, err := promptctx.LoadProjectContext(cwd)
 	if err != nil {
 		fmt.Fprintln(stderr, "error:", err)
 
@@ -313,7 +313,7 @@ func runChat(cfg cliConfig, stdin io.Reader, stdout io.Writer,
 				SessionDir:    cfg.sessionDir,
 				SessionPath:   sessionPath,
 				CWD:           cwd,
-				SystemText:    systemText,
+				SystemText:    projectContext.SystemText,
 				Model:         modelClient,
 				Tools:         tool.DefaultRegistry(),
 				MaxToolRounds: cfg.maxToolRounds,
@@ -599,7 +599,7 @@ func printContextStats(path string, stdout io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("get working directory: %w", err)
 	}
-	systemText, err := promptctx.SystemText(cwd)
+	projectContext, err := promptctx.LoadProjectContext(cwd)
 	if err != nil {
 		return err
 	}
@@ -607,12 +607,13 @@ func printContextStats(path string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	stats, err := promptctx.BuildStats(events, systemText)
+	stats, err := promptctx.BuildStats(events, projectContext.SystemText)
 	if err != nil {
 		return err
 	}
 
 	fmt.Fprintln(stdout, promptctx.FormatStats(stats))
+	fmt.Fprintln(stdout, promptctx.FormatProjectContext(projectContext))
 
 	return nil
 }

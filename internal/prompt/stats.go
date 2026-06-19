@@ -2,6 +2,7 @@ package prompt
 
 import (
 	"fmt"
+	"strings"
 
 	"harness/internal/session"
 )
@@ -90,4 +91,27 @@ func FormatStats(stats Stats) string {
 		"raw replay events: %d\napprox context bytes: %d",
 		stats.EventCount, stats.MessageEventCount, summary,
 		stats.RawReplayEventCount, stats.ApproxContextBytes)
+}
+
+// FormatProjectContext returns a compact report for pinned project context.
+func FormatProjectContext(project ProjectContext) string {
+	instructionBytes := 0
+	for _, file := range project.InstructionFiles {
+		instructionBytes += len(file.Text)
+	}
+
+	var out strings.Builder
+	fmt.Fprintf(
+		&out, "pinned instruction files: %d (%d bytes)\n",
+		len(project.InstructionFiles), instructionBytes,
+	)
+	fmt.Fprintf(&out, "available skills: %d", len(project.Skills))
+	for _, skill := range project.Skills {
+		fmt.Fprintf(
+			&out, "\n- %s: %s (%s)", skill.Name, skill.Description,
+			skill.Path,
+		)
+	}
+
+	return out.String()
 }
