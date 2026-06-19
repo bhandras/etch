@@ -238,17 +238,25 @@ be logged, sent to the model, exposed to plugins, or included in tool output.
 The first built-in tools should be boring and reliable:
 
 ```text
-read_file
-write_file
-edit_file
-list_dir
+read
+write
+edit
+bash
 grep
 find
-bash
+ls
 ```
 
 `edit_file` should begin with conservative exact replacement. More flexible
 patching can come later once the simple path is proven.
+
+Read-only filesystem operations should copy Pi's semantics but not its backend
+dependencies. Pi uses wrappers around tools such as `rg` and `fd`; this harness
+keeps the builtin core self-contained. The first operation is `ls`, implemented
+in pure Go under `internal/tools/fs`. It lists one directory, includes ordinary
+dotfiles, sorts case-insensitively, marks directories with `/`, skips internal
+directories such as `.git`, `.harness`, `node_modules`, and `vendor`, and emits
+explicit truncation or empty-directory notices.
 
 The model should see one unified tool list regardless of where a tool comes
 from:
