@@ -214,6 +214,66 @@ func TestRunTurnExecutesToolCalls(t *testing.T) {
 	}
 }
 
+// TestRunTurnNotifiesObserver verifies that callers can render persisted
+// assistant and tool events as the loop progresses.
+func TestRunTurnNotifiesObserver(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "go.mod"), "")
+	observer := &recordingObserver{}
+
+	client := &scriptedToolClient{
+		events: [][]model.Event{
+			{
+				{
+					Type: model.EventToolCall,
+					ToolCall: model.ToolCall{
+						ID:   "call_1",
+						Name: tool.NameLS,
+						Arguments: `{"path":` +
+							quoteJSON(dir) +
+							`}`,
+					},
+				},
+				{
+					Type: model.EventDone,
+				},
+			},
+			{
+				{
+					Type: model.EventTextDelta,
+					Text: "done",
+				},
+				{
+					Type: model.EventDone,
+				},
+			},
+		},
+	}
+
+	_, err := RunTurn(context.Background(), TurnRequest{
+		Prompt:     "list files",
+		SessionDir: t.TempDir(),
+		CWD:        dir,
+		Model:      client,
+		Tools:      tool.DefaultRegistry(),
+		Observer:   observer,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := observer.types()
+	want := []string{
+		session.EventUserMessage,
+		session.EventAssistantMessage,
+		session.EventToolMessage,
+		session.EventAssistantMessage,
+	}
+	if !equalStrings(got, want) {
+		t.Fatalf("observer event mismatch:\nwant %#v\ngot  %#v", want,
+			got)
+	}
+}
+
 // TestRunTurnFeedsToolErrorsBackToModel verifies that ordinary tool failures
 // are persisted as tool results so the model can recover.
 func TestRunTurnFeedsToolErrorsBackToModel(t *testing.T) {
@@ -322,6 +382,41 @@ func hasToolSpec(specs []model.ToolSpec, name string) bool {
 	}
 
 	return false
+}
+
+// recordingObserver stores appended event notifications for tests.
+type recordingObserver struct {
+	// events stores notifications in arrival order.
+	events []session.Event
+}
+
+// EventAppended records one persisted event.
+func (o *recordingObserver) EventAppended(event session.Event) {
+	o.events = append(o.events, event)
+}
+
+// types returns recorded event types in arrival order.
+func (o *recordingObserver) types() []string {
+	types := make([]string, 0, len(o.events))
+	for _, event := range o.events {
+		types = append(types, event.Type)
+	}
+
+	return types
+}
+
+// equalStrings reports whether two string slices have identical contents.
+func equalStrings(a []string, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+
+	return true
 }
 
 // scriptedToolClient returns predetermined event streams and records requests.

@@ -260,6 +260,9 @@ func runChat(cfg cliConfig, stdin io.Reader, stdout io.Writer,
 				SystemText:  systemText,
 				Model:       modelClient,
 				Tools:       tool.DefaultRegistry(),
+				Observer: &chatObserver{
+					stdout: stdout,
+				},
 			},
 		)
 		if err != nil {
@@ -268,14 +271,6 @@ func runChat(cfg cliConfig, stdin io.Reader, stdout io.Writer,
 			return 1
 		}
 		sessionPath = result.SessionPath
-		if err := renderSessionPathAfter(
-			result.SessionPath, result.UserEventID, stdout,
-		); err != nil {
-
-			fmt.Fprintln(stderr, "error:", err)
-
-			return 1
-		}
 		printChatPrompt(stdout)
 	}
 	if err := scanner.Err(); err != nil {
@@ -285,6 +280,32 @@ func runChat(cfg cliConfig, stdin io.Reader, stdout io.Writer,
 	}
 
 	return 0
+}
+
+// chatObserver renders appended assistant and tool messages during a turn.
+type chatObserver struct {
+	// stdout receives rendered transcript lines.
+	stdout io.Writer
+}
+
+// EventAppended renders model-visible assistant and tool events.
+func (o *chatObserver) EventAppended(event session.Event) {
+	if event.Type == session.EventUserMessage {
+		return
+	}
+	if !isMessageEvent(event.Type) {
+		return
+	}
+
+	message, err := decodeMessage(event)
+	if err != nil {
+		fmt.Fprintf(o.stdout, "render error: %v\n", err)
+
+		return
+	}
+	for _, line := range render.MessageLines(message) {
+		fmt.Fprintln(o.stdout, line)
+	}
 }
 
 // handleChatCommand executes one slash command and returns whether to continue.

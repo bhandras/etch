@@ -42,6 +42,10 @@ type TurnRequest struct {
 
 	// Tools contains builtin tools the model may call during the turn.
 	Tools *tool.Registry
+
+	// Observer receives durable events as they are appended during the
+	// turn.
+	Observer Observer
 }
 
 // TurnResult reports the durable and user-visible output from one turn.
@@ -61,6 +65,13 @@ type TurnResult struct {
 	// AssistantText is the complete assistant text assembled from the
 	// stream.
 	AssistantText string `json:"assistantText"`
+}
+
+// Observer receives turn events as soon as they are persisted.
+type Observer interface {
+	// EventAppended receives one durable event after it has been written to
+	// the session log.
+	EventAppended(event session.Event)
 }
 
 // RunTurn executes one prompt against a model client and persists the exchange.
@@ -89,6 +100,7 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 		return nil, err
 	}
 	history = append(history, *user)
+	notifyEvent(req.Observer, user)
 
 	messages, err := prompt.BuildHistoryMessages(prompt.HistoryRequest{
 		Events:     history,
@@ -119,6 +131,7 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 			if err != nil {
 				return nil, err
 			}
+			notifyEvent(req.Observer, assistant)
 			text = response.Text
 			finalReceived = true
 
@@ -135,6 +148,7 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 		if err != nil {
 			return nil, err
 		}
+		notifyEvent(req.Observer, assistant)
 		messages = append(messages, model.Message{
 			Role:      model.RoleAssistant,
 			Content:   response.Text,
@@ -160,6 +174,7 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 			if err != nil {
 				return nil, err
 			}
+			notifyEvent(req.Observer, toolEvent)
 			messages = append(messages, model.Message{
 				Role:       model.RoleTool,
 				Content:    result.Text,
@@ -184,6 +199,13 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 		AssistantEventID: assistant.ID,
 		AssistantText:    text,
 	}, nil
+}
+
+// notifyEvent sends an appended event to the optional turn observer.
+func notifyEvent(observer Observer, event *session.Event) {
+	if observer != nil && event != nil {
+		observer.EventAppended(*event)
+	}
 }
 
 // openTurnStore creates or opens the session store for one turn.

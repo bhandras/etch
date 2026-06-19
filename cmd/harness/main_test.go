@@ -10,6 +10,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"harness/internal/session"
 )
 
 // TestRunWritesSessionAndListsIt exercises the CLI path from prompt execution
@@ -319,6 +322,54 @@ func TestRunChatListsTools(t *testing.T) {
 		!strings.Contains(stdout.String(), "edit") {
 
 		t.Fatalf("missing tools: %q", stdout.String())
+	}
+}
+
+// TestChatObserverRendersToolEvents verifies that live chat feedback uses the
+// shared human transcript renderer.
+func TestChatObserverRendersToolEvents(t *testing.T) {
+	var stdout bytes.Buffer
+	observer := &chatObserver{stdout: &stdout}
+
+	observer.EventAppended(messageEvent(t,
+		session.EventAssistantMessage,
+		session.AssistantToolCallMessage("", []session.ToolCallData{{
+			ID:        "call_1",
+			Name:      "bash",
+			Arguments: `{"command":"go test ./..."}`,
+		}}),
+	))
+	observer.EventAppended(
+		messageEvent(
+			t, session.EventToolMessage,
+			session.ToolMessage("call_1", "bash", "exit code: 0\n"),
+		),
+	)
+
+	got := stdout.String()
+	if !strings.Contains(got, "-> bash go test ./...") {
+		t.Fatalf("missing tool call: %q", got)
+	}
+	if !strings.Contains(got, "   exit code: 0") {
+		t.Fatalf("missing tool result: %q", got)
+	}
+}
+
+// messageEvent creates one durable message event for CLI rendering tests.
+func messageEvent(t *testing.T, eventType string,
+	message session.MessageData) session.Event {
+
+	t.Helper()
+	raw, err := json.Marshal(message)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return session.Event{
+		Type: eventType,
+		ID:   "event_1",
+		Time: time.Now().UTC(),
+		Data: raw,
 	}
 }
 
