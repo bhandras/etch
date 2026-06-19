@@ -116,7 +116,7 @@ func TestRunUsesOpenAIProvider(t *testing.T) {
 	sessionDir := filepath.Join(t.TempDir(), "sessions")
 	server := httptest.NewServer(
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.Header.Get("Authorization") != "Bearer secret" {
+			if r.Header.Get("Authorization") != "Bearer test-token" {
 				t.Fatalf("unexpected auth header: %q",
 					r.Header.Get("Authorization"))
 			}
@@ -138,7 +138,7 @@ func TestRunUsesOpenAIProvider(t *testing.T) {
 			"--session-dir", sessionDir,
 			"--provider", "openai",
 			"--base-url", server.URL,
-			"--api-key", "secret",
+			"--api-key", "test-token",
 			"--model", "test-model",
 			"-p", "hello",
 		},
@@ -151,6 +151,102 @@ func TestRunUsesOpenAIProvider(t *testing.T) {
 	}
 	if strings.TrimSpace(stdout.String()) != "assistant: hi" {
 		t.Fatalf("unexpected output: %q", stdout.String())
+	}
+}
+
+// TestRunUsesOpenAIAPIKeyEnv verifies that environment auth remains active
+// when the caller does not pass an explicit API key flag.
+func TestRunUsesOpenAIAPIKeyEnv(t *testing.T) {
+	t.Setenv("HARNESS_PROVIDER", "")
+	t.Setenv("OPENAI_MODEL", "")
+	t.Setenv("OPENAI_BASE_URL", "")
+	t.Setenv("OPENAI_API_KEY", "env-token")
+
+	sessionDir := filepath.Join(t.TempDir(), "sessions")
+	server := httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Header.Get("Authorization") != "Bearer env-token" {
+				t.Fatalf("unexpected auth header: %q",
+					r.Header.Get("Authorization"))
+			}
+
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprint(
+				w, "data: "+
+					"{\"choices\":[{\"delta\":{\"content\":\"hi"+
+					"\"}}]}\n\n",
+			)
+			fmt.Fprint(w, "data: [DONE]\n\n")
+		}),
+	)
+	defer server.Close()
+
+	var stdout, stderr bytes.Buffer
+	code := run(
+		[]string{
+			"--session-dir", sessionDir,
+			"--provider", "openai",
+			"--base-url", server.URL,
+			"--model", "test-model",
+			"-p", "hello",
+		},
+		&stdout,
+		&stderr,
+	)
+	if code != 0 {
+		t.Fatalf("openai run failed: code=%d stdout=%q stderr=%q", code,
+			stdout.String(), stderr.String())
+	}
+}
+
+// TestHelpDoesNotPrintOpenAIAPIKeyEnv verifies that flag help keeps
+// environment-sourced credentials out of diagnostic output.
+func TestHelpDoesNotPrintOpenAIAPIKeyEnv(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "env-token")
+
+	tests := []struct {
+		// name describes the command path being parsed.
+		name string
+
+		// args are the CLI arguments that should request help.
+		args []string
+	}{
+		{
+			name: "run",
+			args: []string{
+				"-h",
+			},
+		},
+		{
+			name: "chat",
+			args: []string{
+				"chat",
+				"-h",
+			},
+		},
+		{
+			name: "compact",
+			args: []string{
+				"compact",
+				"-h",
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var stderr bytes.Buffer
+			if _, err := parseFlags(
+				test.args, &stderr,
+			); err == nil {
+
+				t.Fatal("expected help parse error")
+			}
+			if strings.Contains(stderr.String(), "env-token") {
+				t.Fatalf("help leaked API key: %q",
+					stderr.String())
+			}
+		})
 	}
 }
 

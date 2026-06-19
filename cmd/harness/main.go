@@ -843,7 +843,7 @@ func parseChatFlags(args []string, stderr io.Writer) (cliConfig, error) {
 		&cfg.baseURL, "base-url", cfg.baseURL,
 		"OpenAI-compatible API base URL",
 	)
-	fs.StringVar(&cfg.apiKey, "api-key", cfg.apiKey, "OpenAI API key")
+	apiKeyFlag := apiKeyFlagValue(fs)
 	fs.IntVar(
 		&cfg.maxToolRounds, "max-tool-rounds", cfg.maxToolRounds,
 		"maximum model/tool exchange rounds per user turn",
@@ -860,6 +860,7 @@ func parseChatFlags(args []string, stderr io.Writer) (cliConfig, error) {
 		return cliConfig{}, fmt.Errorf("max-tool-rounds must be " +
 			"positive")
 	}
+	applyAPIKeyFlag(&cfg, *apiKeyFlag)
 
 	return cfg, nil
 }
@@ -896,7 +897,7 @@ func parseCompactFlags(args []string, stderr io.Writer) (cliConfig, error) {
 		&cfg.baseURL, "base-url", cfg.baseURL,
 		"OpenAI-compatible API base URL",
 	)
-	fs.StringVar(&cfg.apiKey, "api-key", cfg.apiKey, "OpenAI API key")
+	apiKeyFlag := apiKeyFlagValue(fs)
 	fs.IntVar(
 		&cfg.keepMessages, "keep-messages", cfg.keepMessages,
 		"recent message events kept raw",
@@ -907,6 +908,7 @@ func parseCompactFlags(args []string, stderr io.Writer) (cliConfig, error) {
 	if cfg.sessionID == "" {
 		return cliConfig{}, fmt.Errorf("compact requires --session")
 	}
+	applyAPIKeyFlag(&cfg, *apiKeyFlag)
 
 	return cfg, nil
 }
@@ -941,7 +943,7 @@ func parseRunFlags(args []string, stderr io.Writer) (cliConfig, error) {
 		&cfg.baseURL, "base-url", cfg.baseURL,
 		"OpenAI-compatible API base URL",
 	)
-	fs.StringVar(&cfg.apiKey, "api-key", cfg.apiKey, "OpenAI API key")
+	apiKeyFlag := apiKeyFlagValue(fs)
 	fs.IntVar(
 		&cfg.maxToolRounds, "max-tool-rounds", cfg.maxToolRounds,
 		"maximum model/tool exchange rounds per user turn",
@@ -956,8 +958,24 @@ func parseRunFlags(args []string, stderr io.Writer) (cliConfig, error) {
 	if cfg.prompt == "" {
 		return cliConfig{}, fmt.Errorf("provide a prompt with -p")
 	}
+	applyAPIKeyFlag(&cfg, *apiKeyFlag)
 
 	return cfg, nil
+}
+
+// apiKeyFlagValue registers the API key flag without exposing env defaults.
+func apiKeyFlagValue(fs *flag.FlagSet) *string {
+	value := ""
+	fs.StringVar(&value, "api-key", "", "OpenAI API key")
+
+	return &value
+}
+
+// applyAPIKeyFlag lets an explicit flag value override environment auth.
+func applyAPIKeyFlag(cfg *cliConfig, apiKey string) {
+	if apiKey != "" {
+		cfg.apiKey = apiKey
+	}
 }
 
 // modelClient creates the provider selected by run command configuration.

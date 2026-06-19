@@ -47,7 +47,7 @@ func TestClientStreamsChatCompletions(t *testing.T) {
 
 	client := &Client{
 		BaseURL: server.URL,
-		APIKey:  "secret",
+		APIKey:  "test-token",
 		Model:   "test-model",
 	}
 	events, err := client.Stream(context.Background(), model.Request{
@@ -61,7 +61,7 @@ func TestClientStreamsChatCompletions(t *testing.T) {
 	}
 
 	got := collectEvents(events)
-	if gotAuth != "Bearer secret" {
+	if gotAuth != "Bearer test-token" {
 		t.Fatalf("unexpected auth header: %q", gotAuth)
 	}
 	if gotRequest.Model != "test-model" {
