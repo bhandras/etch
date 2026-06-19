@@ -1,4 +1,4 @@
-.PHONY: help fmt fmt-check commitmsg-lint commitlint commitmsg-fmt
+.PHONY: help build test fmt fmt-check commitmsg-lint commitlint commitmsg-fmt
 
 GOCC ?= go
 
@@ -7,15 +7,26 @@ COMMITMSG_DIR := $(TOOLS_DIR)/commitmsg
 LLFORMAT_DIR := $(TOOLS_DIR)/llformat
 LLFORMAT_PKG := github.com/bhandras/llformat/cmd/llformat
 LLFORMAT_BIN := $(CURDIR)/$(LLFORMAT_DIR)/bin/llformat
+BINDIR ?= bin
+HARNESS_BIN ?= $(BINDIR)/harness
 
 help:
 	@printf '%s\n' \
 		'Targets:' \
+		'  build           Build the harness binary into bin/harness.' \
+		'  test            Run the Go test suite.' \
 		'  fmt             Format handwritten Go source with llformat.' \
 		'  fmt-check       Run fmt and fail if git sees formatting changes.' \
 		'  commitmsg-lint  Lint commit messages. Use range=, commit=, or file=.' \
 		'  commitlint      Alias for commitmsg-lint.' \
 		'  commitmsg-fmt   Format a commit message. Use file= [inplace=1] or commit=.'
+
+build:
+	@mkdir -p $(BINDIR)
+	$(GOCC) build -trimpath -o $(HARNESS_BIN) ./cmd/harness
+
+test:
+	$(GOCC) test ./...
 
 $(LLFORMAT_BIN): $(LLFORMAT_DIR)/go.mod $(LLFORMAT_DIR)/tools.go
 	@mkdir -p $(LLFORMAT_DIR)/bin
