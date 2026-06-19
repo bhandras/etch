@@ -32,8 +32,13 @@ Harness currently has:
 - a line-oriented CLI chat loop
 - local JSONL session logs under `.harness/sessions/`
 - OpenAI-compatible streaming through the standard library
-- project instruction loading from `AGENTS.md`
-- manual context compaction and `/context` stats
+- pinned project context from `SYSTEM.md` and `AGENTS.md`
+- Agent Skills-style discovery from `.harness/skills/*/SKILL.md` and
+  `.agents/skills/*/SKILL.md`
+- manual context compaction, `/context` projection stats, and `/status` session
+  stats
+- provider-reported token usage for OpenAI Chat Completions and Responses API
+  streams
 - built-in tools for `ls`, `find`, `grep`, `read`, `write`, `edit`, and
   `bash`
 - human-readable tool call and tool result rendering
@@ -84,6 +89,20 @@ go run ./cmd/harness sessions
 go run ./cmd/harness show <session-id-prefix>
 ```
 
+Inside chat, use slash commands for local session and context operations:
+
+```text
+/status    Show session age, turns, model calls, tool calls, and token usage.
+/context   Show projected context size and pinned context layers.
+/compact   Append a model-written summary for older session history.
+/show      Render the active session transcript.
+/sessions  List known local sessions.
+/tools     List built-in tool names.
+/new       Start a fresh session in the same chat process.
+/help      Show available chat commands.
+/exit      Leave chat.
+```
+
 Run a built-in tool directly:
 
 ```bash
@@ -93,6 +112,31 @@ go run ./cmd/harness tool grep Harness README.md
 go run ./cmd/harness tool read README.md
 go run ./cmd/harness tool bash -- pwd
 ```
+
+## Project Context
+
+Harness builds prompt context in layers:
+
+```text
+base system prompt
+SYSTEM.md files, parent directory before child directory
+AGENTS.md files, parent directory before child directory
+compact skill catalog
+latest compacted session summary, when present
+recent raw session messages
+```
+
+Use `SYSTEM.md` for project-specific agent identity and durable behavior. Use
+`AGENTS.md` for repository workflow, coding, documentation, verification, and
+commit-message rules. Both files are pinned ahead of compacted conversation
+history and capped at 32KB per file.
+
+Skills follow the Agent Skills `SKILL.md` convention. Harness discovers skill
+metadata from `.harness/skills/*/SKILL.md` and `.agents/skills/*/SKILL.md` in
+the current directory and its ancestors. The default prompt includes only the
+skill catalog: name, description, and path. Full skill bodies and reference
+files remain outside the prompt until a later on-demand loading path reads
+them.
 
 ## Status
 
