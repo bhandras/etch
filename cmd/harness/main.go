@@ -15,6 +15,7 @@ import (
 	"harness/internal/model"
 	"harness/internal/provider/openai"
 	"harness/internal/session"
+	"harness/internal/tool"
 )
 
 const (
@@ -31,6 +32,9 @@ const (
 	// commandShow renders one local session transcript.
 	commandShow = "show"
 
+	// commandTool executes a builtin tool directly for smoke testing.
+	commandTool = "tool"
+
 	// providerEcho selects the dependency-free deterministic model client.
 	providerEcho = "echo"
 )
@@ -46,6 +50,9 @@ type cliConfig struct {
 	model      string
 	baseURL    string
 	apiKey     string
+	toolName   string
+	toolPath   string
+	toolLimit  int
 }
 
 // main runs the command and exits with the returned status code.
@@ -71,6 +78,9 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 
 	case commandShow:
 		return showSession(cfg, stdout, stderr)
+
+	case commandTool:
+		return runTool(cfg, stdout, stderr)
 
 	default:
 		fmt.Fprintf(stderr, "error: unknown command %q\n", cfg.command)
@@ -100,6 +110,7 @@ func runPrompt(cfg cliConfig, stdout io.Writer, stderr io.Writer) int {
 		SessionDir: cfg.sessionDir,
 		CWD:        cwd,
 		Model:      modelClient,
+		Tools:      tool.DefaultRegistry(),
 	})
 	if err != nil {
 		fmt.Fprintln(stderr, "error:", err)
@@ -118,6 +129,42 @@ func runPrompt(cfg cliConfig, stdout io.Writer, stderr io.Writer) int {
 	}
 
 	fmt.Fprintf(stdout, "assistant: %s\n", result.AssistantText)
+
+	return 0
+}
+
+// runTool executes one builtin tool directly for local smoke testing.
+func runTool(cfg cliConfig, stdout io.Writer, stderr io.Writer) int {
+	registry := tool.DefaultRegistry()
+	arguments, err := toolArguments(cfg)
+	if err != nil {
+		fmt.Fprintln(stderr, "error:", err)
+
+		return 2
+	}
+
+	result, err := registry.Execute(context.Background(), model.ToolCall{
+		ID:        "manual",
+		Name:      cfg.toolName,
+		Arguments: arguments,
+	})
+	if err != nil {
+		fmt.Fprintln(stderr, "error:", err)
+
+		return 1
+	}
+
+	if cfg.jsonOutput {
+		if err := json.NewEncoder(stdout).Encode(result); err != nil {
+			fmt.Fprintln(stderr, "error: encode json output:", err)
+
+			return 1
+		}
+
+		return 0
+	}
+
+	fmt.Fprintln(stdout, result.Text)
 
 	return 0
 }
@@ -200,9 +247,9 @@ func showSession(cfg cliConfig, stdout io.Writer, stderr io.Writer) int {
 
 			return 1
 		}
-		fmt.Fprintf(
-			stdout, "%s: %s\n", message.Role, messageText(message),
-		)
+		for _, line := range renderMessage(message) {
+			fmt.Fprintln(stdout, line)
+		}
 	}
 
 	return 0
@@ -217,10 +264,77 @@ func parseFlags(args []string, stderr io.Writer) (cliConfig, error) {
 
 		case commandShow:
 			return parseShowFlags(args[1:], stderr)
+
+		case commandTool:
+			return parseToolFlags(args[1:], stderr)
 		}
 	}
 
 	return parseRunFlags(args, stderr)
+}
+
+// parseToolFlags converts tool subcommand arguments into configuration.
+func parseToolFlags(args []string, stderr io.Writer) (cliConfig, error) {
+	if len(args) == 0 {
+		return cliConfig{}, fmt.Errorf("provide a tool name")
+	}
+	cfg := cliConfig{
+		command:  commandTool,
+		toolName: args[0],
+	}
+	fs := flag.NewFlagSet(
+		commandTool+" "+cfg.toolName, flag.ContinueOnError,
+	)
+	fs.SetOutput(stderr)
+	fs.BoolVar(
+		&cfg.jsonOutput, "json", false, "print the tool result as JSON",
+	)
+	fs.IntVar(
+		&cfg.toolLimit, "limit", 0,
+		"maximum entries for tools that support limits",
+	)
+	if err := fs.Parse(args[1:]); err != nil {
+		return cliConfig{}, err
+	}
+
+	switch cfg.toolName {
+	case tool.NameLS:
+		if fs.NArg() > 1 {
+			return cliConfig{}, fmt.Errorf("ls accepts at most " +
+				"one path")
+		}
+		if fs.NArg() == 1 {
+			cfg.toolPath = fs.Arg(0)
+		}
+
+	default:
+		return cliConfig{}, fmt.Errorf("unknown tool %q", cfg.toolName)
+	}
+
+	return cfg, nil
+}
+
+// toolArguments converts direct CLI tool flags into raw JSON arguments.
+func toolArguments(cfg cliConfig) (string, error) {
+	switch cfg.toolName {
+	case tool.NameLS:
+		args := struct {
+			Path  string `json:"path,omitempty"`
+			Limit int    `json:"limit,omitempty"`
+		}{
+			Path:  cfg.toolPath,
+			Limit: cfg.toolLimit,
+		}
+		encoded, err := json.Marshal(args)
+		if err != nil {
+			return "", fmt.Errorf("marshal ls arguments: %w", err)
+		}
+
+		return string(encoded), nil
+
+	default:
+		return "", fmt.Errorf("unknown tool %q", cfg.toolName)
+	}
 }
 
 // parseRunFlags converts default command flags into a run configuration.
@@ -352,7 +466,8 @@ func parseShowFlags(args []string, stderr io.Writer) (cliConfig, error) {
 // isMessageEvent reports whether an event contains user-visible message text.
 func isMessageEvent(eventType string) bool {
 	return eventType == session.EventUserMessage ||
-		eventType == session.EventAssistantMessage
+		eventType == session.EventAssistantMessage ||
+		eventType == session.EventToolMessage
 }
 
 // decodeMessage unmarshals a message event payload into its typed shape.
@@ -376,6 +491,38 @@ func messageText(message session.MessageData) string {
 	}
 
 	return strings.Join(parts, "")
+}
+
+// renderMessage returns human transcript lines for one session message.
+func renderMessage(message session.MessageData) []string {
+	text := messageText(message)
+	switch message.Role {
+	case session.RoleAssistant:
+		if text != "" {
+			return []string{"assistant: " + text}
+		}
+
+		var lines []string
+		for _, call := range message.ToolCalls {
+			lines = append(
+				lines, fmt.Sprintf("assistant tool_call "+
+					"%s: %s", call.Name, call.Arguments),
+			)
+		}
+
+		return lines
+
+	case session.RoleTool:
+		name := message.Name
+		if name == "" {
+			name = "tool"
+		}
+
+		return []string{fmt.Sprintf("tool %s: %s", name, text)}
+
+	default:
+		return []string{message.Role + ": " + text}
+	}
 }
 
 // formatSessionTime renders index timestamps for compact terminal lists.

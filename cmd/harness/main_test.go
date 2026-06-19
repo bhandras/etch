@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -147,5 +148,29 @@ func TestRunUsesOpenAIProvider(t *testing.T) {
 	}
 	if strings.TrimSpace(stdout.String()) != "assistant: hi" {
 		t.Fatalf("unexpected output: %q", stdout.String())
+	}
+}
+
+// TestToolLSRunsDirectly verifies the manual builtin tool smoke path.
+func TestToolLSRunsDirectly(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "go.mod"), "")
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"tool", "ls", dir}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("tool failed: code=%d stdout=%q stderr=%q", code,
+			stdout.String(), stderr.String())
+	}
+	if strings.TrimSpace(stdout.String()) != "go.mod" {
+		t.Fatalf("unexpected tool output: %q", stdout.String())
+	}
+}
+
+// writeFile creates a small file fixture for CLI tests.
+func writeFile(t *testing.T, path string, content string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }

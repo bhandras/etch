@@ -258,6 +258,20 @@ dotfiles, sorts case-insensitively, marks directories with `/`, skips internal
 directories such as `.git`, `.harness`, `node_modules`, and `vendor`, and emits
 explicit truncation or empty-directory notices.
 
+The builtin tool registry lives under `internal/tool`. The first registered tool
+wraps `internal/tools/fs.List` as model-callable `ls`, and the CLI exposes the
+same operation for direct smoke testing:
+
+```bash
+go run ./cmd/harness tool ls .
+go run ./cmd/harness tool ls --limit 20 .
+```
+
+When using the OpenAI-compatible provider, the CLI includes the `ls` function
+schema in model requests. If the model calls it, the core executes the pure-Go
+tool, appends a `message.tool` event, and sends the tool result back to the
+model for a final answer.
+
 The model should see one unified tool list regardless of where a tool comes
 from:
 

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 
 	"harness/internal/model"
@@ -83,6 +84,7 @@ func (c *Client) newRequest(ctx context.Context, req model.Request) (
 		Model:    c.Model,
 		Stream:   true,
 		Messages: chatMessages(req.Messages),
+		Tools:    chatTools(req.Tools),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("marshal openai request: %w", err)
@@ -120,6 +122,7 @@ func streamResponse(ctx context.Context, body io.ReadCloser,
 	defer close(events)
 	defer body.Close()
 
+	accumulator := newToolAccumulator()
 	scanner := bufio.NewScanner(body)
 	for scanner.Scan() {
 		select {
@@ -134,6 +137,14 @@ func streamResponse(ctx context.Context, body io.ReadCloser,
 			continue
 		}
 		if payload == "[DONE]" {
+			for _, call := range accumulator.calls() {
+				if !sendEvent(ctx, events, model.Event{
+					Type:     model.EventToolCall,
+					ToolCall: call,
+				}) {
+					return
+				}
+			}
 			sendEvent(
 				ctx, events, model.Event{
 					Type: model.EventDone,
@@ -143,7 +154,7 @@ func streamResponse(ctx context.Context, body io.ReadCloser,
 			return
 		}
 
-		text, err := deltaText([]byte(payload))
+		chunk, err := decodeChunk([]byte(payload))
 		if err != nil {
 			sendEvent(ctx, events, model.Event{
 				Type: model.EventError,
@@ -152,14 +163,13 @@ func streamResponse(ctx context.Context, body io.ReadCloser,
 
 			return
 		}
-		if text == "" {
-			continue
+		for _, event := range chunk.Events {
+			if !sendEvent(ctx, events, event) {
+				return
+			}
 		}
-		if !sendEvent(ctx, events, model.Event{
-			Type: model.EventTextDelta,
-			Text: text,
-		}) {
-			return
+		for _, delta := range chunk.ToolDeltas {
+			accumulator.add(delta)
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -196,17 +206,31 @@ func eventPayload(line string) (string, bool) {
 	return strings.TrimSpace(strings.TrimPrefix(line, "data:")), true
 }
 
-// deltaText extracts the streamed content delta from a chat completion chunk.
-func deltaText(payload []byte) (string, error) {
+// decodeChunk converts one JSON stream payload into neutral model events.
+func decodeChunk(payload []byte) (decodedChunk, error) {
 	var chunk chatChunk
 	if err := json.Unmarshal(payload, &chunk); err != nil {
-		return "", fmt.Errorf("decode openai stream chunk: %w", err)
+		return decodedChunk{}, fmt.Errorf("decode openai stream "+
+			"chunk: %w", err)
 	}
 	if len(chunk.Choices) == 0 {
-		return "", nil
+		return decodedChunk{}, nil
 	}
 
-	return chunk.Choices[0].Delta.Content, nil
+	var decoded decodedChunk
+	for _, choice := range chunk.Choices {
+		if choice.Delta.Content != "" {
+			decoded.Events = append(decoded.Events, model.Event{
+				Type: model.EventTextDelta,
+				Text: choice.Delta.Content,
+			})
+		}
+		decoded.ToolDeltas = append(
+			decoded.ToolDeltas, choice.Delta.ToolCalls...,
+		)
+	}
+
+	return decoded, nil
 }
 
 // readErrorResponse converts a non-2xx response into a concise error.
@@ -230,12 +254,109 @@ func chatMessages(messages []model.Message) []chatMessage {
 	out := make([]chatMessage, 0, len(messages))
 	for _, message := range messages {
 		out = append(out, chatMessage{
-			Role:    message.Role,
-			Content: message.Content,
+			Role:       message.Role,
+			Content:    message.Content,
+			ToolCallID: message.ToolCallID,
+			ToolCalls:  chatMessageToolCalls(message.ToolCalls),
 		})
 	}
 
 	return out
+}
+
+// chatMessageToolCalls converts neutral assistant tool calls into OpenAI
+// history entries.
+func chatMessageToolCalls(calls []model.ToolCall) []chatToolCall {
+	out := make([]chatToolCall, 0, len(calls))
+	for _, call := range calls {
+		out = append(out, chatToolCall{
+			ID:   call.ID,
+			Type: "function",
+			Function: chatToolFunction{
+				Name:      call.Name,
+				Arguments: call.Arguments,
+			},
+		})
+	}
+
+	return out
+}
+
+// chatTools converts neutral tool specs into OpenAI function tool schemas.
+func chatTools(specs []model.ToolSpec) []chatTool {
+	out := make([]chatTool, 0, len(specs))
+	for _, spec := range specs {
+		out = append(out, chatTool{
+			Type: "function",
+			Function: chatToolSpec{
+				Name:        spec.Name,
+				Description: spec.Description,
+				Parameters:  spec.Parameters,
+			},
+		})
+	}
+
+	return out
+}
+
+// decodedChunk stores neutral events extracted from one OpenAI stream chunk.
+type decodedChunk struct {
+	// Events contains text events extracted from the chunk.
+	Events []model.Event
+
+	// ToolDeltas contains streamed OpenAI tool-call fragments.
+	ToolDeltas []chatToolCall
+}
+
+// toolAccumulator rebuilds complete tool calls from streamed deltas.
+type toolAccumulator struct {
+	// callsByIndex stores partially assembled calls by OpenAI stream index.
+	callsByIndex map[int]*model.ToolCall
+}
+
+// newToolAccumulator creates an empty streamed tool-call accumulator.
+func newToolAccumulator() *toolAccumulator {
+	return &toolAccumulator{
+		callsByIndex: make(map[int]*model.ToolCall),
+	}
+}
+
+// add merges one OpenAI tool-call delta into the accumulated call.
+func (a *toolAccumulator) add(delta chatToolCall) {
+	call := a.callsByIndex[delta.Index]
+	if call == nil {
+		call = &model.ToolCall{}
+		a.callsByIndex[delta.Index] = call
+	}
+	if delta.ID != "" {
+		call.ID = delta.ID
+	}
+	if delta.Function.Name != "" {
+		call.Name = delta.Function.Name
+	}
+	if delta.Function.Arguments != "" {
+		call.Arguments += delta.Function.Arguments
+	}
+}
+
+// calls returns complete accumulated calls sorted by stream index.
+func (a *toolAccumulator) calls() []model.ToolCall {
+	indexes := make([]int, 0, len(a.callsByIndex))
+	for index := range a.callsByIndex {
+		indexes = append(indexes, index)
+	}
+	sort.Ints(indexes)
+
+	calls := make([]model.ToolCall, 0, len(indexes))
+	for _, index := range indexes {
+		call := *a.callsByIndex[index]
+		if call.ID == "" && call.Name == "" && call.Arguments == "" {
+			continue
+		}
+		calls = append(calls, call)
+	}
+
+	return calls
 }
 
 // chatRequest is the JSON request shape for Chat Completions.
@@ -248,6 +369,9 @@ type chatRequest struct {
 
 	// Messages contains the ordered chat history.
 	Messages []chatMessage `json:"messages"`
+
+	// Tools contains function tools available to the model.
+	Tools []chatTool `json:"tools,omitempty"`
 }
 
 // chatMessage is one OpenAI-compatible chat message.
@@ -257,6 +381,12 @@ type chatMessage struct {
 
 	// Content stores the text message body.
 	Content string `json:"content"`
+
+	// ToolCallID links tool result messages to assistant tool calls.
+	ToolCallID string `json:"tool_call_id,omitempty"`
+
+	// ToolCalls stores assistant tool calls in conversation history.
+	ToolCalls []chatToolCall `json:"tool_calls,omitempty"`
 }
 
 // chatChunk is one streamed Chat Completions response chunk.
@@ -275,4 +405,52 @@ type chatChoice struct {
 type chatDelta struct {
 	// Content stores text emitted by this chunk.
 	Content string `json:"content"`
+
+	// ToolCalls stores streamed tool calls emitted by this chunk.
+	ToolCalls []chatToolCall `json:"tool_calls"`
+}
+
+// chatTool is one OpenAI function tool declaration.
+type chatTool struct {
+	// Type identifies the OpenAI tool kind.
+	Type string `json:"type"`
+
+	// Function stores the function schema.
+	Function chatToolSpec `json:"function"`
+}
+
+// chatToolSpec is the OpenAI function schema payload.
+type chatToolSpec struct {
+	// Name is the model-facing function name.
+	Name string `json:"name"`
+
+	// Description explains when the model should call the function.
+	Description string `json:"description"`
+
+	// Parameters is the function argument JSON Schema.
+	Parameters json.RawMessage `json:"parameters"`
+}
+
+// chatToolCall is one OpenAI function tool call.
+type chatToolCall struct {
+	// Index identifies the call position in streamed deltas.
+	Index int `json:"index,omitempty"`
+
+	// ID is the provider-assigned tool call identifier.
+	ID string `json:"id,omitempty"`
+
+	// Type identifies the tool call kind.
+	Type string `json:"type,omitempty"`
+
+	// Function stores the function name and raw arguments.
+	Function chatToolFunction `json:"function"`
+}
+
+// chatToolFunction stores OpenAI function call details.
+type chatToolFunction struct {
+	// Name is the function name to execute.
+	Name string `json:"name,omitempty"`
+
+	// Arguments stores the raw JSON argument object.
+	Arguments string `json:"arguments,omitempty"`
 }

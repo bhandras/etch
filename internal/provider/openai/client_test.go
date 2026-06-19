@@ -86,6 +86,80 @@ func TestClientStreamsChatCompletions(t *testing.T) {
 	}
 }
 
+// TestClientStreamsFragmentedToolCall verifies that OpenAI tool-call deltas are
+// accumulated into one complete neutral tool call.
+func TestClientStreamsFragmentedToolCall(t *testing.T) {
+	var gotRequest chatRequest
+	server := httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if err := json.NewDecoder(r.Body).Decode(
+				&gotRequest,
+			); err != nil {
+
+				t.Fatal(err)
+			}
+
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprint(
+				w, "data: "+
+					"{\"choices\":[{\"delta\":{\"tool_calls\":"+
+					"[{\"index\":0,\"id\":\"call_1\",\"type\":\"f"+
+					"unction\",\"function\":{\"name\":\"ls\",\"a"+
+					"rguments\":\"{\\\"pa\"}}]}}]}\n\n",
+			)
+			fmt.Fprint(
+				w, "data: "+
+					"{\"choices\":[{\"delta\":{\"tool_calls\":"+
+					"[{\"index\":0,\"function\":{\"arguments\""+
+					":\"th\\\":\\\".\\\"}\"}}]}}]}\n\n",
+			)
+			fmt.Fprint(w, "data: [DONE]\n\n")
+		}),
+	)
+	defer server.Close()
+
+	client := &Client{
+		BaseURL: server.URL,
+		Model:   "test-model",
+	}
+	events, err := client.Stream(context.Background(), model.Request{
+		Messages: []model.Message{{
+			Role:    model.RoleUser,
+			Content: "list files",
+		}},
+		Tools: []model.ToolSpec{{
+			Name:        "ls",
+			Description: "List a directory",
+			Parameters:  json.RawMessage(`{"type":"object"}`),
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := collectEvents(events)
+	if len(gotRequest.Tools) != 1 ||
+		gotRequest.Tools[0].Function.Name != "ls" {
+
+		t.Fatalf("request missing tool schema: %#v", gotRequest.Tools)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected tool call and done, got %#v", got)
+	}
+	if got[0].Type != model.EventToolCall {
+		t.Fatalf("expected tool call event, got %#v", got[0])
+	}
+	if got[0].ToolCall.ID != "call_1" ||
+		got[0].ToolCall.Name != "ls" ||
+		got[0].ToolCall.Arguments != `{"path":"."}` {
+
+		t.Fatalf("unexpected tool call: %#v", got[0].ToolCall)
+	}
+	if got[1].Type != model.EventDone {
+		t.Fatalf("expected done event, got %#v", got[1])
+	}
+}
+
 // TestClientReturnsHTTPError verifies that non-2xx responses fail before a
 // stream is returned.
 func TestClientReturnsHTTPError(t *testing.T) {

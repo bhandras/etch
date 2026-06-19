@@ -28,12 +28,18 @@ const (
 	// to the session.
 	EventAssistantMessage = "message.assistant"
 
+	// EventToolMessage records a tool result admitted to the session.
+	EventToolMessage = "message.tool"
+
 	// RoleUser identifies user messages in message event payloads.
 	RoleUser = "user"
 
 	// RoleAssistant identifies assistant messages in message event
 	// payloads.
 	RoleAssistant = "assistant"
+
+	// RoleTool identifies tool result messages in message event payloads.
+	RoleTool = "tool"
 
 	// ContentText identifies plain-text content parts in message payloads.
 	ContentText = "text"
@@ -90,6 +96,27 @@ type MessageData struct {
 
 	// Content stores the ordered message parts for the speaker turn.
 	Content []ContentPart `json:"content"`
+
+	// ToolCalls stores tool calls requested by an assistant message.
+	ToolCalls []ToolCallData `json:"toolCalls,omitempty"`
+
+	// ToolCallID links a tool result back to its requested call.
+	ToolCallID string `json:"toolCallId,omitempty"`
+
+	// Name records the tool name for tool result messages.
+	Name string `json:"name,omitempty"`
+}
+
+// ToolCallData is the durable session form of a model-requested tool call.
+type ToolCallData struct {
+	// ID is the provider-assigned call identifier.
+	ID string `json:"id"`
+
+	// Name is the tool name to execute.
+	Name string `json:"name"`
+
+	// Arguments stores the raw JSON argument object.
+	Arguments string `json:"arguments"`
 }
 
 // IndexEntry is one summary row in the local session index.
@@ -334,6 +361,35 @@ func TextMessage(role string, text string) MessageData {
 			Type: ContentText,
 			Text: text,
 		}},
+	}
+}
+
+// AssistantToolCallMessage creates an assistant message carrying tool calls.
+func AssistantToolCallMessage(text string, calls []ToolCallData) MessageData {
+	return MessageData{
+		Role: RoleAssistant,
+		Content: []ContentPart{
+			{
+				Type: ContentText,
+				Text: text,
+			},
+		},
+		ToolCalls: calls,
+	}
+}
+
+// ToolMessage creates a tool result message payload.
+func ToolMessage(callID string, name string, text string) MessageData {
+	return MessageData{
+		Role:       RoleTool,
+		ToolCallID: callID,
+		Name:       name,
+		Content: []ContentPart{
+			{
+				Type: ContentText,
+				Text: text,
+			},
+		},
 	}
 }
 

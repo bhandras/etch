@@ -3,10 +3,13 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"harness/internal/model"
 	"harness/internal/session"
+	"harness/internal/tool"
 )
 
 // TestRunTurnPersistsEchoExchange verifies the first complete executable slice:
@@ -70,5 +73,121 @@ func TestRunTurnRejectsEmptyPrompt(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected empty prompt error")
+	}
+}
+
+// TestRunTurnExecutesToolCalls verifies that the core can run one model
+// requested tool call and feed the result back into a final model answer.
+func TestRunTurnExecutesToolCalls(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "go.mod"), "")
+
+	client := &scriptedToolClient{
+		events: [][]model.Event{
+			{
+				{
+					Type: model.EventToolCall,
+					ToolCall: model.ToolCall{
+						ID:   "call_1",
+						Name: tool.NameLS,
+						Arguments: `{"path":` +
+							quoteJSON(dir) +
+							`}`,
+					},
+				},
+				{
+					Type: model.EventDone,
+				},
+			},
+			{
+				{
+					Type: model.EventTextDelta,
+					Text: "I found go.mod.",
+				},
+				{
+					Type: model.EventDone,
+				},
+			},
+		},
+	}
+
+	result, err := RunTurn(context.Background(), TurnRequest{
+		Prompt:     "list files",
+		SessionDir: t.TempDir(),
+		CWD:        dir,
+		Model:      client,
+		Tools:      tool.DefaultRegistry(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.AssistantText != "I found go.mod." {
+		t.Fatalf("unexpected assistant text: %q", result.AssistantText)
+	}
+	if len(client.requests) != 2 {
+		t.Fatalf("expected two model requests, got %d",
+			len(client.requests))
+	}
+	if len(client.requests[0].Tools) != 1 {
+		t.Fatalf("expected first request to include tools: %#v",
+			client.requests[0].Tools)
+	}
+	last := client.requests[1].Messages[len(client.requests[1].Messages)-1]
+	if last.Role != model.RoleTool || last.Content != "go.mod" {
+		t.Fatalf("expected tool result in second request, got %#v",
+			last)
+	}
+
+	events, err := session.ReadAll(result.SessionPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 5 {
+		t.Fatalf("expected five session events, got %d", len(events))
+	}
+	if events[3].Type != session.EventToolMessage {
+		t.Fatalf("expected tool message event, got %q", events[3].Type)
+	}
+}
+
+// scriptedToolClient returns predetermined event streams and records requests.
+type scriptedToolClient struct {
+	// events stores one event script per model request.
+	events [][]model.Event
+
+	// requests stores the model requests received by the fake client.
+	requests []model.Request
+}
+
+// Stream returns the next scripted event stream.
+func (c *scriptedToolClient) Stream(ctx context.Context, req model.Request) (
+	<-chan model.Event, error) {
+
+	c.requests = append(c.requests, req)
+	events := make(chan model.Event, len(c.events[0]))
+	for _, event := range c.events[0] {
+		events <- event
+	}
+	close(events)
+	c.events = c.events[1:]
+
+	return events, nil
+}
+
+// quoteJSON returns a JSON string literal for test tool arguments.
+func quoteJSON(text string) string {
+	encoded, err := json.Marshal(text)
+	if err != nil {
+		panic(err)
+	}
+
+	return string(encoded)
+}
+
+// writeFile creates a small file fixture for core tests.
+func writeFile(t *testing.T, path string, content string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }
