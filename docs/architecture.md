@@ -321,6 +321,23 @@ A local HTTP server can come later. If we add one, it should expose the same
 session log, model stream, and tool registry as the terminal uses. The server
 must be a client boundary, not a new source of truth.
 
+## First Executable Slice
+
+The first runnable deliverable is intentionally smaller than a useful coding
+agent. It wires together the durable session log, provider-neutral model stream,
+and core turn runner through a non-interactive CLI:
+
+```bash
+go run ./cmd/harness -p "hello"
+go run ./cmd/harness --json -p "hello"
+```
+
+The model is an echo client. That is deliberate. The echo client lets the
+project test prompt admission, streaming response collection, parent-linked
+session events, JSONL persistence, and CLI rendering without network access,
+OpenAI auth, tools, plugins, or MCP. Provider-specific behavior should attach to
+this loop later instead of shaping the kernel now.
+
 ## What Not To Put In The Kernel Yet
 
 These features are useful, but they should begin outside the kernel:
