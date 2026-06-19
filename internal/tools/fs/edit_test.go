@@ -29,6 +29,11 @@ func TestEditFileAppliesExactReplacement(t *testing.T) {
 	if !strings.Contains(result, "Successfully applied 1 edit") {
 		t.Fatalf("unexpected result: %q", result)
 	}
+	if !strings.Contains(result, "-beta") ||
+		!strings.Contains(result, "+gamma") {
+
+		t.Fatalf("missing diff output: %q", result)
+	}
 }
 
 // TestEditFileAppliesMultipleEditsAgainstOriginal verifies that replacements
@@ -174,5 +179,19 @@ func TestEditFilePreservesBOM(t *testing.T) {
 	}
 	if !strings.HasPrefix(string(content), utf8BOM) {
 		t.Fatalf("missing BOM: %q", string(content))
+	}
+}
+
+// TestUnifiedDiffOmitsLargeInputs verifies that diff rendering has a simple
+// safety valve for large line-product comparisons.
+func TestUnifiedDiffOmitsLargeInputs(t *testing.T) {
+	oldText := strings.Repeat("old\n", 600)
+	newText := strings.Repeat("new\n", 600)
+
+	got := unifiedDiff(
+		"large.txt", oldText, newText, defaultEditDiffMaxBytes,
+	)
+	if !strings.Contains(got, "diff omitted") {
+		t.Fatalf("expected omitted diff, got %q", got)
 	}
 }

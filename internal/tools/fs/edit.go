@@ -75,6 +75,7 @@ func EditFile(ctx context.Context, req EditRequest) (string, error) {
 	if edited == normalized {
 		return "", fmt.Errorf("edit produced no changes")
 	}
+	diff := unifiedDiff(path, normalized, edited, defaultEditDiffMaxBytes)
 	edited = restoreLineEndings(edited, lineEnding)
 	if err := atomicWriteFile(
 		ctx, path, []byte(prefix+edited),
@@ -87,8 +88,13 @@ func EditFile(ctx context.Context, req EditRequest) (string, error) {
 		unit = "edit"
 	}
 
-	return fmt.Sprintf("Successfully applied %d %s to %s.", len(spans),
-		unit, path), nil
+	result := fmt.Sprintf("Successfully applied %d %s to %s.", len(spans),
+		unit, path)
+	if diff != "" {
+		result += "\n\n" + diff
+	}
+
+	return result, nil
 }
 
 // editSpan records an exact replacement location in normalized content.

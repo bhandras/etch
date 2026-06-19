@@ -280,9 +280,11 @@ text files. Each `oldText` must match exactly one region in the original file;
 missing, ambiguous, empty, or overlapping edits fail instead of guessing. All
 edits are located against the original file before any replacement is applied,
 then written from the end of the file backward through the same atomic
-replacement helper used by `write`. The first version intentionally avoids
-fuzzy matching and diff rendering; those are separate improvements after the
-sharp exact-replacement contract is proven.
+replacement helper used by `write`. Successful edits return a compact,
+unified-style line diff with a 20KB output cap so the model can inspect what
+changed without flooding the transcript. The first version intentionally avoids
+fuzzy matching; that can be considered later after the sharp exact-replacement
+contract is proven.
 
 The builtin tool registry lives under `internal/tool`. Registered tools wrap
 `internal/tools/fs` operations as model-callable functions, and the CLI exposes
