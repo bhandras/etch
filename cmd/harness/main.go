@@ -41,19 +41,20 @@ const (
 
 // cliConfig stores parsed command-line options for one invocation.
 type cliConfig struct {
-	command    string
-	prompt     string
-	sessionDir string
-	jsonOutput bool
-	sessionID  string
-	provider   string
-	model      string
-	baseURL    string
-	apiKey     string
-	toolName   string
-	toolPath   string
-	toolOffset int
-	toolLimit  int
+	command     string
+	prompt      string
+	sessionDir  string
+	jsonOutput  bool
+	sessionID   string
+	provider    string
+	model       string
+	baseURL     string
+	apiKey      string
+	toolName    string
+	toolPath    string
+	toolContent string
+	toolOffset  int
+	toolLimit   int
 }
 
 // main runs the command and exits with the returned status code.
@@ -298,6 +299,10 @@ func parseToolFlags(args []string, stderr io.Writer) (cliConfig, error) {
 		&cfg.toolOffset, "offset", 0,
 		"1-indexed line offset for tools that support offsets",
 	)
+	fs.StringVar(
+		&cfg.toolContent, "content", "",
+		"complete file content for tools that write files",
+	)
 	if err := fs.Parse(args[1:]); err != nil {
 		return cliConfig{}, err
 	}
@@ -316,6 +321,13 @@ func parseToolFlags(args []string, stderr io.Writer) (cliConfig, error) {
 		if fs.NArg() != 1 {
 			return cliConfig{}, fmt.Errorf("read accepts exactly " +
 				"one path")
+		}
+		cfg.toolPath = fs.Arg(0)
+
+	case tool.NameWrite:
+		if fs.NArg() != 1 {
+			return cliConfig{}, fmt.Errorf("write accepts " +
+				"exactly one path")
 		}
 		cfg.toolPath = fs.Arg(0)
 
@@ -357,6 +369,22 @@ func toolArguments(cfg cliConfig) (string, error) {
 		encoded, err := json.Marshal(args)
 		if err != nil {
 			return "", fmt.Errorf("marshal read arguments: %w", err)
+		}
+
+		return string(encoded), nil
+
+	case tool.NameWrite:
+		args := struct {
+			Path    string `json:"path"`
+			Content string `json:"content"`
+		}{
+			Path:    cfg.toolPath,
+			Content: cfg.toolContent,
+		}
+		encoded, err := json.Marshal(args)
+		if err != nil {
+			return "", fmt.Errorf("marshal write arguments: %w",
+				err)
 		}
 
 		return string(encoded), nil

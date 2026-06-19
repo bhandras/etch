@@ -268,6 +268,13 @@ intentionally left out for now because it needs MIME detection, resizing, and
 model multimodal content handling that should not bloat the first core tool
 slice.
 
+The third operation is `write`, a whole-file create or overwrite tool. It
+creates parent directories, writes through a temporary file in the same
+directory, preserves existing file permissions when replacing a file, and
+returns a compact byte-count success message instead of echoing content back
+into the model context. Mutation tools are anchored to the current working
+directory and refuse to modify internal `.git` or `.harness` paths.
+
 The builtin tool registry lives under `internal/tool`. Registered tools wrap
 `internal/tools/fs` operations as model-callable functions, and the CLI exposes
 the same operations for direct smoke testing:
@@ -277,6 +284,7 @@ go run ./cmd/harness tool ls .
 go run ./cmd/harness tool ls --limit 20 .
 go run ./cmd/harness tool read AGENTS.md
 go run ./cmd/harness tool read --offset 20 --limit 40 AGENTS.md
+go run ./cmd/harness tool write --content 'hello\n' notes/hello.txt
 ```
 
 When using the OpenAI-compatible provider, the CLI includes builtin function

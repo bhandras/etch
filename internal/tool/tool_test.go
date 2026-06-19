@@ -51,6 +51,33 @@ func TestDefaultRegistryExecutesRead(t *testing.T) {
 	}
 }
 
+// TestDefaultRegistryExecutesWrite verifies that the registry exposes and
+// dispatches the pure-Go whole-file writing tool.
+func TestDefaultRegistryExecutesWrite(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	registry := DefaultRegistry()
+	result, err := registry.Execute(context.Background(), model.ToolCall{
+		ID:        "call_1",
+		Name:      NameWrite,
+		Arguments: `{"path":"note.txt","content":"hello\n"}`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.Text, "Successfully wrote 6 bytes") {
+		t.Fatalf("unexpected write result: %q", result.Text)
+	}
+	content, err := os.ReadFile(filepath.Join(dir, "note.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "hello\n" {
+		t.Fatalf("unexpected file content: %q", string(content))
+	}
+}
+
 // quoteJSON returns a quoted JSON string literal for test arguments.
 func quoteJSON(text string) string {
 	encoded, err := json.Marshal(text)
@@ -74,13 +101,16 @@ func writeFile(t *testing.T, path string, content string) {
 func TestSpecsReturnsStableOrder(t *testing.T) {
 	registry := DefaultRegistry()
 	specs := registry.Specs()
-	if len(specs) != 2 {
-		t.Fatalf("expected two specs, got %d", len(specs))
+	if len(specs) != 3 {
+		t.Fatalf("expected three specs, got %d", len(specs))
 	}
 	if specs[0].Name != NameLS {
 		t.Fatalf("unexpected tool name: %q", specs[0].Name)
 	}
 	if specs[1].Name != NameRead {
 		t.Fatalf("unexpected tool name: %q", specs[1].Name)
+	}
+	if specs[2].Name != NameWrite {
+		t.Fatalf("unexpected tool name: %q", specs[2].Name)
 	}
 }

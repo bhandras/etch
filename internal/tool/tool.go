@@ -17,6 +17,9 @@ const (
 
 	// NameRead is the model-facing name for the text file reading tool.
 	NameRead = "read"
+
+	// NameWrite is the model-facing name for the whole-file writing tool.
+	NameWrite = "write"
 )
 
 // Result is the text returned by a builtin tool execution.
@@ -44,6 +47,7 @@ func DefaultRegistry() *Registry {
 	registry := NewRegistry()
 	registry.Register(lsTool{})
 	registry.Register(readTool{})
+	registry.Register(writeTool{})
 
 	return registry
 }
@@ -170,6 +174,53 @@ func (readTool) Execute(ctx context.Context, arguments string) (Result, error) {
 	}
 
 	text, err := fs.Read(ctx, req)
+	if err != nil {
+		return Result{}, err
+	}
+
+	return Result{Text: text}, nil
+}
+
+// writeTool wraps the pure-Go filesystem write operation as a model tool.
+type writeTool struct{}
+
+// Spec returns the model-facing schema for the write tool.
+func (writeTool) Spec() model.ToolSpec {
+	return model.ToolSpec{
+		Name: NameWrite,
+		Description: "Create or completely overwrite a local text file. " +
+			"Use this for new files or full rewrites; use edit for " +
+			"surgical changes once that tool is available.",
+		Parameters: json.RawMessage(`{
+			"type":"object",
+			"properties":{
+				"path":{
+					"type":"string",
+					"description":"File to create or completely overwrite. Relative paths resolve from the current working directory."
+				},
+				"content":{
+					"type":"string",
+					"description":"The complete desired file content."
+				}
+			},
+			"required":["path","content"]
+		}`),
+	}
+}
+
+// Execute decodes write arguments and performs a whole-file replacement.
+func (writeTool) Execute(ctx context.Context, arguments string) (Result,
+	error) {
+
+	var req fs.WriteRequest
+	if strings.TrimSpace(arguments) != "" {
+		if err := json.Unmarshal([]byte(arguments), &req); err != nil {
+			return Result{}, fmt.Errorf("decode write "+
+				"arguments: %w", err)
+		}
+	}
+
+	text, err := fs.Write(ctx, req)
 	if err != nil {
 		return Result{}, err
 	}

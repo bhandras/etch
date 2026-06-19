@@ -189,6 +189,35 @@ func TestToolReadRunsDirectly(t *testing.T) {
 	}
 }
 
+// TestToolWriteRunsDirectly verifies the manual whole-file write smoke path.
+func TestToolWriteRunsDirectly(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	var stdout, stderr bytes.Buffer
+	code := run(
+		[]string{
+			"tool", "write", "--content", "hello\n", "note.txt",
+		},
+		&stdout,
+		&stderr,
+	)
+	if code != 0 {
+		t.Fatalf("tool failed: code=%d stdout=%q stderr=%q", code,
+			stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Successfully wrote 6 bytes") {
+		t.Fatalf("unexpected tool output: %q", stdout.String())
+	}
+	content, err := os.ReadFile(filepath.Join(dir, "note.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "hello\n" {
+		t.Fatalf("unexpected file content: %q", string(content))
+	}
+}
+
 // writeFile creates a small file fixture for CLI tests.
 func writeFile(t *testing.T, path string, content string) {
 	t.Helper()
