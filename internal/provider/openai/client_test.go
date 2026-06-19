@@ -41,6 +41,15 @@ func TestClientStreamsChatCompletions(t *testing.T) {
 					"{\"choices\":[{\"delta\":{\"content\":\"lo"+
 					"\"}}]}\n\n",
 			)
+			fmt.Fprint(
+				w, "data: "+
+					"{\"choices\":[],\"usage\":{\"prompt_toke"+
+					"ns\":10,\"completion_tokens\":3,\"total"+
+					"_tokens\":13,\"prompt_tokens_details\""+
+					":{\"cached_tokens\":6},\"completion_to"+
+					"kens_details\":{\"reasoning_tokens\":1"+
+					"}}}\n\n",
+			)
 			fmt.Fprint(w, "data: [DONE]\n\n")
 		}),
 	)
@@ -71,19 +80,31 @@ func TestClientStreamsChatCompletions(t *testing.T) {
 	if !gotRequest.Stream {
 		t.Fatal("expected streaming request")
 	}
+	if !gotRequest.StreamOptions.IncludeUsage {
+		t.Fatal("expected usage streaming option")
+	}
 	if len(gotRequest.Messages) != 1 ||
 		gotRequest.Messages[0].Content != "say hello" {
 
 		t.Fatalf("unexpected messages: %#v", gotRequest.Messages)
 	}
-	if len(got) != 3 {
-		t.Fatalf("expected three events, got %#v", got)
+	if len(got) != 4 {
+		t.Fatalf("expected four events, got %#v", got)
 	}
 	if got[0].Text != "hel" || got[1].Text != "lo" {
 		t.Fatalf("unexpected text events: %#v", got)
 	}
-	if got[2].Type != model.EventDone {
-		t.Fatalf("expected done event, got %#v", got[2])
+	if got[2].Type != model.EventUsage ||
+		got[2].Usage.InputTokens != 10 ||
+		got[2].Usage.CachedInputTokens != 6 ||
+		got[2].Usage.OutputTokens != 3 ||
+		got[2].Usage.ReasoningOutputTokens != 1 ||
+		got[2].Usage.TotalTokens != 13 {
+
+		t.Fatalf("unexpected usage event: %#v", got[2])
+	}
+	if got[3].Type != model.EventDone {
+		t.Fatalf("expected done event, got %#v", got[3])
 	}
 }
 
@@ -243,8 +264,13 @@ func TestClientStreamsResponsesAPI(t *testing.T) {
 					"\n\n",
 			)
 			fmt.Fprint(
-				w,
-				"data: {\"type\":\"response.completed\"}\n\n",
+				w, "data: "+
+					"{\"type\":\"response.completed\",\"respo"+
+					"nse\":{\"usage\":{\"input_tokens\":20,\"o"+
+					"utput_tokens\":5,\"total_tokens\":25,\""+
+					"input_tokens_details\":{\"cached_toke"+
+					"ns\":12},\"output_tokens_details\":{\"r"+
+					"easoning_tokens\":2}}}}\n\n",
 			)
 		}),
 	)
@@ -286,8 +312,8 @@ func TestClientStreamsResponsesAPI(t *testing.T) {
 		t.Fatalf("unexpected reasoning config: %#v",
 			gotRequest.Reasoning)
 	}
-	if len(got) != 4 {
-		t.Fatalf("expected four events, got %#v", got)
+	if len(got) != 5 {
+		t.Fatalf("expected five events, got %#v", got)
 	}
 	if got[0].Type != model.EventReasoningDelta ||
 		got[0].Text != "checking" {
@@ -303,8 +329,17 @@ func TestClientStreamsResponsesAPI(t *testing.T) {
 
 		t.Fatalf("unexpected tool call: %#v", got[2])
 	}
-	if got[3].Type != model.EventDone {
-		t.Fatalf("unexpected done event: %#v", got[3])
+	if got[3].Type != model.EventUsage ||
+		got[3].Usage.InputTokens != 20 ||
+		got[3].Usage.CachedInputTokens != 12 ||
+		got[3].Usage.OutputTokens != 5 ||
+		got[3].Usage.ReasoningOutputTokens != 2 ||
+		got[3].Usage.TotalTokens != 25 {
+
+		t.Fatalf("unexpected usage event: %#v", got[3])
+	}
+	if got[4].Type != model.EventDone {
+		t.Fatalf("unexpected done event: %#v", got[4])
 	}
 }
 

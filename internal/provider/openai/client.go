@@ -111,10 +111,11 @@ func (c *Client) newRequest(ctx context.Context, req model.Request) (
 	}
 
 	body, err := json.Marshal(chatRequest{
-		Model:    c.Model,
-		Stream:   true,
-		Messages: chatMessages(req.Messages),
-		Tools:    chatTools(req.Tools),
+		Model:         c.Model,
+		Stream:        true,
+		StreamOptions: chatStreamOptions{IncludeUsage: true},
+		Messages:      chatMessages(req.Messages),
+		Tools:         chatTools(req.Tools),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("marshal openai request: %w", err)
@@ -305,11 +306,17 @@ func decodeChunk(payload []byte) (decodedChunk, error) {
 		return decodedChunk{}, fmt.Errorf("decode openai stream "+
 			"chunk: %w", err)
 	}
+	var decoded decodedChunk
+	if usage := chunk.Usage.neutral(); !usage.Empty() {
+		decoded.Events = append(decoded.Events, model.Event{
+			Type:  model.EventUsage,
+			Usage: usage,
+		})
+	}
 	if len(chunk.Choices) == 0 {
-		return decodedChunk{}, nil
+		return decoded, nil
 	}
 
-	var decoded decodedChunk
 	for _, choice := range chunk.Choices {
 		if choice.Delta.reasoningText() != "" {
 			decoded.Events = append(decoded.Events, model.Event{
@@ -416,7 +423,16 @@ func decodeResponseEvent(payload []byte) []model.Event {
 		}}
 
 	case "response.completed":
-		return []model.Event{{Type: model.EventDone}}
+		var events []model.Event
+		if usage := event.Response.Usage.neutral(); !usage.Empty() {
+			events = append(events, model.Event{
+				Type:  model.EventUsage,
+				Usage: usage,
+			})
+		}
+		events = append(events, model.Event{Type: model.EventDone})
+
+		return events
 
 	case "response.failed", "response.incomplete":
 		return []model.Event{{Type: model.EventError,
@@ -647,11 +663,20 @@ type chatRequest struct {
 	// Stream enables server-sent event output.
 	Stream bool `json:"stream"`
 
+	// StreamOptions configures extra streaming metadata.
+	StreamOptions chatStreamOptions `json:"stream_options,omitempty"`
+
 	// Messages contains the ordered chat history.
 	Messages []chatMessage `json:"messages"`
 
 	// Tools contains function tools available to the model.
 	Tools []chatTool `json:"tools,omitempty"`
+}
+
+// chatStreamOptions configures Chat Completions streaming behavior.
+type chatStreamOptions struct {
+	// IncludeUsage asks OpenAI to send a final usage chunk.
+	IncludeUsage bool `json:"include_usage,omitempty"`
 }
 
 // responseRequest is the JSON request shape for the Responses API.
@@ -742,6 +767,9 @@ type chatMessage struct {
 type chatChunk struct {
 	// Choices contains streamed candidate deltas.
 	Choices []chatChoice `json:"choices"`
+
+	// Usage stores final token counts when stream usage is enabled.
+	Usage openAIUsage `json:"usage"`
 }
 
 // chatChoice contains one streamed candidate delta.
@@ -855,10 +883,87 @@ type responseOutputItem struct {
 type responseEventResponse struct {
 	// Error stores provider error details when present.
 	Error responseEventError `json:"error"`
+
+	// Usage stores token usage on completed response events.
+	Usage openAIUsage `json:"usage"`
 }
 
 // responseEventError stores provider error text.
 type responseEventError struct {
 	// Message is the human-readable error description.
 	Message string `json:"message"`
+}
+
+// openAIUsage stores both Chat Completions and Responses usage shapes.
+type openAIUsage struct {
+	// PromptTokens is the Chat Completions input token count.
+	PromptTokens int `json:"prompt_tokens"`
+
+	// CompletionTokens is the Chat Completions output token count.
+	CompletionTokens int `json:"completion_tokens"`
+
+	// InputTokens is the Responses input token count.
+	InputTokens int `json:"input_tokens"`
+
+	// OutputTokens is the Responses output token count.
+	OutputTokens int `json:"output_tokens"`
+
+	// TotalTokens is the provider-reported total token count.
+	TotalTokens int `json:"total_tokens"`
+
+	// PromptDetails stores Chat Completions prompt token details.
+	PromptDetails openAIInputTokenDetails `json:"prompt_tokens_details"`
+
+	// CompletionDetails stores Chat Completions completion token details.
+	CompletionDetails openAIOutputTokenDetails `json:"completion_tokens_details"`
+
+	// InputDetails stores Responses input token details.
+	InputDetails openAIInputTokenDetails `json:"input_tokens_details"`
+
+	// OutputDetails stores Responses output token details.
+	OutputDetails openAIOutputTokenDetails `json:"output_tokens_details"`
+}
+
+// neutral converts OpenAI usage fields into provider-neutral counters.
+func (u openAIUsage) neutral() model.Usage {
+	usage := model.Usage{
+		InputTokens:           u.InputTokens,
+		CachedInputTokens:     u.InputDetails.CachedTokens,
+		OutputTokens:          u.OutputTokens,
+		ReasoningOutputTokens: u.OutputDetails.ReasoningTokens,
+		TotalTokens:           u.TotalTokens,
+	}
+	if usage.InputTokens == 0 {
+		usage.InputTokens = u.PromptTokens
+	}
+	if usage.CachedInputTokens == 0 {
+		usage.CachedInputTokens = u.PromptDetails.CachedTokens
+	}
+	if usage.OutputTokens == 0 {
+		usage.OutputTokens = u.CompletionTokens
+	}
+	if usage.ReasoningOutputTokens == 0 {
+		usage.ReasoningOutputTokens = u.
+			CompletionDetails.
+			ReasoningTokens
+	}
+	if usage.TotalTokens == 0 &&
+		(usage.InputTokens != 0 || usage.OutputTokens != 0) {
+
+		usage.TotalTokens = usage.InputTokens + usage.OutputTokens
+	}
+
+	return usage
+}
+
+// openAIInputTokenDetails stores cache details for input tokens.
+type openAIInputTokenDetails struct {
+	// CachedTokens is the subset of input tokens served from prompt cache.
+	CachedTokens int `json:"cached_tokens"`
+}
+
+// openAIOutputTokenDetails stores output-token subcategories.
+type openAIOutputTokenDetails struct {
+	// ReasoningTokens is the hidden reasoning token count.
+	ReasoningTokens int `json:"reasoning_tokens"`
 }

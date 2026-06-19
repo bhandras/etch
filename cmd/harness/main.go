@@ -345,10 +345,32 @@ type chatObserver struct {
 
 	// toolCalls counts local tool calls executed during this turn.
 	toolCalls int
+
+	// usage accumulates provider token counters reported during this turn.
+	usage model.Usage
 }
 
 // EventAppended renders model-visible assistant and tool events.
 func (o *chatObserver) EventAppended(event session.Event) {
+	if event.Type == session.EventModelUsage {
+		usage, err := decodeUsage(event)
+		if err != nil {
+			fmt.Fprintf(
+				o.renderer.stdout, "render error: %v\n", err,
+			)
+
+			return
+		}
+		o.usage = o.usage.Add(model.Usage{
+			InputTokens:           usage.InputTokens,
+			CachedInputTokens:     usage.CachedInputTokens,
+			OutputTokens:          usage.OutputTokens,
+			ReasoningOutputTokens: usage.ReasoningOutputTokens,
+			TotalTokens:           usage.TotalTokens,
+		})
+
+		return
+	}
 	if event.Type == session.EventUserMessage {
 		return
 	}
@@ -394,6 +416,7 @@ func (o *chatObserver) ReasoningCompleted(text string) {
 func (o *chatObserver) Finish(elapsed time.Duration) {
 	o.renderer.finish(elapsed, liveTurnStats{
 		ToolCalls: o.toolCalls,
+		Usage:     o.usage,
 	})
 }
 
@@ -631,6 +654,7 @@ func printContextStats(path string, stdout io.Writer) error {
 	}
 
 	fmt.Fprintln(stdout, promptctx.FormatStats(stats))
+	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, promptctx.FormatProjectContext(projectContext))
 
 	return nil
@@ -1264,6 +1288,16 @@ func decodeMessage(event session.Event) (session.MessageData, error) {
 	}
 
 	return message, nil
+}
+
+// decodeUsage decodes a durable model usage event.
+func decodeUsage(event session.Event) (session.UsageData, error) {
+	var data session.UsageData
+	if err := json.Unmarshal(event.Data, &data); err != nil {
+		return session.UsageData{}, fmt.Errorf("decode usage: %w", err)
+	}
+
+	return data, nil
 }
 
 // formatSessionTime renders index timestamps for compact terminal lists.

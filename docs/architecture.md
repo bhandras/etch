@@ -289,9 +289,15 @@ core binary.
 
 Session status is separate from context projection. The `/status` command reads
 the same JSONL log and reports operational counters such as session age, event
-count, user turns, model calls, tool calls, compactions, and message bytes. This
-view should grow to include provider-reported token usage once model clients
-persist usage events.
+count, user turns, model calls, tool calls, compactions, message bytes, and
+provider-reported token usage when available.
+
+Model clients should emit provider-reported token usage when available. The
+core stores those counters as `model.usage` JSONL events so `/status` can report
+actual input, cached input, output, reasoning output, and total tokens across
+the session. These actual counters complement `/context` estimates: usage says
+what a completed provider call consumed, while context stats estimate what the
+next prompt projection contains.
 
 ## OpenAI And Codex Auth
 

@@ -136,4 +136,17 @@ func TestFormatTurnStatsSummarizesToolCounts(t *testing.T) {
 
 		t.Fatalf("unexpected plural stats: %q", got)
 	}
+	got := formatTurnStats(liveTurnStats{
+		ToolCalls: 2,
+		Usage: model.Usage{
+			InputTokens:           100,
+			CachedInputTokens:     64,
+			OutputTokens:          20,
+			ReasoningOutputTokens: 5,
+		},
+	})
+	want := " · 2 tools · 100 in · 64 cached · 20 out · 5 reasoning"
+	if got != want {
+		t.Fatalf("unexpected usage stats:\nwant %q\ngot  %q", want, got)
+	}
 }

@@ -30,6 +30,9 @@ const (
 	// EventToolCall reports a complete tool call requested by the model.
 	EventToolCall = "tool_call"
 
+	// EventUsage reports provider-counted token usage for one model call.
+	EventUsage = "usage"
+
 	// EventDone reports that a stream completed normally.
 	EventDone = "done"
 
@@ -76,8 +79,49 @@ type Event struct {
 	// ToolCall stores a complete call for EventToolCall events.
 	ToolCall ToolCall
 
+	// Usage stores token counters for EventUsage events.
+	Usage Usage
+
 	// Err stores a provider error message for EventError events.
 	Err string
+}
+
+// Usage stores provider-reported token counters for one model call.
+type Usage struct {
+	// InputTokens is the number of prompt or input tokens.
+	InputTokens int
+
+	// CachedInputTokens is the subset of input tokens served from cache.
+	CachedInputTokens int
+
+	// OutputTokens is the number of completion or output tokens.
+	OutputTokens int
+
+	// ReasoningOutputTokens is the subset of output tokens used for hidden
+	// reasoning when the provider reports it.
+	ReasoningOutputTokens int
+
+	// TotalTokens is the provider-reported total token count.
+	TotalTokens int
+}
+
+// Add returns the element-wise sum of two usage counters.
+func (u Usage) Add(other Usage) Usage {
+	return Usage{
+		InputTokens:       u.InputTokens + other.InputTokens,
+		CachedInputTokens: u.CachedInputTokens + other.CachedInputTokens,
+		OutputTokens:      u.OutputTokens + other.OutputTokens,
+		ReasoningOutputTokens: u.ReasoningOutputTokens +
+			other.ReasoningOutputTokens,
+		TotalTokens: u.TotalTokens + other.TotalTokens,
+	}
+}
+
+// Empty reports whether the usage value contains no provider counters.
+func (u Usage) Empty() bool {
+	return u.InputTokens == 0 && u.CachedInputTokens == 0 &&
+		u.OutputTokens == 0 && u.ReasoningOutputTokens == 0 &&
+		u.TotalTokens == 0
 }
 
 // ToolSpec describes one model-callable tool.

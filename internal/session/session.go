@@ -34,6 +34,10 @@ const (
 	// EventContextSummary records an append-only compaction summary.
 	EventContextSummary = "context.summary"
 
+	// EventModelUsage records provider-reported token usage for one model
+	// call.
+	EventModelUsage = "model.usage"
+
 	// RoleUser identifies user messages in message event payloads.
 	RoleUser = "user"
 
@@ -138,6 +142,44 @@ type SummaryData struct {
 
 	// Model records the summarization model name when known.
 	Model string `json:"model,omitempty"`
+}
+
+// UsageData is provider-reported token usage for one model call.
+type UsageData struct {
+	// InputTokens is the number of prompt or input tokens.
+	InputTokens int `json:"inputTokens"`
+
+	// CachedInputTokens is the subset of input tokens served from cache.
+	CachedInputTokens int `json:"cachedInputTokens,omitempty"`
+
+	// OutputTokens is the number of completion or output tokens.
+	OutputTokens int `json:"outputTokens"`
+
+	// ReasoningOutputTokens is the subset of output tokens used for hidden
+	// reasoning when the provider reports it.
+	ReasoningOutputTokens int `json:"reasoningOutputTokens,omitempty"`
+
+	// TotalTokens is the provider-reported total token count.
+	TotalTokens int `json:"totalTokens"`
+}
+
+// Add returns the element-wise sum of two usage counters.
+func (u UsageData) Add(other UsageData) UsageData {
+	return UsageData{
+		InputTokens:       u.InputTokens + other.InputTokens,
+		CachedInputTokens: u.CachedInputTokens + other.CachedInputTokens,
+		OutputTokens:      u.OutputTokens + other.OutputTokens,
+		ReasoningOutputTokens: u.ReasoningOutputTokens +
+			other.ReasoningOutputTokens,
+		TotalTokens: u.TotalTokens + other.TotalTokens,
+	}
+}
+
+// Empty reports whether usage contains no provider counters.
+func (u UsageData) Empty() bool {
+	return u.InputTokens == 0 && u.CachedInputTokens == 0 &&
+		u.OutputTokens == 0 && u.ReasoningOutputTokens == 0 &&
+		u.TotalTokens == 0
 }
 
 // IndexEntry is one summary row in the local session index.

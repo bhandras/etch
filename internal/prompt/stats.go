@@ -119,9 +119,13 @@ func FormatStats(stats Stats) string {
 			stats.SummaryEventID)
 	}
 
-	return fmt.Sprintf("events: %d\nmessage events: %d\nsummary: %s\n"+
-		"raw replay events: %d\nraw replay text: %d bytes, ~%d "+
-		"tokens\napprox context: %d bytes, ~%d tokens",
+	return fmt.Sprintf("Session Projection\n"+
+		"- events: %d\n"+
+		"- message events: %d\n"+
+		"- summary: %s\n"+
+		"- raw replay events: %d\n"+
+		"- raw replay text: %d bytes, ~%d tokens\n"+
+		"- approx context: %d bytes, ~%d tokens",
 		stats.EventCount, stats.MessageEventCount, summary,
 		stats.RawReplayEventCount, stats.RawReplayBytes,
 		stats.RawReplayTokens, stats.ApproxContextBytes,
@@ -143,29 +147,31 @@ func FormatProjectContext(project ProjectContext) string {
 	catalog := skillCatalogText(project.Skills)
 
 	var out strings.Builder
+	fmt.Fprintf(&out, "Pinned Context\n")
 	fmt.Fprintf(
-		&out, "base prompt: %d bytes, ~%d tokens\n", baseBytes,
+		&out, "- base prompt: %d bytes, ~%d tokens\n", baseBytes,
 		baseTokens,
 	)
 	fmt.Fprintf(
-		&out, "pinned system files: %d (%d bytes, ~%d tokens)\n",
+		&out, "- pinned system files: %d (%d bytes, ~%d tokens)\n",
 		len(project.SystemFiles), systemBytes, ApproxTokensForFiles(
 			project.SystemFiles,
 		),
 	)
 	fmt.Fprintf(
-		&out, "pinned instruction files: %d (%d bytes, ~%d tokens)\n",
+		&out, "- pinned instruction files: %d (%d bytes, ~%d tokens)\n",
 		len(project.InstructionFiles), instructionBytes,
 		ApproxTokensForFiles(project.InstructionFiles),
 	)
 	fmt.Fprintf(
-		&out, "skill catalog: %d bytes, ~%d tokens\n", len(catalog),
+		&out, "- skill catalog: %d bytes, ~%d tokens\n", len(catalog),
 		ApproxTokens(catalog),
 	)
-	fmt.Fprintf(&out, "available skills: %d", len(project.Skills))
+	fmt.Fprintf(&out, "\nAvailable Skills\n")
+	fmt.Fprintf(&out, "- count: %d", len(project.Skills))
 	for _, skill := range project.Skills {
 		fmt.Fprintf(
-			&out, "\n- %s: %s (%s)", skill.Name, skill.Description,
+			&out, "\n- %s: %s\n  %s", skill.Name, skill.Description,
 			skill.Path,
 		)
 	}

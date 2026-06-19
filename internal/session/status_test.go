@@ -46,6 +46,16 @@ func TestBuildStatusCountsSessionActivity(t *testing.T) {
 				Summary: "older turns",
 			},
 		),
+		statusEvent(
+			t, EventModelUsage, "7", "6",
+			startedAt.Add(6*time.Second), UsageData{
+				InputTokens:           100,
+				CachedInputTokens:     64,
+				OutputTokens:          20,
+				ReasoningOutputTokens: 5,
+				TotalTokens:           120,
+			},
+		),
 	}
 
 	status, err := BuildStatus(events, startedAt.Add(2*time.Minute))
@@ -64,12 +74,30 @@ func TestBuildStatusCountsSessionActivity(t *testing.T) {
 	if status.Compactions != 1 {
 		t.Fatalf("unexpected compactions: %d", status.Compactions)
 	}
+	if status.Usage.InputTokens != 100 ||
+		status.Usage.CachedInputTokens != 64 ||
+		status.Usage.TotalTokens != 120 {
+
+		t.Fatalf("unexpected usage: %#v", status.Usage)
+	}
 
 	text := FormatStatus(status)
-	if !strings.Contains(text, "session age: 2m 0s") {
+	if !strings.Contains(text, "- age: 2m 0s") {
 		t.Fatalf("missing age: %q", text)
 	}
-	if !strings.Contains(text, "actual model usage: not recorded yet") {
+	if !strings.Contains(text, "Actual Model Usage") {
+		t.Fatalf("missing usage section: %q", text)
+	}
+	if !strings.Contains(text, "- cached input: 64 tokens") {
+		t.Fatalf("missing cached input usage: %q", text)
+	}
+}
+
+// TestFormatStatusShowsUsagePlaceholder verifies sessions without provider
+// usage make the missing telemetry explicit.
+func TestFormatStatusShowsUsagePlaceholder(t *testing.T) {
+	text := FormatStatus(Status{})
+	if !strings.Contains(text, "- not recorded yet") {
 		t.Fatalf("missing usage placeholder: %q", text)
 	}
 }

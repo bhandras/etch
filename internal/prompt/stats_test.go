@@ -84,7 +84,9 @@ func TestFormatProjectContextReportsPinnedInputs(t *testing.T) {
 	if !strings.Contains(text, "pinned instruction files: 1") {
 		t.Fatalf("missing instruction count: %q", text)
 	}
-	if !strings.Contains(text, "available skills: 1") {
+	if !strings.Contains(text, "Available Skills") ||
+		!strings.Contains(text, "- count: 1") {
+
 		t.Fatalf("missing skill count: %q", text)
 	}
 	if !strings.Contains(text, "skill catalog:") {

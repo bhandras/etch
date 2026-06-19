@@ -154,6 +154,13 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 				return nil, err
 			}
 			notifyEvent(req.Observer, assistant)
+			if usageEvent, err := appendModelUsage(
+				store, assistant.ID, response.Usage,
+			); err != nil {
+				return nil, err
+			} else if usageEvent != nil {
+				notifyEvent(req.Observer, usageEvent)
+			}
 			text = response.Text
 			finalReceived = true
 
@@ -171,6 +178,15 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 			return nil, err
 		}
 		notifyEvent(req.Observer, assistant)
+		usageEvent, err := appendModelUsage(
+			store, assistant.ID, response.Usage,
+		)
+		if err != nil {
+			return nil, err
+		}
+		if usageEvent != nil {
+			notifyEvent(req.Observer, usageEvent)
+		}
 		messages = append(messages, model.Message{
 			Role:      model.RoleAssistant,
 			Content:   response.Text,
@@ -178,6 +194,9 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 		})
 
 		parentID = assistant.ID
+		if usageEvent != nil {
+			parentID = usageEvent.ID
+		}
 		for _, call := range response.ToolCalls {
 			notifyToolCallStarted(req.Observer, call)
 			result, err := executeTool(ctx, req.Tools, call)
@@ -283,6 +302,9 @@ type modelResponse struct {
 
 	// ToolCalls stores complete tool calls requested by the model.
 	ToolCalls []model.ToolCall
+
+	// Usage stores provider-reported token counters for this model pass.
+	Usage model.Usage
 }
 
 // collectModelResponse starts a model stream and collects one assistant pass.
@@ -315,6 +337,7 @@ func collectStream(ctx context.Context,
 	var text strings.Builder
 	var reasoning strings.Builder
 	var calls []model.ToolCall
+	var usage model.Usage
 	for {
 		select {
 		case <-ctx.Done():
@@ -326,6 +349,7 @@ func collectStream(ctx context.Context,
 					Text:      text.String(),
 					Reasoning: reasoning.String(),
 					ToolCalls: calls,
+					Usage:     usage,
 				}, nil
 			}
 			switch event.Type {
@@ -338,11 +362,15 @@ func collectStream(ctx context.Context,
 			case model.EventToolCall:
 				calls = append(calls, event.ToolCall)
 
+			case model.EventUsage:
+				usage = usage.Add(event.Usage)
+
 			case model.EventDone:
 				return modelResponse{
 					Text:      text.String(),
 					Reasoning: reasoning.String(),
 					ToolCalls: calls,
+					Usage:     usage,
 				}, nil
 
 			case model.EventError:
@@ -355,6 +383,29 @@ func collectStream(ctx context.Context,
 			}
 		}
 	}
+}
+
+// appendModelUsage persists provider usage when a model call reports it.
+func appendModelUsage(store *session.Store, parentID string,
+	usage model.Usage) (*session.Event, error) {
+
+	if usage.Empty() {
+		return nil, nil
+	}
+
+	event, err := store.Append(session.EventModelUsage, parentID,
+		session.UsageData{
+			InputTokens:           usage.InputTokens,
+			CachedInputTokens:     usage.CachedInputTokens,
+			OutputTokens:          usage.OutputTokens,
+			ReasoningOutputTokens: usage.ReasoningOutputTokens,
+			TotalTokens:           usage.TotalTokens,
+		})
+	if err != nil {
+		return nil, fmt.Errorf("append model usage: %w", err)
+	}
+
+	return event, nil
 }
 
 // notifyReasoningCompleted sends reasoning summaries to interested observers.

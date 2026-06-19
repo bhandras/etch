@@ -62,6 +62,60 @@ func TestRunTurnPersistsEchoExchange(t *testing.T) {
 	}
 }
 
+// TestRunTurnPersistsModelUsage verifies provider token counters are durable
+// session events when a model stream reports them.
+func TestRunTurnPersistsModelUsage(t *testing.T) {
+	client := &scriptedToolClient{
+		events: [][]model.Event{{
+			{
+				Type: model.EventTextDelta,
+				Text: "hello",
+			},
+			{Type: model.EventUsage, Usage: model.Usage{
+				InputTokens:           100,
+				CachedInputTokens:     80,
+				OutputTokens:          12,
+				ReasoningOutputTokens: 3,
+				TotalTokens:           112,
+			}},
+			{
+				Type: model.EventDone,
+			},
+		}},
+	}
+
+	result, err := RunTurn(context.Background(), TurnRequest{
+		Prompt:     "hello",
+		SessionDir: t.TempDir(),
+		CWD:        "/work/project",
+		Model:      client,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	events, err := session.ReadAll(result.SessionPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 4 {
+		t.Fatalf("expected four events, got %#v", events)
+	}
+	if events[3].Type != session.EventModelUsage {
+		t.Fatalf("expected usage event, got %q", events[3].Type)
+	}
+	var usage session.UsageData
+	if err := json.Unmarshal(events[3].Data, &usage); err != nil {
+		t.Fatal(err)
+	}
+	if usage.InputTokens != 100 || usage.CachedInputTokens != 80 ||
+		usage.OutputTokens != 12 || usage.ReasoningOutputTokens != 3 ||
+		usage.TotalTokens != 112 {
+
+		t.Fatalf("unexpected usage: %#v", usage)
+	}
+}
+
 // TestRunTurnRejectsEmptyPrompt keeps invalid CLI input from creating empty
 // session files.
 func TestRunTurnRejectsEmptyPrompt(t *testing.T) {

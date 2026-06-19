@@ -42,6 +42,9 @@ type Status struct {
 
 	// SummaryBytes is the total byte length of compacted summaries.
 	SummaryBytes int
+
+	// Usage is the total provider-reported model usage recorded so far.
+	Usage UsageData
 }
 
 // BuildStatus computes session activity counters from durable events.
@@ -93,6 +96,13 @@ func BuildStatus(events []Event, now time.Time) (Status, error) {
 			}
 			status.Compactions++
 			status.SummaryBytes += len(summary.Summary)
+
+		case EventModelUsage:
+			usage, err := decodeStatusUsage(event)
+			if err != nil {
+				return Status{}, err
+			}
+			status.Usage = status.Usage.Add(usage)
 		}
 	}
 
@@ -102,30 +112,58 @@ func BuildStatus(events []Event, now time.Time) (Status, error) {
 // FormatStatus returns a compact human-readable session status report.
 func FormatStatus(status Status) string {
 	var out strings.Builder
-	fmt.Fprintf(&out, "session age: %s\n", FormatDuration(status.Age))
+	fmt.Fprintf(&out, "Session\n")
+	fmt.Fprintf(&out, "- age: %s\n", FormatDuration(status.Age))
 	if !status.StartedAt.IsZero() {
 		fmt.Fprintf(
-			&out, "started: %s\n",
+			&out, "- started: %s\n",
 			status.StartedAt.Format(time.RFC3339),
 		)
 	}
 	if !status.LastEventAt.IsZero() {
 		fmt.Fprintf(
-			&out, "last event: %s\n",
+			&out, "- last event: %s\n",
 			status.LastEventAt.Format(time.RFC3339),
 		)
 	}
-	fmt.Fprintf(&out, "events: %d\n", status.EventCount)
-	fmt.Fprintf(&out, "turns: %d\n", status.UserTurns)
-	fmt.Fprintf(&out, "model calls: %d\n", status.ModelCalls)
+
+	fmt.Fprintf(&out, "\nActivity\n")
+	fmt.Fprintf(&out, "- events: %d\n", status.EventCount)
+	fmt.Fprintf(&out, "- turns: %d\n", status.UserTurns)
+	fmt.Fprintf(&out, "- model calls: %d\n", status.ModelCalls)
 	fmt.Fprintf(
-		&out, "tool calls: %d requested, %d results\n",
+		&out, "- tool calls: %d requested, %d results\n",
 		status.ToolCalls, status.ToolResults,
 	)
-	fmt.Fprintf(&out, "compactions: %d\n", status.Compactions)
-	fmt.Fprintf(&out, "message text: %d bytes\n", status.MessageBytes)
-	fmt.Fprintf(&out, "summary text: %d bytes\n", status.SummaryBytes)
-	fmt.Fprint(&out, "actual model usage: not recorded yet")
+	fmt.Fprintf(&out, "- compactions: %d\n", status.Compactions)
+
+	fmt.Fprintf(&out, "\nStored Text\n")
+	fmt.Fprintf(&out, "- messages: %d bytes\n", status.MessageBytes)
+	fmt.Fprintf(&out, "- summaries: %d bytes\n", status.SummaryBytes)
+
+	fmt.Fprintf(&out, "\nActual Model Usage\n")
+	if status.Usage.Empty() {
+		fmt.Fprint(&out, "- not recorded yet")
+	} else {
+		fmt.Fprintf(
+			&out, "- input: %d tokens\n", status.Usage.InputTokens,
+		)
+		fmt.Fprintf(
+			&out, "- cached input: %d tokens\n",
+			status.Usage.CachedInputTokens,
+		)
+		fmt.Fprintf(
+			&out, "- output: %d tokens\n",
+			status.Usage.OutputTokens,
+		)
+		fmt.Fprintf(
+			&out, "- reasoning output: %d tokens\n",
+			status.Usage.ReasoningOutputTokens,
+		)
+		fmt.Fprintf(
+			&out, "- total: %d tokens", status.Usage.TotalTokens,
+		)
+	}
 
 	return out.String()
 }
@@ -173,6 +211,17 @@ func decodeStatusSummary(event Event) (SummaryData, error) {
 	}
 
 	return summary, nil
+}
+
+// decodeStatusUsage decodes a model usage event for status counters.
+func decodeStatusUsage(event Event) (UsageData, error) {
+	var usage UsageData
+	if err := json.Unmarshal(event.Data, &usage); err != nil {
+		return UsageData{}, fmt.Errorf("decode usage %s: %w", event.ID,
+			err)
+	}
+
+	return usage, nil
 }
 
 // statusMessageText joins text content parts for session status counters.

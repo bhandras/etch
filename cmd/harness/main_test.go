@@ -513,7 +513,7 @@ func TestRunChatStatusCommand(t *testing.T) {
 		t.Fatalf("chat failed: code=%d stdout=%q stderr=%q", code,
 			stdout.String(), stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "session age:") {
+	if !strings.Contains(stdout.String(), "- age:") {
 		t.Fatalf("missing session age: %q", stdout.String())
 	}
 	if !strings.Contains(stdout.String(), "turns: 1") {
@@ -524,7 +524,7 @@ func TestRunChatStatusCommand(t *testing.T) {
 	}
 	if !strings.Contains(
 		stdout.String(),
-		"actual model usage: not recorded yet",
+		"Actual Model Usage\n- not recorded yet",
 	) {
 
 		t.Fatalf("missing usage placeholder: %q", stdout.String())

@@ -63,6 +63,9 @@ type terminalTone struct {
 type liveTurnStats struct {
 	// ToolCalls is the number of local tool calls executed in the turn.
 	ToolCalls int
+
+	// Usage stores provider-reported token counters for the turn.
+	Usage model.Usage
 }
 
 // newLiveChatRenderer creates the live renderer for one chat turn.
@@ -360,12 +363,35 @@ func formatElapsed(elapsed time.Duration) string {
 
 // formatTurnStats returns optional compact counters for the turn footer.
 func formatTurnStats(stats liveTurnStats) string {
-	if stats.ToolCalls == 0 {
+	var parts []string
+	if stats.ToolCalls == 1 {
+		parts = append(parts, "1 tool")
+	} else if stats.ToolCalls > 1 {
+		parts = append(parts, fmt.Sprintf("%d tools", stats.ToolCalls))
+	}
+	if !stats.Usage.Empty() {
+		parts = append(
+			parts, fmt.Sprintf("%d in", stats.Usage.InputTokens),
+		)
+		if stats.Usage.CachedInputTokens > 0 {
+			parts = append(
+				parts, fmt.Sprintf("%d cached",
+					stats.Usage.CachedInputTokens),
+			)
+		}
+		parts = append(
+			parts, fmt.Sprintf("%d out", stats.Usage.OutputTokens),
+		)
+		if stats.Usage.ReasoningOutputTokens > 0 {
+			parts = append(
+				parts, fmt.Sprintf("%d reasoning",
+					stats.Usage.ReasoningOutputTokens),
+			)
+		}
+	}
+	if len(parts) == 0 {
 		return ""
 	}
-	if stats.ToolCalls == 1 {
-		return " · 1 tool"
-	}
 
-	return fmt.Sprintf(" · %d tools", stats.ToolCalls)
+	return " · " + strings.Join(parts, " · ")
 }
