@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -12,7 +13,7 @@ import (
 
 const (
 	// maxToolRounds caps model/tool exchange loops within one turn.
-	maxToolRounds = 4
+	maxToolRounds = 8
 )
 
 // TurnRequest contains everything needed to run one non-interactive turn.
@@ -89,6 +90,7 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 	parentID := user.ID
 
 	var assistant *session.Event
+	finalReceived := false
 	var text string
 	for round := 0; round < maxToolRounds; round++ {
 		response, err := collectModelResponse(
@@ -108,6 +110,7 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 				return nil, err
 			}
 			text = response.Text
+			finalReceived = true
 
 			break
 		}
@@ -132,7 +135,11 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 		for _, call := range response.ToolCalls {
 			result, err := executeTool(ctx, req.Tools, call)
 			if err != nil {
-				return nil, err
+				if errors.Is(err, context.Canceled) ||
+					errors.Is(err, context.DeadlineExceeded) {
+					return nil, err
+				}
+				result = tool.Result{Text: toolErrorText(err)}
 			}
 			toolEvent, err := store.Append(
 				session.EventToolMessage, parentID,
@@ -154,6 +161,10 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 	}
 	if assistant == nil {
 		return nil, fmt.Errorf("tool call limit exceeded")
+	}
+	if !finalReceived {
+		return nil, fmt.Errorf("tool call limit exceeded before " +
+			"final assistant response")
 	}
 
 	return &TurnResult{
@@ -249,6 +260,11 @@ func executeTool(ctx context.Context, registry *tool.Registry,
 	}
 
 	return registry.Execute(ctx, call)
+}
+
+// toolErrorText formats a tool failure as model-visible feedback.
+func toolErrorText(err error) string {
+	return "tool error: " + err.Error()
 }
 
 // sessionToolCalls converts model tool calls into durable session payloads.

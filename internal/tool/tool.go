@@ -199,8 +199,8 @@ func (writeTool) Spec() model.ToolSpec {
 	return model.ToolSpec{
 		Name: NameWrite,
 		Description: "Create or completely overwrite a local text file. " +
-			"Use this for new files or full rewrites; use edit for " +
-			"surgical changes once that tool is available.",
+			"Use this for new files, empty files, or full rewrites; use " +
+			"edit for surgical changes to existing non-empty content.",
 		Parameters: json.RawMessage(`{
 			"type":"object",
 			"properties":{
@@ -247,7 +247,9 @@ func (editTool) Spec() model.ToolSpec {
 		Name: NameEdit,
 		Description: "Edit one existing text file using exact text " +
 			"replacement. Each oldText must appear exactly once in the " +
-			"original file. Merge nearby changes into one larger edit.",
+			"original file. To add a line, replace a unique neighboring " +
+			"block with the same block plus the new line. Use write for " +
+			"empty files or full rewrites.",
 		Parameters: json.RawMessage(`{
 			"type":"object",
 			"properties":{
@@ -263,7 +265,8 @@ func (editTool) Spec() model.ToolSpec {
 						"properties":{
 							"oldText":{
 								"type":"string",
-								"description":"Exact text to replace. Include enough surrounding context to make it unique."
+								"minLength":1,
+								"description":"Non-empty exact text to replace. Must include non-whitespace context and enough surrounding text to make it unique."
 							},
 							"newText":{
 								"type":"string",

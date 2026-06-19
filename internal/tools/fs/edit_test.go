@@ -98,6 +98,25 @@ func TestEditFileRejectsMissingText(t *testing.T) {
 	}
 }
 
+// TestEditFileRejectsWhitespaceOnlyText verifies that edits include visible
+// context rather than anchoring on a fragile newline or indentation span.
+func TestEditFileRejectsWhitespaceOnlyText(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	writeFile(t, filepath.Join(dir, "note.txt"), "alpha\n")
+
+	_, err := EditFile(context.Background(), EditRequest{
+		Path: "note.txt",
+		Edits: []Edit{{
+			OldText: "\n",
+			NewText: "\nbeta\n",
+		}},
+	})
+	if err == nil {
+		t.Fatal("expected whitespace-only text error")
+	}
+}
+
 // TestEditFileRejectsAmbiguousText verifies that oldText must identify one
 // unique region in the original file.
 func TestEditFileRejectsAmbiguousText(t *testing.T) {

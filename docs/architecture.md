@@ -277,14 +277,16 @@ directory and refuse to modify internal `.git` or `.harness` paths.
 
 The fourth operation is `edit`, an exact-replacement mutation tool for existing
 text files. Each `oldText` must match exactly one region in the original file;
-missing, ambiguous, empty, or overlapping edits fail instead of guessing. All
-edits are located against the original file before any replacement is applied,
-then written from the end of the file backward through the same atomic
-replacement helper used by `write`. Successful edits return a compact,
-unified-style line diff with a 20KB output cap so the model can inspect what
-changed without flooding the transcript. The first version intentionally avoids
-fuzzy matching; that can be considered later after the sharp exact-replacement
-contract is proven.
+missing, ambiguous, empty, whitespace-only, or overlapping edits fail instead
+of guessing. All edits are located against the original file before any
+replacement is applied, then written from the end of the file backward through
+the same atomic replacement helper used by `write`. Successful edits return a
+compact, unified-style line diff with a 20KB output cap so the model can inspect
+what changed without flooding the transcript. The first version intentionally
+avoids fuzzy matching; that can be considered later after the sharp
+exact-replacement contract is proven. Adding a line is still an exact
+replacement: the model should replace a unique neighboring block with that same
+block plus the inserted line. Empty files and full rewrites should use `write`.
 
 The fifth operation is `bash`, a bounded command execution tool for
 verification and local diagnostics. It runs `bash -lc` in the current working
@@ -313,7 +315,10 @@ go run ./cmd/harness tool bash -- go test ./...
 When using the OpenAI-compatible provider, the CLI includes builtin function
 schemas in model requests. If the model calls one, the core executes the
 pure-Go tool, appends a `message.tool` event, and sends the tool result back to
-the model for a final answer.
+the model for a final answer. Ordinary tool failures are also appended as
+`message.tool` events with a `tool error:` prefix instead of aborting the turn,
+so the model can recover by choosing a better tool call or asking for more
+context. Context cancellation still aborts the turn.
 
 The model should see one unified tool list regardless of where a tool comes
 from:

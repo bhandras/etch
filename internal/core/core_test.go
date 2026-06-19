@@ -150,6 +150,105 @@ func TestRunTurnExecutesToolCalls(t *testing.T) {
 	}
 }
 
+// TestRunTurnFeedsToolErrorsBackToModel verifies that ordinary tool failures
+// are persisted as tool results so the model can recover.
+func TestRunTurnFeedsToolErrorsBackToModel(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	writeFile(t, filepath.Join(dir, "hello.md"), "hello\n")
+
+	client := &scriptedToolClient{
+		events: [][]model.Event{
+			{
+				{
+					Type: model.EventToolCall,
+					ToolCall: model.ToolCall{
+						ID:   "call_1",
+						Name: tool.NameEdit,
+						Arguments: `{"path":"hello.md","edits":[` +
+							`{"oldText":"","newText":` +
+							`"hello world\n"}]}`,
+					},
+				},
+				{
+					Type: model.EventDone,
+				},
+			},
+			{
+				{
+					Type: model.EventTextDelta,
+					Text: "I need a non-empty oldText.",
+				},
+				{
+					Type: model.EventDone,
+				},
+			},
+		},
+	}
+
+	result, err := RunTurn(context.Background(), TurnRequest{
+		Prompt:     "edit hello.md",
+		SessionDir: t.TempDir(),
+		CWD:        dir,
+		Model:      client,
+		Tools:      tool.DefaultRegistry(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.AssistantText != "I need a non-empty oldText." {
+		t.Fatalf("unexpected assistant text: %q", result.AssistantText)
+	}
+	if len(client.requests) != 2 {
+		t.Fatalf("expected two model requests, got %d",
+			len(client.requests))
+	}
+	last := client.requests[1].Messages[len(client.requests[1].Messages)-1]
+	if last.Role != model.RoleTool {
+		t.Fatalf("expected tool error message, got %#v", last)
+	}
+	if last.Content != "tool error: edit 1 oldText must not be empty" {
+		t.Fatalf("unexpected tool error content: %q", last.Content)
+	}
+}
+
+// TestRunTurnRequiresFinalAssistantResponse verifies that exhausting tool
+// rounds after tool calls does not return an empty successful turn.
+func TestRunTurnRequiresFinalAssistantResponse(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "go.mod"), "")
+
+	scripts := make([][]model.Event, 0, maxToolRounds)
+	for i := 0; i < maxToolRounds; i++ {
+		scripts = append(scripts, []model.Event{
+			{
+				Type: model.EventToolCall,
+				ToolCall: model.ToolCall{
+					ID:   "call_1",
+					Name: tool.NameLS,
+					Arguments: `{"path":` +
+						quoteJSON(dir) +
+						`}`,
+				},
+			},
+			{
+				Type: model.EventDone,
+			},
+		})
+	}
+
+	_, err := RunTurn(context.Background(), TurnRequest{
+		Prompt:     "keep using tools",
+		SessionDir: t.TempDir(),
+		CWD:        dir,
+		Model:      &scriptedToolClient{events: scripts},
+		Tools:      tool.DefaultRegistry(),
+	})
+	if err == nil {
+		t.Fatal("expected tool call limit error")
+	}
+}
+
 // hasToolSpec reports whether a request advertised the named tool.
 func hasToolSpec(specs []model.ToolSpec, name string) bool {
 	for _, spec := range specs {

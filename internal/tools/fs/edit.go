@@ -119,6 +119,10 @@ func findEditSpans(content string, edits []Edit) ([]editSpan, error) {
 			return nil, fmt.Errorf("edit %d oldText must not "+
 				"be empty", i+1)
 		}
+		if strings.TrimSpace(oldText) == "" {
+			return nil, fmt.Errorf("edit %d oldText must include "+
+				"non-whitespace context", i+1)
+		}
 
 		start := strings.Index(content, oldText)
 		if start < 0 {
