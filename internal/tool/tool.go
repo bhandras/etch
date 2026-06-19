@@ -9,6 +9,7 @@ import (
 
 	"harness/internal/model"
 	fs "harness/internal/tools/fs"
+	"harness/internal/tools/shell"
 )
 
 const (
@@ -24,6 +25,9 @@ const (
 	// NameEdit is the model-facing name for the exact replacement edit
 	// tool.
 	NameEdit = "edit"
+
+	// NameBash is the model-facing name for bounded bash command execution.
+	NameBash = "bash"
 )
 
 // Result is the text returned by a builtin tool execution.
@@ -53,6 +57,7 @@ func DefaultRegistry() *Registry {
 	registry.Register(readTool{})
 	registry.Register(writeTool{})
 	registry.Register(editTool{})
+	registry.Register(bashTool{})
 
 	return registry
 }
@@ -285,6 +290,51 @@ func (editTool) Execute(ctx context.Context, arguments string) (Result, error) {
 	}
 
 	text, err := fs.EditFile(ctx, req)
+	if err != nil {
+		return Result{}, err
+	}
+
+	return Result{Text: text}, nil
+}
+
+// bashTool wraps bounded local bash execution as a model tool.
+type bashTool struct{}
+
+// Spec returns the model-facing schema for the bash tool.
+func (bashTool) Spec() model.ToolSpec {
+	return model.ToolSpec{
+		Name: NameBash,
+		Description: "Run a local bash command in the current working " +
+			"directory with a timeout and capped stdout/stderr. Use this " +
+			"for verification commands such as tests and build checks.",
+		Parameters: json.RawMessage(`{
+			"type":"object",
+			"properties":{
+				"command":{
+					"type":"string",
+					"description":"Bash command line to execute."
+				},
+				"timeoutSeconds":{
+					"type":"integer",
+					"description":"Optional timeout in seconds. Defaults to 30 and is capped at 120."
+				}
+			},
+			"required":["command"]
+		}`),
+	}
+}
+
+// Execute decodes bash arguments and runs a bounded local command.
+func (bashTool) Execute(ctx context.Context, arguments string) (Result, error) {
+	var req shell.RunRequest
+	if strings.TrimSpace(arguments) != "" {
+		if err := json.Unmarshal([]byte(arguments), &req); err != nil {
+			return Result{}, fmt.Errorf("decode bash arguments: %w",
+				err)
+		}
+	}
+
+	text, err := shell.Run(ctx, req)
 	if err != nil {
 		return Result{}, err
 	}

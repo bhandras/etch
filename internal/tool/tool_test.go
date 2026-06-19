@@ -107,6 +107,23 @@ func TestDefaultRegistryExecutesEdit(t *testing.T) {
 	}
 }
 
+// TestDefaultRegistryExecutesBash verifies that the registry exposes and
+// dispatches bounded local bash execution.
+func TestDefaultRegistryExecutesBash(t *testing.T) {
+	registry := DefaultRegistry()
+	result, err := registry.Execute(context.Background(), model.ToolCall{
+		ID:        "call_1",
+		Name:      NameBash,
+		Arguments: `{"command":"printf hello"}`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.Text, "stdout:\nhello") {
+		t.Fatalf("unexpected bash result: %q", result.Text)
+	}
+}
+
 // quoteJSON returns a quoted JSON string literal for test arguments.
 func quoteJSON(text string) string {
 	encoded, err := json.Marshal(text)
@@ -130,19 +147,22 @@ func writeFile(t *testing.T, path string, content string) {
 func TestSpecsReturnsStableOrder(t *testing.T) {
 	registry := DefaultRegistry()
 	specs := registry.Specs()
-	if len(specs) != 4 {
-		t.Fatalf("expected four specs, got %d", len(specs))
+	if len(specs) != 5 {
+		t.Fatalf("expected five specs, got %d", len(specs))
 	}
-	if specs[0].Name != NameEdit {
+	if specs[0].Name != NameBash {
 		t.Fatalf("unexpected tool name: %q", specs[0].Name)
 	}
-	if specs[1].Name != NameLS {
+	if specs[1].Name != NameEdit {
 		t.Fatalf("unexpected tool name: %q", specs[1].Name)
 	}
-	if specs[2].Name != NameRead {
+	if specs[2].Name != NameLS {
 		t.Fatalf("unexpected tool name: %q", specs[2].Name)
 	}
-	if specs[3].Name != NameWrite {
+	if specs[3].Name != NameRead {
 		t.Fatalf("unexpected tool name: %q", specs[3].Name)
+	}
+	if specs[4].Name != NameWrite {
+		t.Fatalf("unexpected tool name: %q", specs[4].Name)
 	}
 }

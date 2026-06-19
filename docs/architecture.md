@@ -286,6 +286,16 @@ changed without flooding the transcript. The first version intentionally avoids
 fuzzy matching; that can be considered later after the sharp exact-replacement
 contract is proven.
 
+The fifth operation is `bash`, a bounded command execution tool for
+verification and local diagnostics. It runs `bash -lc` in the current working
+directory, defaults to a 30-second timeout, caps caller-provided timeouts at 120
+seconds, captures stdout and stderr separately, and caps each output stream at
+64KB. Non-zero exits are returned as tool output with their exit code instead
+of aborting the harness turn. This tool intentionally depends on the user's
+local shell environment because executing external programs is its purpose; the
+agent core and read/write/search tools should still avoid hidden binary
+dependencies.
+
 The builtin tool registry lives under `internal/tool`. Registered tools wrap
 `internal/tools/fs` operations as model-callable functions, and the CLI exposes
 the same operations for direct smoke testing:
@@ -297,6 +307,7 @@ go run ./cmd/harness tool read AGENTS.md
 go run ./cmd/harness tool read --offset 20 --limit 40 AGENTS.md
 go run ./cmd/harness tool write --content 'hello\n' notes/hello.txt
 go run ./cmd/harness tool edit --old hello --new goodbye notes/hello.txt
+go run ./cmd/harness tool bash -- go test ./...
 ```
 
 When using the OpenAI-compatible provider, the CLI includes builtin function

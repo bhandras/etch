@@ -52,11 +52,13 @@ type cliConfig struct {
 	apiKey      string
 	toolName    string
 	toolPath    string
+	toolCommand string
 	toolContent string
 	toolOldText string
 	toolNewText string
 	toolOffset  int
 	toolLimit   int
+	toolTimeout int
 }
 
 // main runs the command and exits with the returned status code.
@@ -301,6 +303,10 @@ func parseToolFlags(args []string, stderr io.Writer) (cliConfig, error) {
 		&cfg.toolOffset, "offset", 0,
 		"1-indexed line offset for tools that support offsets",
 	)
+	fs.IntVar(
+		&cfg.toolTimeout, "timeout", 0,
+		"timeout in seconds for tools that run commands",
+	)
 	fs.StringVar(
 		&cfg.toolContent, "content", "",
 		"complete file content for tools that write files",
@@ -350,6 +356,13 @@ func parseToolFlags(args []string, stderr io.Writer) (cliConfig, error) {
 			return cliConfig{}, fmt.Errorf("edit requires --old")
 		}
 		cfg.toolPath = fs.Arg(0)
+
+	case tool.NameBash:
+		if fs.NArg() == 0 {
+			return cliConfig{}, fmt.Errorf("bash requires a " +
+				"command")
+		}
+		cfg.toolCommand = strings.Join(fs.Args(), " ")
 
 	default:
 		return cliConfig{}, fmt.Errorf("unknown tool %q", cfg.toolName)
@@ -429,6 +442,21 @@ func toolArguments(cfg cliConfig) (string, error) {
 		encoded, err := json.Marshal(args)
 		if err != nil {
 			return "", fmt.Errorf("marshal edit arguments: %w", err)
+		}
+
+		return string(encoded), nil
+
+	case tool.NameBash:
+		args := struct {
+			Command        string `json:"command"`
+			TimeoutSeconds int    `json:"timeoutSeconds,omitempty"`
+		}{
+			Command:        cfg.toolCommand,
+			TimeoutSeconds: cfg.toolTimeout,
+		}
+		encoded, err := json.Marshal(args)
+		if err != nil {
+			return "", fmt.Errorf("marshal bash arguments: %w", err)
 		}
 
 		return string(encoded), nil

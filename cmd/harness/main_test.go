@@ -250,6 +250,25 @@ func TestToolEditRunsDirectly(t *testing.T) {
 	}
 }
 
+// TestToolBashRunsDirectly verifies the manual bounded command smoke path.
+func TestToolBashRunsDirectly(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run(
+		[]string{"tool", "bash", "--", "printf", "hello"}, &stdout,
+		&stderr,
+	)
+	if code != 0 {
+		t.Fatalf("tool failed: code=%d stdout=%q stderr=%q", code,
+			stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "exit code: 0") {
+		t.Fatalf("missing exit code: %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "stdout:\nhello") {
+		t.Fatalf("missing stdout: %q", stdout.String())
+	}
+}
+
 // writeFile creates a small file fixture for CLI tests.
 func writeFile(t *testing.T, path string, content string) {
 	t.Helper()
