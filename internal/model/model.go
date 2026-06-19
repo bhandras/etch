@@ -7,6 +7,9 @@ import (
 )
 
 const (
+	// RoleSystem identifies system instructions in model requests.
+	RoleSystem = "system"
+
 	// RoleUser identifies user messages in model requests.
 	RoleUser = "user"
 

@@ -84,6 +84,50 @@ func TestAppendChainsMessageParents(t *testing.T) {
 	}
 }
 
+// TestOpenAppendsToExistingSession verifies that continuation reuses the
+// existing log and parent chain.
+func TestOpenAppendsToExistingSession(t *testing.T) {
+	store, started, err := Create(t.TempDir(), "/work/project", "hello")
+	if err != nil {
+		t.Fatal(err)
+	}
+	user, err := store.Append(
+		EventUserMessage, started.ID, TextMessage(RoleUser, "hello"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := store.Path()
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, events, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	if len(events) != 2 {
+		t.Fatalf("expected two loaded events, got %d", len(events))
+	}
+	if reopened.LastID() != user.ID {
+		t.Fatalf("last id mismatch: want %q got %q", user.ID,
+			reopened.LastID())
+	}
+
+	assistant, err := reopened.Append(
+		EventAssistantMessage, reopened.LastID(),
+		TextMessage(RoleAssistant, "hi"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if assistant.ParentID != user.ID {
+		t.Fatalf("assistant parent mismatch: want %q got %q", user.ID,
+			assistant.ParentID)
+	}
+}
+
 // TestCreateAppendsIndexEntry verifies that session creation also records the
 // summary metadata used by list and show commands.
 func TestCreateAppendsIndexEntry(t *testing.T) {

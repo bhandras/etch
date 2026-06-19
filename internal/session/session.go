@@ -207,6 +207,35 @@ func Create(dir string, cwd string, title string) (*Store, *Event, error) {
 	return store, event, nil
 }
 
+// Open opens an existing session log for appending and restores its last
+// event as the current leaf.
+func Open(path string) (*Store, []Event, error) {
+	events, err := ReadAll(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(events) == 0 {
+		return nil, nil, fmt.Errorf("session log is empty")
+	}
+
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, filePermissions)
+	if err != nil {
+		return nil, nil, fmt.Errorf("open session for append: %w", err)
+	}
+
+	store := &Store{
+		dir: filepath.Dir(path),
+		id: strings.TrimSuffix(
+			filepath.Base(path), filepath.Ext(path),
+		),
+		path:   path,
+		file:   file,
+		lastID: events[len(events)-1].ID,
+	}
+
+	return store, events, nil
+}
+
 // ID returns the stable identifier for the session log.
 func (s *Store) ID() string {
 	return s.id

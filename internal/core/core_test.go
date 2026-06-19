@@ -76,6 +76,70 @@ func TestRunTurnRejectsEmptyPrompt(t *testing.T) {
 	}
 }
 
+// TestRunTurnContinuesExistingSession verifies that a follow-up turn appends
+// to the same JSONL log and replays prior messages into the model request.
+func TestRunTurnContinuesExistingSession(t *testing.T) {
+	first, err := RunTurn(context.Background(), TurnRequest{
+		Prompt:     "first",
+		SessionDir: t.TempDir(),
+		CWD:        "/work/project",
+		Model:      model.EchoClient{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	client := &scriptedToolClient{
+		events: [][]model.Event{{
+			{
+				Type: model.EventTextDelta,
+				Text: "second",
+			},
+			{
+				Type: model.EventDone,
+			},
+		}},
+	}
+	second, err := RunTurn(context.Background(), TurnRequest{
+		Prompt:      "follow-up",
+		SessionPath: first.SessionPath,
+		CWD:         "/work/project",
+		Model:       client,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.SessionPath != first.SessionPath {
+		t.Fatalf("session path mismatch: want %q got %q",
+			first.SessionPath, second.SessionPath)
+	}
+	if len(client.requests) != 1 {
+		t.Fatalf("expected one model request, got %d",
+			len(client.requests))
+	}
+
+	messages := client.requests[0].Messages
+	if len(messages) != 3 {
+		t.Fatalf("expected three messages, got %#v", messages)
+	}
+	if messages[0].Role != model.RoleUser ||
+		messages[0].Content != "first" {
+
+		t.Fatalf("unexpected first history message: %#v", messages[0])
+	}
+	if messages[1].Role != model.RoleAssistant ||
+		messages[1].Content != "first" {
+
+		t.Fatalf("unexpected assistant history message: %#v",
+			messages[1])
+	}
+	if messages[2].Role != model.RoleUser ||
+		messages[2].Content != "follow-up" {
+
+		t.Fatalf("unexpected current user message: %#v", messages[2])
+	}
+}
+
 // TestRunTurnExecutesToolCalls verifies that the core can run one model
 // requested tool call and feed the result back into a final model answer.
 func TestRunTurnExecutesToolCalls(t *testing.T) {

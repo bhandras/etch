@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"harness/internal/model"
+	"harness/internal/prompt"
 	"harness/internal/session"
 	"harness/internal/tool"
 )
@@ -25,8 +26,15 @@ type TurnRequest struct {
 	// stored.
 	SessionDir string
 
+	// SessionPath is an existing JSONL session log to continue. Empty means
+	// a new session should be created in SessionDir.
+	SessionPath string
+
 	// CWD records the working directory associated with the session.
 	CWD string
+
+	// SystemText stores optional system instructions for the model context.
+	SystemText string
 
 	// Model is the provider-neutral client used to stream the assistant
 	// reply.
@@ -60,33 +68,35 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 	if strings.TrimSpace(req.Prompt) == "" {
 		return nil, fmt.Errorf("prompt must not be empty")
 	}
-	if req.SessionDir == "" {
+	if req.SessionDir == "" && req.SessionPath == "" {
 		return nil, fmt.Errorf("session dir must not be empty")
 	}
 	if req.Model == nil {
 		return nil, fmt.Errorf("model client must not be nil")
 	}
 
-	store, started, err := session.Create(
-		req.SessionDir, req.CWD, req.Prompt,
-	)
+	store, history, err := openTurnStore(req)
 	if err != nil {
 		return nil, err
 	}
 	defer store.Close()
 
 	user, err := store.Append(
-		session.EventUserMessage, started.ID,
+		session.EventUserMessage, store.LastID(),
 		session.TextMessage(session.RoleUser, req.Prompt),
 	)
 	if err != nil {
 		return nil, err
 	}
+	history = append(history, *user)
 
-	messages := []model.Message{{
-		Role:    model.RoleUser,
-		Content: req.Prompt,
-	}}
+	messages, err := prompt.BuildHistoryMessages(prompt.HistoryRequest{
+		Events:     history,
+		SystemText: req.SystemText,
+	})
+	if err != nil {
+		return nil, err
+	}
 	parentID := user.ID
 
 	var assistant *session.Event
@@ -174,6 +184,27 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 		AssistantEventID: assistant.ID,
 		AssistantText:    text,
 	}, nil
+}
+
+// openTurnStore creates or opens the session store for one turn.
+func openTurnStore(req TurnRequest) (*session.Store, []session.Event, error) {
+	if req.SessionPath != "" {
+		store, events, err := session.Open(req.SessionPath)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		return store, events, nil
+	}
+
+	store, started, err := session.Create(
+		req.SessionDir, req.CWD, req.Prompt,
+	)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return store, []session.Event{*started}, nil
 }
 
 // modelResponse is one complete model pass through text and tool-call events.
