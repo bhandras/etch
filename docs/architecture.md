@@ -95,6 +95,20 @@ Cancellation should flow through `context.Context`. The user must be able to
 interrupt a model stream or a running tool call without killing the whole
 session.
 
+The loop uses a configurable safety bound rather than a tiny fixed ceiling.
+`DefaultMaxToolRounds` is 32 model/tool exchange rounds per user turn. A round
+is one model response followed by zero or more requested tool executions, so it
+is not the same as an individual tool-call count. CLI callers can raise or
+lower the bound with `--max-tool-rounds`, or set `HARNESS_MAX_TOOL_ROUNDS` for
+the process environment.
+
+Pi appears to treat tool use as part of the broader agent lifecycle: it tracks
+tool calls for session statistics and relies on stop reasons, cancellation,
+retries, context overflow handling, and compaction to bound real work. This
+harness keeps one explicit per-turn guard because the current kernel is much
+smaller, has no automatic compaction yet, and should fail predictably if a model
+gets stuck in a tool loop.
+
 ## Session Log
 
 Sessions are append-only JSONL files. Each line is one event. The in-memory

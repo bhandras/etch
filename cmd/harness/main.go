@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -50,25 +51,26 @@ const (
 
 // cliConfig stores parsed command-line options for one invocation.
 type cliConfig struct {
-	command      string
-	prompt       string
-	sessionDir   string
-	jsonOutput   bool
-	sessionID    string
-	provider     string
-	model        string
-	baseURL      string
-	apiKey       string
-	toolName     string
-	toolPath     string
-	toolCommand  string
-	toolContent  string
-	toolOldText  string
-	toolNewText  string
-	toolOffset   int
-	toolLimit    int
-	toolTimeout  int
-	keepMessages int
+	command       string
+	prompt        string
+	sessionDir    string
+	jsonOutput    bool
+	sessionID     string
+	provider      string
+	model         string
+	baseURL       string
+	apiKey        string
+	toolName      string
+	toolPath      string
+	toolCommand   string
+	toolContent   string
+	toolOldText   string
+	toolNewText   string
+	toolOffset    int
+	toolLimit     int
+	toolTimeout   int
+	keepMessages  int
+	maxToolRounds int
 }
 
 // main runs the command and exits with the returned status code.
@@ -134,12 +136,13 @@ func runPrompt(cfg cliConfig, stdout io.Writer, stderr io.Writer) int {
 	}
 
 	result, err := core.RunTurn(context.Background(), core.TurnRequest{
-		Prompt:     cfg.prompt,
-		SessionDir: cfg.sessionDir,
-		CWD:        cwd,
-		SystemText: systemText,
-		Model:      modelClient,
-		Tools:      tool.DefaultRegistry(),
+		Prompt:        cfg.prompt,
+		SessionDir:    cfg.sessionDir,
+		CWD:           cwd,
+		SystemText:    systemText,
+		Model:         modelClient,
+		Tools:         tool.DefaultRegistry(),
+		MaxToolRounds: cfg.maxToolRounds,
 	})
 	if err != nil {
 		fmt.Fprintln(stderr, "error:", err)
@@ -297,13 +300,14 @@ func runChat(cfg cliConfig, stdin io.Reader, stdout io.Writer,
 
 		result, err := core.RunTurn(
 			context.Background(), core.TurnRequest{
-				Prompt:      line,
-				SessionDir:  cfg.sessionDir,
-				SessionPath: sessionPath,
-				CWD:         cwd,
-				SystemText:  systemText,
-				Model:       modelClient,
-				Tools:       tool.DefaultRegistry(),
+				Prompt:        line,
+				SessionDir:    cfg.sessionDir,
+				SessionPath:   sessionPath,
+				CWD:           cwd,
+				SystemText:    systemText,
+				Model:         modelClient,
+				Tools:         tool.DefaultRegistry(),
+				MaxToolRounds: cfg.maxToolRounds,
 				Observer: &chatObserver{
 					stdout: stdout,
 				},
@@ -816,6 +820,9 @@ func parseChatFlags(args []string, stderr io.Writer) (cliConfig, error) {
 		model:      envDefault("OPENAI_MODEL", ""),
 		baseURL:    envDefault("OPENAI_BASE_URL", openai.DefaultBaseURL),
 		apiKey:     os.Getenv("OPENAI_API_KEY"),
+		maxToolRounds: envIntDefault(
+			"HARNESS_MAX_TOOL_ROUNDS", core.DefaultMaxToolRounds,
+		),
 	}
 	fs := flag.NewFlagSet(commandChat, flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -838,12 +845,20 @@ func parseChatFlags(args []string, stderr io.Writer) (cliConfig, error) {
 	)
 	fs.StringVar(&cfg.apiKey, "api-key", cfg.apiKey, "OpenAI API key")
 	fs.IntVar(
+		&cfg.maxToolRounds, "max-tool-rounds", cfg.maxToolRounds,
+		"maximum model/tool exchange rounds per user turn",
+	)
+	fs.IntVar(
 		&cfg.keepMessages, "keep-messages",
 		core.DefaultCompactKeepMessages,
 		"recent message events kept raw by /compact",
 	)
 	if err := fs.Parse(args); err != nil {
 		return cliConfig{}, err
+	}
+	if cfg.maxToolRounds < 1 {
+		return cliConfig{}, fmt.Errorf("max-tool-rounds must be " +
+			"positive")
 	}
 
 	return cfg, nil
@@ -904,6 +919,9 @@ func parseRunFlags(args []string, stderr io.Writer) (cliConfig, error) {
 	cfg.model = envDefault("OPENAI_MODEL", "")
 	cfg.baseURL = envDefault("OPENAI_BASE_URL", openai.DefaultBaseURL)
 	cfg.apiKey = os.Getenv("OPENAI_API_KEY")
+	cfg.maxToolRounds = envIntDefault(
+		"HARNESS_MAX_TOOL_ROUNDS", core.DefaultMaxToolRounds,
+	)
 	fs := flag.NewFlagSet("harness", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.StringVar(&cfg.prompt, "p", "", "prompt to run non-interactively")
@@ -924,8 +942,16 @@ func parseRunFlags(args []string, stderr io.Writer) (cliConfig, error) {
 		"OpenAI-compatible API base URL",
 	)
 	fs.StringVar(&cfg.apiKey, "api-key", cfg.apiKey, "OpenAI API key")
+	fs.IntVar(
+		&cfg.maxToolRounds, "max-tool-rounds", cfg.maxToolRounds,
+		"maximum model/tool exchange rounds per user turn",
+	)
 	if err := fs.Parse(args); err != nil {
 		return cliConfig{}, err
+	}
+	if cfg.maxToolRounds < 1 {
+		return cliConfig{}, fmt.Errorf("max-tool-rounds must be " +
+			"positive")
 	}
 	if cfg.prompt == "" {
 		return cliConfig{}, fmt.Errorf("provide a prompt with -p")
@@ -968,6 +994,20 @@ func envDefault(name string, fallback string) string {
 	}
 
 	return fallback
+}
+
+// envIntDefault returns a positive integer environment value or fallback.
+func envIntDefault(name string, fallback int) int {
+	value := os.Getenv(name)
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed < 1 {
+		return fallback
+	}
+
+	return parsed
 }
 
 // parseSessionsFlags converts sessions subcommand flags into configuration.

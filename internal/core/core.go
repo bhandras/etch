@@ -13,8 +13,9 @@ import (
 )
 
 const (
-	// maxToolRounds caps model/tool exchange loops within one turn.
-	maxToolRounds = 8
+	// DefaultMaxToolRounds is the normal safety limit for model/tool
+	// exchange loops within one user turn.
+	DefaultMaxToolRounds = 32
 )
 
 // TurnRequest contains everything needed to run one non-interactive turn.
@@ -42,6 +43,10 @@ type TurnRequest struct {
 
 	// Tools contains builtin tools the model may call during the turn.
 	Tools *tool.Registry
+
+	// MaxToolRounds caps model/tool exchange loops within one turn. Values
+	// less than one use DefaultMaxToolRounds.
+	MaxToolRounds int
 
 	// Observer receives durable events as they are appended during the
 	// turn.
@@ -111,6 +116,7 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 	}
 	parentID := user.ID
 
+	maxToolRounds := toolRoundLimit(req.MaxToolRounds)
 	var assistant *session.Event
 	finalReceived := false
 	var text string
@@ -185,10 +191,10 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 		}
 	}
 	if assistant == nil {
-		return nil, fmt.Errorf("tool call limit exceeded")
+		return nil, fmt.Errorf("tool round limit exceeded")
 	}
 	if !finalReceived {
-		return nil, fmt.Errorf("tool call limit exceeded before " +
+		return nil, fmt.Errorf("tool round limit exceeded before " +
 			"final assistant response")
 	}
 
@@ -199,6 +205,15 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 		AssistantEventID: assistant.ID,
 		AssistantText:    text,
 	}, nil
+}
+
+// toolRoundLimit returns the effective model/tool loop limit for a turn.
+func toolRoundLimit(requested int) int {
+	if requested > 0 {
+		return requested
+	}
+
+	return DefaultMaxToolRounds
 }
 
 // notifyEvent sends an appended event to the optional turn observer.

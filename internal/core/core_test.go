@@ -342,8 +342,12 @@ func TestRunTurnRequiresFinalAssistantResponse(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "go.mod"), "")
 
-	scripts := make([][]model.Event, 0, maxToolRounds)
-	for i := 0; i < maxToolRounds; i++ {
+	// customLimit keeps the exhaustion path fast while proving the request
+	// override is honored.
+	const customLimit = 2
+
+	scripts := make([][]model.Event, 0, customLimit)
+	for i := 0; i < customLimit; i++ {
 		scripts = append(scripts, []model.Event{
 			{
 				Type: model.EventToolCall,
@@ -362,14 +366,15 @@ func TestRunTurnRequiresFinalAssistantResponse(t *testing.T) {
 	}
 
 	_, err := RunTurn(context.Background(), TurnRequest{
-		Prompt:     "keep using tools",
-		SessionDir: t.TempDir(),
-		CWD:        dir,
-		Model:      &scriptedToolClient{events: scripts},
-		Tools:      tool.DefaultRegistry(),
+		Prompt:        "keep using tools",
+		SessionDir:    t.TempDir(),
+		CWD:           dir,
+		Model:         &scriptedToolClient{events: scripts},
+		Tools:         tool.DefaultRegistry(),
+		MaxToolRounds: customLimit,
 	})
 	if err == nil {
-		t.Fatal("expected tool call limit error")
+		t.Fatal("expected tool round limit error")
 	}
 }
 
