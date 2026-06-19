@@ -13,6 +13,7 @@ import (
 
 	"harness/internal/core"
 	"harness/internal/model"
+	"harness/internal/provider/openai"
 	"harness/internal/session"
 )
 
@@ -29,6 +30,9 @@ const (
 
 	// commandShow renders one local session transcript.
 	commandShow = "show"
+
+	// providerEcho selects the dependency-free deterministic model client.
+	providerEcho = "echo"
 )
 
 // cliConfig stores parsed command-line options for one invocation.
@@ -38,6 +42,10 @@ type cliConfig struct {
 	sessionDir string
 	jsonOutput bool
 	sessionID  string
+	provider   string
+	model      string
+	baseURL    string
+	apiKey     string
 }
 
 // main runs the command and exits with the returned status code.
@@ -80,11 +88,18 @@ func runPrompt(cfg cliConfig, stdout io.Writer, stderr io.Writer) int {
 		return 1
 	}
 
+	modelClient, err := modelClient(cfg)
+	if err != nil {
+		fmt.Fprintln(stderr, "error:", err)
+
+		return 1
+	}
+
 	result, err := core.RunTurn(context.Background(), core.TurnRequest{
 		Prompt:     cfg.prompt,
 		SessionDir: cfg.sessionDir,
 		CWD:        cwd,
-		Model:      model.EchoClient{},
+		Model:      modelClient,
 	})
 	if err != nil {
 		fmt.Fprintln(stderr, "error:", err)
@@ -212,6 +227,10 @@ func parseFlags(args []string, stderr io.Writer) (cliConfig, error) {
 func parseRunFlags(args []string, stderr io.Writer) (cliConfig, error) {
 	var cfg cliConfig
 	cfg.command = commandRun
+	cfg.provider = envDefault("HARNESS_PROVIDER", providerEcho)
+	cfg.model = envDefault("OPENAI_MODEL", "")
+	cfg.baseURL = envDefault("OPENAI_BASE_URL", openai.DefaultBaseURL)
+	cfg.apiKey = os.Getenv("OPENAI_API_KEY")
 	fs := flag.NewFlagSet("harness", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.StringVar(&cfg.prompt, "p", "", "prompt to run non-interactively")
@@ -222,6 +241,16 @@ func parseRunFlags(args []string, stderr io.Writer) (cliConfig, error) {
 	fs.BoolVar(
 		&cfg.jsonOutput, "json", false, "print the turn result as JSON",
 	)
+	fs.StringVar(
+		&cfg.provider, "provider", cfg.provider,
+		"model provider: echo or openai",
+	)
+	fs.StringVar(&cfg.model, "model", cfg.model, "provider model name")
+	fs.StringVar(
+		&cfg.baseURL, "base-url", cfg.baseURL,
+		"OpenAI-compatible API base URL",
+	)
+	fs.StringVar(&cfg.apiKey, "api-key", cfg.apiKey, "OpenAI API key")
 	if err := fs.Parse(args); err != nil {
 		return cliConfig{}, err
 	}
@@ -230,6 +259,42 @@ func parseRunFlags(args []string, stderr io.Writer) (cliConfig, error) {
 	}
 
 	return cfg, nil
+}
+
+// modelClient creates the provider selected by run command configuration.
+func modelClient(cfg cliConfig) (model.Client, error) {
+	switch cfg.provider {
+	case "", providerEcho:
+		return model.EchoClient{}, nil
+
+	case openai.ProviderName:
+		if cfg.model == "" {
+			return nil, fmt.Errorf("openai provider requires " +
+				"--model or OPENAI_MODEL")
+		}
+		if cfg.apiKey == "" {
+			return nil, fmt.Errorf("openai provider requires " +
+				"--api-key or OPENAI_API_KEY")
+		}
+
+		return &openai.Client{
+			BaseURL: cfg.baseURL,
+			APIKey:  cfg.apiKey,
+			Model:   cfg.model,
+		}, nil
+
+	default:
+		return nil, fmt.Errorf("unknown provider %q", cfg.provider)
+	}
+}
+
+// envDefault returns an environment value or fallback when the value is unset.
+func envDefault(name string, fallback string) string {
+	if value := os.Getenv(name); value != "" {
+		return value
+	}
+
+	return fallback
 }
 
 // parseSessionsFlags converts sessions subcommand flags into configuration.

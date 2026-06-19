@@ -3,6 +3,9 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -11,6 +14,11 @@ import (
 // TestRunWritesSessionAndListsIt exercises the CLI path from prompt execution
 // to local session listing.
 func TestRunWritesSessionAndListsIt(t *testing.T) {
+	t.Setenv("HARNESS_PROVIDER", "")
+	t.Setenv("OPENAI_MODEL", "")
+	t.Setenv("OPENAI_BASE_URL", "")
+	t.Setenv("OPENAI_API_KEY", "")
+
 	sessionDir := filepath.Join(t.TempDir(), "sessions")
 
 	var runOut, runErr bytes.Buffer
@@ -43,6 +51,11 @@ func TestRunWritesSessionAndListsIt(t *testing.T) {
 // TestShowRendersTranscript verifies that a listed session can be resolved by
 // short ID and rendered as a readable transcript.
 func TestShowRendersTranscript(t *testing.T) {
+	t.Setenv("HARNESS_PROVIDER", "")
+	t.Setenv("OPENAI_MODEL", "")
+	t.Setenv("OPENAI_BASE_URL", "")
+	t.Setenv("OPENAI_API_KEY", "")
+
 	sessionDir := filepath.Join(t.TempDir(), "sessions")
 
 	var jsonOut, jsonErr bytes.Buffer
@@ -85,5 +98,54 @@ func TestShowRendersTranscript(t *testing.T) {
 	want := "user: hello\nassistant: hello"
 	if got != want {
 		t.Fatalf("transcript mismatch:\nwant %q\ngot  %q", want, got)
+	}
+}
+
+// TestRunUsesOpenAIProvider verifies that provider flags reach the
+// OpenAI-compatible streaming client without making a network call.
+func TestRunUsesOpenAIProvider(t *testing.T) {
+	t.Setenv("HARNESS_PROVIDER", "")
+	t.Setenv("OPENAI_MODEL", "")
+	t.Setenv("OPENAI_BASE_URL", "")
+	t.Setenv("OPENAI_API_KEY", "")
+
+	sessionDir := filepath.Join(t.TempDir(), "sessions")
+	server := httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Header.Get("Authorization") != "Bearer secret" {
+				t.Fatalf("unexpected auth header: %q",
+					r.Header.Get("Authorization"))
+			}
+
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprint(
+				w, "data: "+
+					"{\"choices\":[{\"delta\":{\"content\":\"hi"+
+					"\"}}]}\n\n",
+			)
+			fmt.Fprint(w, "data: [DONE]\n\n")
+		}),
+	)
+	defer server.Close()
+
+	var stdout, stderr bytes.Buffer
+	code := run(
+		[]string{
+			"--session-dir", sessionDir,
+			"--provider", "openai",
+			"--base-url", server.URL,
+			"--api-key", "secret",
+			"--model", "test-model",
+			"-p", "hello",
+		},
+		&stdout,
+		&stderr,
+	)
+	if code != 0 {
+		t.Fatalf("openai run failed: code=%d stdout=%q stderr=%q", code,
+			stdout.String(), stderr.String())
+	}
+	if strings.TrimSpace(stdout.String()) != "assistant: hi" {
+		t.Fatalf("unexpected output: %q", stdout.String())
 	}
 }

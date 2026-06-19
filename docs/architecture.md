@@ -166,6 +166,35 @@ Anthropic later, if needed
 provider plugins later
 ```
 
+The first real provider is `internal/provider/openai`, a stdlib-only
+OpenAI-compatible Chat Completions streaming client. It uses plain `net/http`
+and server-sent event parsing, not an SDK. Echo remains the default provider for
+offline development and tests.
+
+OpenAI-compatible usage is selected explicitly:
+
+```bash
+OPENAI_API_KEY=... go run ./cmd/harness \
+  --provider openai \
+  --model gpt-4.1-mini \
+  -p "say hello"
+```
+
+Local or proxy-compatible endpoints can override the base URL:
+
+```bash
+OPENAI_API_KEY=unused go run ./cmd/harness \
+  --provider openai \
+  --base-url http://localhost:11434/v1 \
+  --model qwen2.5-coder \
+  -p "say hello"
+```
+
+The CLI also reads `HARNESS_PROVIDER`, `OPENAI_MODEL`, `OPENAI_BASE_URL`, and
+`OPENAI_API_KEY`. Codex OAuth and token refresh remain separate future auth
+work; this step only proves the provider HTTP stream behind the existing model
+interface.
+
 ## OpenAI And Codex Auth
 
 OpenAI support is bundled, not a third-party plugin. It is the main dogfooding
@@ -361,8 +390,9 @@ go run ./cmd/harness show <session-id-prefix>
 The model is an echo client. That is deliberate. The echo client lets the
 project test prompt admission, streaming response collection, parent-linked
 session events, JSONL persistence, and CLI rendering without network access,
-OpenAI auth, tools, plugins, or MCP. Provider-specific behavior should attach to
-this loop later instead of shaping the kernel now.
+OpenAI auth, tools, plugins, or MCP. The first OpenAI-compatible provider now
+attaches to this loop through the same model interface instead of shaping the
+kernel.
 
 ## What Not To Put In The Kernel Yet
 

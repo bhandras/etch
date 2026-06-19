@@ -17,6 +17,10 @@ const (
 
 	// EventDone reports that a stream completed normally.
 	EventDone = "done"
+
+	// EventError reports a provider stream error after a stream has
+	// started.
+	EventError = "error"
 )
 
 // Message is one provider-neutral chat message.
@@ -41,6 +45,9 @@ type Event struct {
 
 	// Text stores assistant text for EventTextDelta events.
 	Text string
+
+	// Err stores a provider error message for EventError events.
+	Err string
 }
 
 // Client streams model events for one request.

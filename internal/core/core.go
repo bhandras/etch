@@ -126,6 +126,10 @@ func collectAssistantText(ctx context.Context,
 			case model.EventDone:
 				return text.String(), nil
 
+			case model.EventError:
+				return "", fmt.Errorf("model stream error: %s",
+					event.Err)
+
 			default:
 				return "", fmt.Errorf("unknown model "+
 					"event type %q", event.Type)
