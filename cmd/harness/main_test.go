@@ -218,6 +218,38 @@ func TestToolWriteRunsDirectly(t *testing.T) {
 	}
 }
 
+// TestToolEditRunsDirectly verifies the manual exact replacement edit smoke
+// path.
+func TestToolEditRunsDirectly(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	writeFile(t, filepath.Join(dir, "note.txt"), "hello\n")
+
+	var stdout, stderr bytes.Buffer
+	code := run(
+		[]string{
+			"tool", "edit", "--old", "hello", "--new", "goodbye",
+			"note.txt",
+		},
+		&stdout,
+		&stderr,
+	)
+	if code != 0 {
+		t.Fatalf("tool failed: code=%d stdout=%q stderr=%q", code,
+			stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Successfully applied 1 edit") {
+		t.Fatalf("unexpected tool output: %q", stdout.String())
+	}
+	content, err := os.ReadFile(filepath.Join(dir, "note.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "goodbye\n" {
+		t.Fatalf("unexpected file content: %q", string(content))
+	}
+}
+
 // writeFile creates a small file fixture for CLI tests.
 func writeFile(t *testing.T, path string, content string) {
 	t.Helper()

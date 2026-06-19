@@ -53,6 +53,8 @@ type cliConfig struct {
 	toolName    string
 	toolPath    string
 	toolContent string
+	toolOldText string
+	toolNewText string
 	toolOffset  int
 	toolLimit   int
 }
@@ -303,6 +305,14 @@ func parseToolFlags(args []string, stderr io.Writer) (cliConfig, error) {
 		&cfg.toolContent, "content", "",
 		"complete file content for tools that write files",
 	)
+	fs.StringVar(
+		&cfg.toolOldText, "old", "",
+		"exact original text for tools that edit files",
+	)
+	fs.StringVar(
+		&cfg.toolNewText, "new", "",
+		"exact replacement text for tools that edit files",
+	)
 	if err := fs.Parse(args[1:]); err != nil {
 		return cliConfig{}, err
 	}
@@ -328,6 +338,16 @@ func parseToolFlags(args []string, stderr io.Writer) (cliConfig, error) {
 		if fs.NArg() != 1 {
 			return cliConfig{}, fmt.Errorf("write accepts " +
 				"exactly one path")
+		}
+		cfg.toolPath = fs.Arg(0)
+
+	case tool.NameEdit:
+		if fs.NArg() != 1 {
+			return cliConfig{}, fmt.Errorf("edit accepts exactly " +
+				"one path")
+		}
+		if cfg.toolOldText == "" {
+			return cliConfig{}, fmt.Errorf("edit requires --old")
 		}
 		cfg.toolPath = fs.Arg(0)
 
@@ -385,6 +405,30 @@ func toolArguments(cfg cliConfig) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("marshal write arguments: %w",
 				err)
+		}
+
+		return string(encoded), nil
+
+	case tool.NameEdit:
+		args := struct {
+			Path  string `json:"path"`
+			Edits []struct {
+				OldText string `json:"oldText"`
+				NewText string `json:"newText"`
+			} `json:"edits"`
+		}{
+			Path: cfg.toolPath,
+			Edits: []struct {
+				OldText string `json:"oldText"`
+				NewText string `json:"newText"`
+			}{{
+				OldText: cfg.toolOldText,
+				NewText: cfg.toolNewText,
+			}},
+		}
+		encoded, err := json.Marshal(args)
+		if err != nil {
+			return "", fmt.Errorf("marshal edit arguments: %w", err)
 		}
 
 		return string(encoded), nil

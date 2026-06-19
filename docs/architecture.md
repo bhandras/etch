@@ -275,6 +275,15 @@ returns a compact byte-count success message instead of echoing content back
 into the model context. Mutation tools are anchored to the current working
 directory and refuse to modify internal `.git` or `.harness` paths.
 
+The fourth operation is `edit`, an exact-replacement mutation tool for existing
+text files. Each `oldText` must match exactly one region in the original file;
+missing, ambiguous, empty, or overlapping edits fail instead of guessing. All
+edits are located against the original file before any replacement is applied,
+then written from the end of the file backward through the same atomic
+replacement helper used by `write`. The first version intentionally avoids
+fuzzy matching and diff rendering; those are separate improvements after the
+sharp exact-replacement contract is proven.
+
 The builtin tool registry lives under `internal/tool`. Registered tools wrap
 `internal/tools/fs` operations as model-callable functions, and the CLI exposes
 the same operations for direct smoke testing:
@@ -285,6 +294,7 @@ go run ./cmd/harness tool ls --limit 20 .
 go run ./cmd/harness tool read AGENTS.md
 go run ./cmd/harness tool read --offset 20 --limit 40 AGENTS.md
 go run ./cmd/harness tool write --content 'hello\n' notes/hello.txt
+go run ./cmd/harness tool edit --old hello --new goodbye notes/hello.txt
 ```
 
 When using the OpenAI-compatible provider, the CLI includes builtin function

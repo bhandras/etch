@@ -20,6 +20,10 @@ const (
 
 	// NameWrite is the model-facing name for the whole-file writing tool.
 	NameWrite = "write"
+
+	// NameEdit is the model-facing name for the exact replacement edit
+	// tool.
+	NameEdit = "edit"
 )
 
 // Result is the text returned by a builtin tool execution.
@@ -48,6 +52,7 @@ func DefaultRegistry() *Registry {
 	registry.Register(lsTool{})
 	registry.Register(readTool{})
 	registry.Register(writeTool{})
+	registry.Register(editTool{})
 
 	return registry
 }
@@ -221,6 +226,65 @@ func (writeTool) Execute(ctx context.Context, arguments string) (Result,
 	}
 
 	text, err := fs.Write(ctx, req)
+	if err != nil {
+		return Result{}, err
+	}
+
+	return Result{Text: text}, nil
+}
+
+// editTool wraps the pure-Go exact replacement operation as a model tool.
+type editTool struct{}
+
+// Spec returns the model-facing schema for the edit tool.
+func (editTool) Spec() model.ToolSpec {
+	return model.ToolSpec{
+		Name: NameEdit,
+		Description: "Edit one existing text file using exact text " +
+			"replacement. Each oldText must appear exactly once in the " +
+			"original file. Merge nearby changes into one larger edit.",
+		Parameters: json.RawMessage(`{
+			"type":"object",
+			"properties":{
+				"path":{
+					"type":"string",
+					"description":"Existing file to edit. Relative paths resolve from the current working directory."
+				},
+				"edits":{
+					"type":"array",
+					"description":"Exact replacements matched against the original file before any replacement is applied.",
+					"items":{
+						"type":"object",
+						"properties":{
+							"oldText":{
+								"type":"string",
+								"description":"Exact text to replace. Include enough surrounding context to make it unique."
+							},
+							"newText":{
+								"type":"string",
+								"description":"Exact replacement text."
+							}
+						},
+						"required":["oldText","newText"]
+					}
+				}
+			},
+			"required":["path","edits"]
+		}`),
+	}
+}
+
+// Execute decodes edit arguments and applies exact replacements.
+func (editTool) Execute(ctx context.Context, arguments string) (Result, error) {
+	var req fs.EditRequest
+	if strings.TrimSpace(arguments) != "" {
+		if err := json.Unmarshal([]byte(arguments), &req); err != nil {
+			return Result{}, fmt.Errorf("decode edit arguments: %w",
+				err)
+		}
+	}
+
+	text, err := fs.EditFile(ctx, req)
 	if err != nil {
 		return Result{}, err
 	}
