@@ -41,8 +41,17 @@ func TestBuildStatsReportsActiveSummary(t *testing.T) {
 	if !strings.Contains(text, "summary: active") {
 		t.Fatalf("missing active summary: %q", text)
 	}
-	if !strings.Contains(text, "approx context bytes:") {
-		t.Fatalf("missing context bytes: %q", text)
+	if !strings.Contains(text, "approx context:") {
+		t.Fatalf("missing context total: %q", text)
+	}
+	if !strings.Contains(text, "tokens") {
+		t.Fatalf("missing token estimate: %q", text)
+	}
+	if stats.ApproxContextTokens == 0 {
+		t.Fatal("expected context token estimate")
+	}
+	if stats.RawReplayTokens == 0 {
+		t.Fatal("expected raw replay token estimate")
 	}
 }
 
@@ -66,6 +75,9 @@ func TestFormatProjectContextReportsPinnedInputs(t *testing.T) {
 	}
 
 	text := FormatProjectContext(project)
+	if !strings.Contains(text, "base prompt:") {
+		t.Fatalf("missing base prompt layer: %q", text)
+	}
 	if !strings.Contains(text, "pinned system files: 1") {
 		t.Fatalf("missing system count: %q", text)
 	}
@@ -75,7 +87,25 @@ func TestFormatProjectContextReportsPinnedInputs(t *testing.T) {
 	if !strings.Contains(text, "available skills: 1") {
 		t.Fatalf("missing skill count: %q", text)
 	}
+	if !strings.Contains(text, "skill catalog:") {
+		t.Fatalf("missing skill catalog layer: %q", text)
+	}
+	if !strings.Contains(text, "tokens") {
+		t.Fatalf("missing token estimates: %q", text)
+	}
 	if !strings.Contains(text, "go-style: Use for Go edits.") {
 		t.Fatalf("missing skill summary: %q", text)
+	}
+}
+
+// TestApproxTokensEstimatesText verifies the stdlib token estimator produces a
+// stable, nonzero approximation for mixed prose and punctuation.
+func TestApproxTokensEstimatesText(t *testing.T) {
+	got := ApproxTokens("hello, world")
+	if got != 5 {
+		t.Fatalf("unexpected estimate: %d", got)
+	}
+	if ApproxTokens("") != 0 {
+		t.Fatal("empty text should not consume tokens")
 	}
 }

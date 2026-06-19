@@ -97,10 +97,16 @@ func LoadProjectContext(cwd string) (ProjectContext, error) {
 
 // appendSkillCatalog adds compact skill metadata without full skill bodies.
 func appendSkillCatalog(out *strings.Builder, skills []Skill) {
+	out.WriteString(skillCatalogText(skills))
+}
+
+// skillCatalogText renders compact skill metadata for pinned context.
+func skillCatalogText(skills []Skill) string {
 	if len(skills) == 0 {
-		return
+		return ""
 	}
 
+	var out strings.Builder
 	out.WriteString("\n\nAvailable skills:\n")
 	out.WriteString("The following skill packages are available by ")
 	out.WriteString("description. Read the referenced SKILL.md only when ")
@@ -116,6 +122,8 @@ func appendSkillCatalog(out *strings.Builder, skills []Skill) {
 		out.WriteString(skill.Path)
 		out.WriteString(")\n")
 	}
+
+	return out.String()
 }
 
 // InstructionFile stores one loaded project instruction file.

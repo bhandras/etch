@@ -280,6 +280,13 @@ files, pinned instruction files, and available skills. Future automatic
 compaction should build on this append-only event shape rather than rewriting or
 deleting older JSONL events.
 
+Context stats show both bytes and approximate token counts. The first token
+estimator is deliberately stdlib-only rather than provider-exact: it treats
+ASCII word-like runs as roughly one token per four characters and counts
+punctuation-like runes as individual tokens. This is enough to compare context
+layers and spot growth without adding model-specific tokenizer tables to the
+core binary.
+
 ## OpenAI And Codex Auth
 
 OpenAI support is bundled, not a third-party plugin. It is the main dogfooding
