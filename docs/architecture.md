@@ -1,0 +1,395 @@
+# Architecture
+
+This document is the living design record for the agent. It should change as
+the code teaches us more. Keep it practical: record the choices we have made,
+the tradeoffs behind them, and the boundaries we do not want to blur.
+
+## North Star
+
+We are building a minimal coding agent harness in Go.
+
+The core should be small enough to understand in one sitting, fast enough to
+feel immediate, and boring enough to trust. It should build into a static binary
+with no required runtime dependency chain. Advanced workflows should grow
+through plugins and clear protocols, not by turning the kernel into a product
+monolith.
+
+The target shape is:
+
+```text
+a tiny static Go agent kernel
+with an append-only session log,
+a normalized streaming model interface,
+a small set of reliable coding tools,
+and an out-of-process plugin protocol.
+```
+
+We are intentionally closer to Pi's minimal harness philosophy than to a full
+multi-surface product like OpenCode. We still want an OpenCode-compatible growth
+path: a local server, richer clients, agent profiles, model/provider packs, and
+Model Context Protocol support can all be added later. They should sit on top of
+the kernel rather than define it.
+
+## Design Principles
+
+Keep the core narrow. The core owns the agent loop, session log, model stream,
+tool registry, plugin supervisor, configuration, and prompt assembly. It should
+not know about GitHub, browsers, issue trackers, databases, or project-specific
+policy.
+
+Prefer protocols over package coupling. The durable contracts are the session
+log format, model event stream, tool schema, and plugin remote procedure call
+protocol. Packages can change; protocols let us replay, test, debug, and replace
+parts.
+
+Make state inspectable. The agent should store important decisions as durable
+events instead of hidden in-memory mutations. A developer should be able to open
+a session file, read what happened, and repair it when needed.
+
+Default to explicit trust. Project-local instructions are inert text until used
+as context. Project-local executable plugins require an explicit trust decision.
+
+Make the fast path good. The default OpenAI/Codex auth path should work for a
+developer with a ChatGPT/Codex subscription. API-key usage should also be first
+class, but subscription-backed local use is the primary dogfooding path.
+
+Do less by default. Subagents, plan mode, browser automation, vector memory,
+MCP, hosted sync, and desktop or IDE clients are useful, but they are not kernel
+features in the first version.
+
+## Kernel
+
+The kernel is the small runtime that turns user input into model calls, tool
+calls, and session events.
+
+The first package layout can be simple:
+
+```text
+cmd/agent/                  CLI entrypoint
+internal/core/              agent loop and turn state machine
+internal/session/           JSONL append log, branches, replay
+internal/model/             provider-neutral request and event types
+internal/provider/openai/   bundled OpenAI and Codex provider
+internal/tools/             built-in coding tools
+internal/plugins/           plugin process supervisor and RPC client
+internal/prompt/            prompt assembly and context sources
+internal/auth/              auth interfaces and credential storage
+internal/config/            global and project config
+sdk/agentapi/               stable plugin API types
+```
+
+The core loop should stay explicit:
+
+```text
+1. Load the current session branch.
+2. Build model context from system prompt, project instructions, skills,
+   summaries, recent messages, tool specs, and plugin-provided context.
+3. Start the model stream.
+4. Render streamed assistant output.
+5. Validate and execute requested tool calls.
+6. Append tool results.
+7. Continue until the model stops or the user cancels.
+```
+
+Cancellation should flow through `context.Context`. The user must be able to
+interrupt a model stream or a running tool call without killing the whole
+session.
+
+## Session Log
+
+Sessions are append-only JSONL files. Each line is one event. The in-memory
+session is a projection of the log, not the source of truth.
+
+Events should include stable IDs and parent IDs so a session can branch:
+
+```json
+{"type":"message.user","id":"01H...","parentId":null,"time":"...","data":{"content":[{"type":"text","text":"fix tests"}]}}
+{"type":"message.assistant","id":"01H...","parentId":"01H...","time":"...","data":{"content":[{"type":"tool_call","id":"call_1","name":"grep","arguments":{"pattern":"TODO"}}]}}
+{"type":"message.tool","id":"01H...","parentId":"01H...","time":"...","data":{"toolCallId":"call_1","content":[{"type":"text","text":"..."}]}}
+```
+
+The log should also store compaction events, model changes, permission
+decisions, plugin diagnostics, and context changes. If a fact shaped the model's
+next turn, it should be recoverable from the log.
+
+We should not start with a database. JSONL is easy to diff, repair, export,
+sync, and replay. A server or index can be built later as a projection over the
+same files.
+
+## Model Stream
+
+Providers should adapt to one internal request and event stream. The agent loop
+should not know whether the model is OpenAI, Anthropic, local, or a provider
+plugin.
+
+The internal stream should represent:
+
+```text
+text start/delta/end
+reasoning start/delta/end
+tool-call start/delta/end
+usage
+error
+done
+```
+
+Streaming is a UX feature, not only an API detail. The terminal should render
+partial assistant text and tool-call progress as soon as it arrives.
+
+We should begin with a small provider set:
+
+```text
+OpenAI/Codex built in
+OpenAI Platform API key mode
+OpenAI-compatible endpoint mode
+Anthropic later, if needed
+provider plugins later
+```
+
+## OpenAI And Codex Auth
+
+OpenAI support is bundled, not a third-party plugin. It is the main dogfooding
+path.
+
+The built-in OpenAI provider should support:
+
+```text
+openai-codex-oauth
+  ChatGPT Plus/Pro/Business/Enterprise subscription auth through the Codex-style
+  browser or device flow.
+
+openai-api-key
+  Platform API key auth through OPENAI_API_KEY or stored credentials.
+
+openai-codex-token
+  CODEX_ACCESS_TOKEN or an explicitly imported Codex-compatible token.
+
+codex-cli-import
+  Explicit import from an existing Codex CLI auth cache when available.
+```
+
+These modes must stay distinct. API-key usage follows Platform billing and
+Platform organization policy. Codex OAuth usage follows the user's ChatGPT or
+workspace Codex entitlement, rate limits, and data controls.
+
+The UI should always make the active auth mode visible:
+
+```text
+OpenAI: ChatGPT/Codex subscription
+OpenAI: Platform API key
+OpenAI: Codex access token
+```
+
+Credentials should be stored with `0600` file permissions in the first version.
+Keychain support can be added later through an optional module. Tokens must never
+be logged, sent to the model, exposed to plugins, or included in tool output.
+
+## Built-In Tools
+
+The first built-in tools should be boring and reliable:
+
+```text
+read_file
+write_file
+edit_file
+list_dir
+grep
+find
+bash
+```
+
+`edit_file` should begin with conservative exact replacement. More flexible
+patching can come later once the simple path is proven.
+
+The model should see one unified tool list regardless of where a tool comes
+from:
+
+```text
+built-in tool
+native plugin tool
+MCP-imported tool
+```
+
+Internally each tool should still carry its source, timeout, permission policy,
+and output limits.
+
+## Plugins
+
+Plugins are native extensions of the agent runtime. They can register tools and
+commands, provide context, observe events, add policy hooks, customize
+compaction, or eventually contribute UI panels and model providers.
+
+Plugins are out-of-process executables. A plugin can be its own Go module and
+can have its own dependencies without polluting the core binary. The same
+protocol can later support plugins written in Rust, Python, JavaScript, or any
+language that can read stdin and write stdout.
+
+The first transport is:
+
+```text
+JSONL-RPC over stdio
+```
+
+That means the core starts the plugin as a child process and communicates over
+the plugin's standard input and output. Standard error is reserved for logs.
+
+```text
+core -> plugin stdin:  one JSON request per line
+plugin stdout -> core: one JSON response or notification per line
+plugin stderr:         human-readable logs only
+```
+
+The protocol is request/response plus notifications:
+
+```json
+{"id":"1","method":"initialize","params":{"protocolVersion":"0.1.0"}}
+{"id":"1","result":{"name":"git","tools":[],"hooks":[]}}
+{"id":"2","method":"tool.execute","params":{"callID":"call_1","name":"git_status","arguments":{}}}
+{"id":"2","result":{"content":[{"type":"text","text":"clean"}]}}
+{"method":"tool.update","params":{"callID":"call_1","message":"reading status"}}
+```
+
+Request IDs allow concurrent calls even though stdio is a single stream in each
+direction. The core should have one read loop, a pending-response map, and a
+mutex around writes.
+
+Unix sockets, named pipes, TCP, or HTTP can be added later behind the same
+transport interface. They are not needed for the first version.
+
+## Plugins Versus MCP
+
+Plugins extend the agent. MCP servers expose external tools, resources, and
+prompts over a standard protocol.
+
+The layering should be:
+
+```text
+agent core
+  -> native plugin protocol
+      -> MCP bridge plugin
+          -> MCP servers
+```
+
+MCP is valuable because it gives the agent access to a wider ecosystem. It
+should not define the kernel. A native plugin can participate in session
+lifecycle, compaction, permission policy, context assembly, and UI. An MCP server
+usually provides capabilities for the model to call.
+
+In short:
+
+```text
+Plugins are how the agent grows.
+MCP is how the agent borrows tools.
+```
+
+## Trust And Permissions
+
+The permission model should be small but extensible.
+
+The core should expose hooks such as:
+
+```text
+before_tool_call
+after_tool_result
+context_build
+session_event
+```
+
+Policy plugins can allow, deny, rewrite, or ask the user before sensitive tool
+calls. The first built-in policy can be simple: warn before writes outside the
+workspace, dangerous shell commands, or project-local executable plugins in an
+untrusted repository.
+
+Plugins are more privileged than MCP servers. A native plugin may see session
+events and shape agent behavior. MCP servers should receive only the calls or
+resources routed to them.
+
+## Terminal And Server
+
+The first interface should be a CLI with a minimal interactive mode:
+
+```text
+agent
+agent -p "question"
+agent --json -p "question"
+```
+
+The terminal should stream assistant text, show tool calls compactly, collapse
+large tool output by default, and support cancellation.
+
+A local HTTP server can come later. If we add one, it should expose the same
+session log, model stream, and tool registry as the terminal uses. The server
+must be a client boundary, not a new source of truth.
+
+## What Not To Put In The Kernel Yet
+
+These features are useful, but they should begin outside the kernel:
+
+```text
+subagents
+plan mode
+browser automation
+MCP server management
+desktop and IDE clients
+long-term vector memory
+hosted sync
+large provider catalogs
+complex workflow DSLs
+rich TUI layout systems
+```
+
+If one of these becomes essential, we can promote the smallest stable interface
+into the core after a plugin proves the shape.
+
+## Commit Discipline
+
+Development should move in small incremental commits. Each commit should explain
+one coherent change and should pass the commit-message linter. The linter is a
+pure-Go, stdlib-only implementation of the `lightninglabs/darepo-client` commit
+message convention, so the repository does not need Python, Node, or shell
+package managers to check commit messages.
+
+Commit subjects use:
+
+```text
+subsystem: short desc
+```
+
+The body is optional but encouraged when the reason is not obvious. Separate the
+subject from the body with one blank line and wrap body text at 72 columns.
+
+Example:
+
+```text
+plugins: add stdio transport skeleton
+
+This introduces the JSONL-RPC transport boundary without registering any real
+plugin capabilities yet. Keeping the transport separate from plugin discovery
+lets tests exercise request routing before process supervision exists.
+```
+
+## Go Coding Style
+
+The codebase favors unusually explicit documentation because this project is
+part implementation and part design lab. The documentation rule is simple:
+every Go package gets a `doc.go`, every function gets a meaningful godoc
+comment, and every constant gets a meaningful godoc comment. Exported variables,
+exported struct types, and exported struct fields also need meaningful godocs.
+
+This rule applies to tests and unexported helpers. A test comment should explain
+the behavior or invariant the test protects. An unexported helper comment should
+explain why the helper exists, not merely restate its name.
+
+Go source is formatted with `github.com/bhandras/llformat/cmd/llformat`. The
+Makefile installs it into `tools/llformat/bin/llformat` through the
+`tools/llformat` module and then runs it over handwritten Go source:
+
+```bash
+make fmt
+make fmt-check
+```
+
+The `tools/` directory is only a container for independent tool modules. The
+commit-message linter lives in `tools/commitmsg`; formatter pinning lives in
+`tools/llformat`. These developer tool dependencies are not runtime
+dependencies of the agent core.
