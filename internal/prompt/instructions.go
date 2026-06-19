@@ -25,6 +25,10 @@ Do not claim filesystem changes unless a tool result confirms them.`
 	// instructionFileName is the project instruction filename loaded into
 	// model context.
 	instructionFileName = "AGENTS.md"
+
+	// systemFileName is the project system-extension filename loaded before
+	// AGENTS.md instructions.
+	systemFileName = "SYSTEM.md"
 )
 
 // ProjectContext describes project-derived prompt context pinned each turn.
@@ -34,6 +38,9 @@ type ProjectContext struct {
 
 	// InstructionFiles stores AGENTS.md files included in SystemText.
 	InstructionFiles []InstructionFile
+
+	// SystemFiles stores SYSTEM.md files included in SystemText.
+	SystemFiles []InstructionFile
 
 	// Skills stores discovered skill packages summarized in SystemText.
 	Skills []Skill
@@ -51,6 +58,10 @@ func SystemText(cwd string) (string, error) {
 
 // LoadProjectContext returns pinned instructions and summarized skills.
 func LoadProjectContext(cwd string) (ProjectContext, error) {
+	systemFiles, err := LoadSystemFiles(cwd)
+	if err != nil {
+		return ProjectContext{}, err
+	}
 	files, err := LoadInstructionFiles(cwd)
 	if err != nil {
 		return ProjectContext{}, err
@@ -62,6 +73,12 @@ func LoadProjectContext(cwd string) (ProjectContext, error) {
 
 	var out strings.Builder
 	out.WriteString(BaseSystemPrompt)
+	for _, file := range systemFiles {
+		out.WriteString("\n\nProject system prompt from ")
+		out.WriteString(file.Path)
+		out.WriteString(":\n")
+		out.WriteString(file.Text)
+	}
 	for _, file := range files {
 		out.WriteString("\n\nProject instructions from ")
 		out.WriteString(file.Path)
@@ -72,6 +89,7 @@ func LoadProjectContext(cwd string) (ProjectContext, error) {
 
 	return ProjectContext{
 		SystemText:       out.String(),
+		SystemFiles:      append([]InstructionFile{}, systemFiles...),
 		InstructionFiles: append([]InstructionFile{}, files...),
 		Skills:           append([]Skill{}, skills...),
 	}, nil
@@ -109,8 +127,20 @@ type InstructionFile struct {
 	Text string
 }
 
+// LoadSystemFiles loads SYSTEM.md files from cwd and its ancestors.
+func LoadSystemFiles(cwd string) ([]InstructionFile, error) {
+	return loadNamedInstructionFiles(cwd, systemFileName)
+}
+
 // LoadInstructionFiles loads AGENTS.md files from cwd and its ancestors.
 func LoadInstructionFiles(cwd string) ([]InstructionFile, error) {
+	return loadNamedInstructionFiles(cwd, instructionFileName)
+}
+
+// loadNamedInstructionFiles loads named instruction files from ancestors.
+func loadNamedInstructionFiles(cwd string, name string) ([]InstructionFile,
+	error) {
+
 	dirs, err := ancestorDirs(cwd)
 	if err != nil {
 		return nil, err
@@ -118,7 +148,7 @@ func LoadInstructionFiles(cwd string) ([]InstructionFile, error) {
 
 	var files []InstructionFile
 	for _, dir := range dirs {
-		path := filepath.Join(dir, instructionFileName)
+		path := filepath.Join(dir, name)
 		text, ok, err := readInstructionFile(path)
 		if err != nil {
 			return nil, err

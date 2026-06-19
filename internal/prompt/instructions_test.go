@@ -32,6 +32,43 @@ func TestSystemTextLoadsAncestorInstructions(t *testing.T) {
 	}
 }
 
+// TestSystemTextLoadsSystemFilesBeforeInstructions verifies project system
+// prompt extensions are pinned ahead of AGENTS.md instructions.
+func TestSystemTextLoadsSystemFilesBeforeInstructions(t *testing.T) {
+	root := t.TempDir()
+	child := filepath.Join(root, "child")
+	if err := os.Mkdir(child, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(root, "SYSTEM.md"), "root system\n")
+	writeFile(t, filepath.Join(child, "SYSTEM.md"), "child system\n")
+	writeFile(t, filepath.Join(root, "AGENTS.md"), "root rules\n")
+	writeFile(t, filepath.Join(child, "AGENTS.md"), "child rules\n")
+
+	project, err := LoadProjectContext(child)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(project.SystemFiles) != 2 {
+		t.Fatalf("expected two system files, got %d",
+			len(project.SystemFiles))
+	}
+	rootSystem := strings.Index(project.SystemText, "root system")
+	childSystem := strings.Index(project.SystemText, "child system")
+	rootRules := strings.Index(project.SystemText, "root rules")
+	childRules := strings.Index(project.SystemText, "child rules")
+	if rootSystem < 0 || childSystem < 0 || rootRules < 0 ||
+		childRules < 0 {
+
+		t.Fatalf("missing context layer: %q", project.SystemText)
+	}
+	if !(rootSystem < childSystem && childSystem < rootRules &&
+		rootRules < childRules) {
+
+		t.Fatalf("context layers out of order: %q", project.SystemText)
+	}
+}
+
 // TestLoadInstructionFilesTruncatesLargeFiles verifies that large instruction
 // files cannot dominate the first prompt context.
 func TestLoadInstructionFilesTruncatesLargeFiles(t *testing.T) {
@@ -50,6 +87,55 @@ func TestLoadInstructionFilesTruncatesLargeFiles(t *testing.T) {
 	}
 	if !strings.Contains(files[0].Text, "[truncated 10 bytes]") {
 		t.Fatalf("missing truncation marker: %q", files[0].Text)
+	}
+}
+
+// TestLoadSystemFilesTruncatesLargeFiles verifies SYSTEM.md uses the same
+// bounded loading policy as AGENTS.md.
+func TestLoadSystemFilesTruncatesLargeFiles(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(
+		t, filepath.Join(dir, "SYSTEM.md"),
+		strings.Repeat("y", MaxInstructionFileBytes+7),
+	)
+
+	files, err := LoadSystemFiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 {
+		t.Fatalf("expected one file, got %d", len(files))
+	}
+	if !strings.Contains(files[0].Text, "[truncated 7 bytes]") {
+		t.Fatalf("missing truncation marker: %q", files[0].Text)
+	}
+}
+
+// TestSystemTextOrdersSkillsAfterPinnedFiles verifies the skill catalog stays
+// behind project system and instruction files.
+func TestSystemTextOrdersSkillsAfterPinnedFiles(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "SYSTEM.md"), "system identity\n")
+	writeFile(t, filepath.Join(dir, "AGENTS.md"), "repo rules\n")
+	writeFile(
+		t, filepath.Join(
+			dir, ".harness", "skills", "go-style", "SKILL.md",
+		),
+		"---\nname: go-style\ndescription: Use for Go edits.\n---\n",
+	)
+
+	text, err := SystemText(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	systemIndex := strings.Index(text, "system identity")
+	rulesIndex := strings.Index(text, "repo rules")
+	skillsIndex := strings.Index(text, "Available skills:")
+	if systemIndex < 0 || rulesIndex < 0 || skillsIndex < 0 {
+		t.Fatalf("missing context layer: %q", text)
+	}
+	if !(systemIndex < rulesIndex && rulesIndex < skillsIndex) {
+		t.Fatalf("context layers out of order: %q", text)
 	}
 }
 

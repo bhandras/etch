@@ -95,12 +95,20 @@ func FormatStats(stats Stats) string {
 
 // FormatProjectContext returns a compact report for pinned project context.
 func FormatProjectContext(project ProjectContext) string {
+	systemBytes := 0
+	for _, file := range project.SystemFiles {
+		systemBytes += len(file.Text)
+	}
 	instructionBytes := 0
 	for _, file := range project.InstructionFiles {
 		instructionBytes += len(file.Text)
 	}
 
 	var out strings.Builder
+	fmt.Fprintf(
+		&out, "pinned system files: %d (%d bytes)\n",
+		len(project.SystemFiles), systemBytes,
+	)
 	fmt.Fprintf(
 		&out, "pinned instruction files: %d (%d bytes)\n",
 		len(project.InstructionFiles), instructionBytes,

@@ -50,6 +50,10 @@ func TestBuildStatsReportsActiveSummary(t *testing.T) {
 // the durable project layer kept outside compaction.
 func TestFormatProjectContextReportsPinnedInputs(t *testing.T) {
 	project := ProjectContext{
+		SystemFiles: []InstructionFile{{
+			Path: "SYSTEM.md",
+			Text: "agent identity",
+		}},
 		InstructionFiles: []InstructionFile{{
 			Path: "AGENTS.md",
 			Text: "repo rules",
@@ -62,6 +66,9 @@ func TestFormatProjectContextReportsPinnedInputs(t *testing.T) {
 	}
 
 	text := FormatProjectContext(project)
+	if !strings.Contains(text, "pinned system files: 1") {
+		t.Fatalf("missing system count: %q", text)
+	}
 	if !strings.Contains(text, "pinned instruction files: 1") {
 		t.Fatalf("missing instruction count: %q", text)
 	}

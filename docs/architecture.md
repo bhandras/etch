@@ -238,13 +238,15 @@ the active session messages and instruction files into provider-neutral model
 messages.
 
 The first context builder is deliberately small. It prepends a base coding-agent
-system prompt with tool-use guidance, then loads `AGENTS.md` files from the
-current working directory and its ancestors. Parent instructions appear before
-child instructions so more local files can refine broader rules. Each
-instruction file is capped at 32KB to keep project guidance from dominating the
-first context implementation. These instruction files are pinned context: they
-are prepended before any compacted conversation summary and are not removed by
-session compaction.
+system prompt with tool-use guidance, then loads `SYSTEM.md` and `AGENTS.md`
+files from the current working directory and its ancestors. Parent files appear
+before child files so more local files can refine broader rules. `SYSTEM.md`
+extends the agent's project-specific identity and durable behavior, while
+`AGENTS.md` carries repository workflow, coding, documentation, and verification
+instructions. Each file is capped at 32KB to keep project guidance from
+dominating the first context implementation. These files are pinned context:
+they are prepended before any compacted conversation summary and are not removed
+by session compaction.
 
 Skill packages follow the Agent Skills `SKILL.md` convention and are discovered
 as metadata, not eagerly loaded as full prompt text. The first supported project
@@ -273,10 +275,10 @@ go run ./cmd/harness compact --session <id-prefix>
 
 Inside `harness chat`, `/compact` appends a summary for the active session and
 `/context` prints approximate context stats such as total events, whether a
-summary is active, raw replay events, projected context bytes, pinned
-instruction files, and available skills. Future automatic compaction should
-build on this append-only event shape rather than rewriting or deleting older
-JSONL events.
+summary is active, raw replay events, projected context bytes, pinned system
+files, pinned instruction files, and available skills. Future automatic
+compaction should build on this append-only event shape rather than rewriting or
+deleting older JSONL events.
 
 ## OpenAI And Codex Auth
 
