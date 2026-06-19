@@ -22,6 +22,11 @@ const (
 	// EventTextDelta reports streamed assistant text.
 	EventTextDelta = "text_delta"
 
+	// EventReasoningDelta reports streamed displayable reasoning summary
+	// text. It must not contain private raw chain-of-thought unless a
+	// provider explicitly exposes that as safe user-visible content.
+	EventReasoningDelta = "reasoning_delta"
+
 	// EventToolCall reports a complete tool call requested by the model.
 	EventToolCall = "tool_call"
 

@@ -225,6 +225,10 @@ func TestRunTurnNotifiesObserver(t *testing.T) {
 		events: [][]model.Event{
 			{
 				{
+					Type: model.EventReasoningDelta,
+					Text: "checking files",
+				},
+				{
 					Type: model.EventToolCall,
 					ToolCall: model.ToolCall{
 						ID:   "call_1",
@@ -279,6 +283,12 @@ func TestRunTurnNotifiesObserver(t *testing.T) {
 	if observer.toolCalls[0].Name != tool.NameLS {
 		t.Fatalf("unexpected live tool call: %#v",
 			observer.toolCalls[0])
+	}
+	if len(observer.reasoning) != 1 ||
+		observer.reasoning[0] != "checking files" {
+
+		t.Fatalf("unexpected reasoning summaries: %#v",
+			observer.reasoning)
 	}
 }
 
@@ -404,6 +414,9 @@ type recordingObserver struct {
 
 	// toolCalls stores live tool-start notifications in arrival order.
 	toolCalls []model.ToolCall
+
+	// reasoning stores model-provided reasoning summaries in arrival order.
+	reasoning []string
 }
 
 // EventAppended records one persisted event.
@@ -414,6 +427,11 @@ func (o *recordingObserver) EventAppended(event session.Event) {
 // ToolCallStarted records one local tool execution start notification.
 func (o *recordingObserver) ToolCallStarted(call model.ToolCall) {
 	o.toolCalls = append(o.toolCalls, call)
+}
+
+// ReasoningCompleted records one model reasoning summary notification.
+func (o *recordingObserver) ReasoningCompleted(text string) {
+	o.reasoning = append(o.reasoning, text)
 }
 
 // types returns recorded event types in arrival order.

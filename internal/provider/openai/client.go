@@ -25,6 +25,16 @@ const (
 	// chatCompletionsPath is the endpoint used for streaming chat
 	// responses.
 	chatCompletionsPath = "/chat/completions"
+
+	// responsesPath is the endpoint used for streaming Responses API
+	// events.
+	responsesPath = "/responses"
+
+	// APIChatCompletions selects the Chat Completions request shape.
+	APIChatCompletions = "chat"
+
+	// APIResponses selects the Responses API request shape.
+	APIResponses = "responses"
 )
 
 // Client streams responses from an OpenAI-compatible Chat Completions endpoint.
@@ -38,6 +48,15 @@ type Client struct {
 	// Model is the provider model name passed in each request.
 	Model string
 
+	// API selects the OpenAI API shape. Empty means APIChatCompletions.
+	API string
+
+	// ReasoningEffort asks reasoning-capable models to adjust effort.
+	ReasoningEffort string
+
+	// ReasoningSummary asks reasoning-capable models for a summary.
+	ReasoningSummary string
+
 	// HTTPClient performs requests; http.DefaultClient is used when nil.
 	HTTPClient *http.Client
 }
@@ -48,6 +67,9 @@ func (c *Client) Stream(ctx context.Context, req model.Request) (
 
 	if c.Model == "" {
 		return nil, fmt.Errorf("openai model must not be empty")
+	}
+	if err := c.validateAPI(); err != nil {
+		return nil, err
 	}
 
 	httpReq, err := c.newRequest(ctx, req)
@@ -71,7 +93,11 @@ func (c *Client) Stream(ctx context.Context, req model.Request) (
 	}
 
 	events := make(chan model.Event)
-	go streamResponse(ctx, resp.Body, events)
+	if c.apiMode() == APIResponses {
+		go streamResponsesAPI(ctx, resp.Body, events)
+	} else {
+		go streamChatCompletions(ctx, resp.Body, events)
+	}
 
 	return events, nil
 }
@@ -79,6 +105,10 @@ func (c *Client) Stream(ctx context.Context, req model.Request) (
 // newRequest builds the HTTP request for a streaming chat completion.
 func (c *Client) newRequest(ctx context.Context, req model.Request) (
 	*http.Request, error) {
+
+	if c.apiMode() == APIResponses {
+		return c.newResponsesRequest(ctx, req)
+	}
 
 	body, err := json.Marshal(chatRequest{
 		Model:    c.Model,
@@ -91,7 +121,8 @@ func (c *Client) newRequest(ctx context.Context, req model.Request) (
 	}
 
 	httpReq, err := http.NewRequestWithContext(
-		ctx, http.MethodPost, c.endpoint(), bytes.NewReader(body),
+		ctx, http.MethodPost, c.endpoint(chatCompletionsPath),
+		bytes.NewReader(body),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create openai request: %w", err)
@@ -105,18 +136,79 @@ func (c *Client) newRequest(ctx context.Context, req model.Request) (
 	return httpReq, nil
 }
 
-// endpoint returns the complete chat completions endpoint URL.
-func (c *Client) endpoint() string {
+// newResponsesRequest builds the HTTP request for a streaming response.
+func (c *Client) newResponsesRequest(ctx context.Context, req model.Request) (
+	*http.Request, error) {
+
+	body, err := json.Marshal(responseRequest{
+		Model:        c.Model,
+		Stream:       true,
+		Instructions: responseInstructions(req.Messages),
+		Input:        responseInput(req.Messages),
+		Tools:        responseTools(req.Tools),
+		Reasoning: responseReasoningConfig(
+			c.ReasoningEffort, c.ReasoningSummary,
+		),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("marshal openai response request: %w",
+			err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(
+		ctx, http.MethodPost, c.endpoint(responsesPath),
+		bytes.NewReader(body),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create openai response request: %w",
+			err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", "text/event-stream")
+	if c.APIKey != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+c.APIKey)
+	}
+
+	return httpReq, nil
+}
+
+// apiMode returns the configured OpenAI API shape.
+func (c *Client) apiMode() string {
+	switch c.API {
+	case "", APIChatCompletions:
+		return APIChatCompletions
+
+	case APIResponses:
+		return APIResponses
+
+	default:
+		return c.API
+	}
+}
+
+// validateAPI rejects unknown OpenAI API modes before making a request.
+func (c *Client) validateAPI() error {
+	switch c.apiMode() {
+	case APIChatCompletions, APIResponses:
+		return nil
+
+	default:
+		return fmt.Errorf("unknown openai api %q", c.API)
+	}
+}
+
+// endpoint returns the complete endpoint URL for an API path.
+func (c *Client) endpoint(path string) string {
 	baseURL := strings.TrimRight(c.BaseURL, "/")
 	if baseURL == "" {
 		baseURL = DefaultBaseURL
 	}
 
-	return baseURL + chatCompletionsPath
+	return baseURL + path
 }
 
-// streamResponse decodes server-sent events into provider-neutral model events.
-func streamResponse(ctx context.Context, body io.ReadCloser,
+// streamChatCompletions decodes Chat Completions SSE into neutral events.
+func streamChatCompletions(ctx context.Context, body io.ReadCloser,
 	events chan<- model.Event) {
 
 	defer close(events)
@@ -219,6 +311,12 @@ func decodeChunk(payload []byte) (decodedChunk, error) {
 
 	var decoded decodedChunk
 	for _, choice := range chunk.Choices {
+		if choice.Delta.reasoningText() != "" {
+			decoded.Events = append(decoded.Events, model.Event{
+				Type: model.EventReasoningDelta,
+				Text: choice.Delta.reasoningText(),
+			})
+		}
 		if choice.Delta.Content != "" {
 			decoded.Events = append(decoded.Events, model.Event{
 				Type: model.EventTextDelta,
@@ -231,6 +329,114 @@ func decodeChunk(payload []byte) (decodedChunk, error) {
 	}
 
 	return decoded, nil
+}
+
+// streamResponsesAPI decodes Responses API SSE into neutral model events.
+func streamResponsesAPI(ctx context.Context, body io.ReadCloser,
+	events chan<- model.Event) {
+
+	defer close(events)
+	defer body.Close()
+
+	scanner := bufio.NewScanner(body)
+	for scanner.Scan() {
+		select {
+		case <-ctx.Done():
+			return
+
+		default:
+		}
+
+		payload, ok := eventPayload(scanner.Text())
+		if !ok {
+			continue
+		}
+		if payload == "[DONE]" {
+			sendEvent(
+				ctx, events, model.Event{
+					Type: model.EventDone,
+				},
+			)
+
+			return
+		}
+
+		for _, event := range decodeResponseEvent([]byte(payload)) {
+			if !sendEvent(ctx, events, event) {
+				return
+			}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		sendEvent(ctx, events, model.Event{
+			Type: model.EventError,
+			Err: fmt.
+				Errorf("read openai response stream: %w", err).
+				Error(),
+		})
+	}
+}
+
+// decodeResponseEvent converts one Responses API stream event.
+func decodeResponseEvent(payload []byte) []model.Event {
+	var event responseStreamEvent
+	if err := json.Unmarshal(payload, &event); err != nil {
+		return []model.Event{{
+			Type: model.EventError,
+			Err: fmt.Errorf("decode openai response stream "+
+				"event: %w", err).Error(),
+		}}
+	}
+
+	switch event.Type {
+	case "response.output_text.delta":
+		return []model.Event{
+			{
+				Type: model.EventTextDelta,
+				Text: event.Delta,
+			},
+		}
+
+	case "response.reasoning_summary_text.delta":
+		return []model.Event{{Type: model.EventReasoningDelta,
+			Text: event.Delta}}
+
+	case "response.output_item.done":
+		if event.Item.Type != "function_call" {
+			return nil
+		}
+
+		return []model.Event{{
+			Type: model.EventToolCall,
+			ToolCall: model.ToolCall{
+				ID:        event.Item.CallID,
+				Name:      event.Item.Name,
+				Arguments: event.Item.Arguments,
+			},
+		}}
+
+	case "response.completed":
+		return []model.Event{{Type: model.EventDone}}
+
+	case "response.failed", "response.incomplete":
+		return []model.Event{{Type: model.EventError,
+			Err: responseErrorText(event)}}
+
+	default:
+		return nil
+	}
+}
+
+// responseErrorText returns a concise message from a Responses error event.
+func responseErrorText(event responseStreamEvent) string {
+	if event.Response.Error.Message != "" {
+		return event.Response.Error.Message
+	}
+	if event.Type != "" {
+		return event.Type
+	}
+
+	return "openai response failed"
 }
 
 // readErrorResponse converts a non-2xx response into a concise error.
@@ -297,6 +503,80 @@ func chatTools(specs []model.ToolSpec) []chatTool {
 	}
 
 	return out
+}
+
+// responseInstructions joins system messages for the Responses instructions.
+func responseInstructions(messages []model.Message) string {
+	var parts []string
+	for _, message := range messages {
+		if message.Role == model.RoleSystem && message.Content != "" {
+			parts = append(parts, message.Content)
+		}
+	}
+
+	return strings.Join(parts, "\n\n")
+}
+
+// responseInput converts neutral history into Responses input items.
+func responseInput(messages []model.Message) []responseInputItem {
+	var out []responseInputItem
+	for _, message := range messages {
+		if message.Role == model.RoleSystem {
+			continue
+		}
+		if message.Role == model.RoleTool {
+			out = append(out, responseInputItem{
+				Type:   "function_call_output",
+				CallID: message.ToolCallID,
+				Output: message.Content,
+			})
+
+			continue
+		}
+		if message.Content != "" {
+			out = append(out, responseInputItem{
+				Role:    message.Role,
+				Content: message.Content,
+			})
+		}
+		for _, call := range message.ToolCalls {
+			out = append(out, responseInputItem{
+				Type:      "function_call",
+				CallID:    call.ID,
+				Name:      call.Name,
+				Arguments: call.Arguments,
+			})
+		}
+	}
+
+	return out
+}
+
+// responseTools converts neutral tool specs into Responses function tools.
+func responseTools(specs []model.ToolSpec) []responseTool {
+	out := make([]responseTool, 0, len(specs))
+	for _, spec := range specs {
+		out = append(out, responseTool{
+			Type:        "function",
+			Name:        spec.Name,
+			Description: spec.Description,
+			Parameters:  spec.Parameters,
+		})
+	}
+
+	return out
+}
+
+// responseReasoningConfig returns a reasoning object when configured.
+func responseReasoningConfig(effort string, summary string) *responseReasoning {
+	if effort == "" && summary == "" {
+		return nil
+	}
+
+	return &responseReasoning{
+		Effort:  effort,
+		Summary: summary,
+	}
 }
 
 // decodedChunk stores neutral events extracted from one OpenAI stream chunk.
@@ -374,6 +654,75 @@ type chatRequest struct {
 	Tools []chatTool `json:"tools,omitempty"`
 }
 
+// responseRequest is the JSON request shape for the Responses API.
+type responseRequest struct {
+	// Model is the provider model identifier.
+	Model string `json:"model"`
+
+	// Stream enables server-sent event output.
+	Stream bool `json:"stream"`
+
+	// Instructions stores system-level guidance for the response.
+	Instructions string `json:"instructions,omitempty"`
+
+	// Input contains message and function-call history items.
+	Input []responseInputItem `json:"input"`
+
+	// Tools contains function tools available to the model.
+	Tools []responseTool `json:"tools,omitempty"`
+
+	// Reasoning configures reasoning effort and summary output.
+	Reasoning *responseReasoning `json:"reasoning,omitempty"`
+}
+
+// responseInputItem is one Responses API input item.
+type responseInputItem struct {
+	// Type identifies function call items. Empty means message input.
+	Type string `json:"type,omitempty"`
+
+	// Role identifies message speakers for ordinary input messages.
+	Role string `json:"role,omitempty"`
+
+	// Content stores message text or function-call output.
+	Content string `json:"content,omitempty"`
+
+	// CallID links function-call outputs to prior function calls.
+	CallID string `json:"call_id,omitempty"`
+
+	// Name is the function name for function-call history.
+	Name string `json:"name,omitempty"`
+
+	// Arguments stores raw JSON function-call arguments.
+	Arguments string `json:"arguments,omitempty"`
+
+	// Output stores function-call result text.
+	Output string `json:"output,omitempty"`
+}
+
+// responseReasoning configures reasoning-capable model behavior.
+type responseReasoning struct {
+	// Effort constrains how much the model reasons.
+	Effort string `json:"effort,omitempty"`
+
+	// Summary requests a displayable reasoning summary.
+	Summary string `json:"summary,omitempty"`
+}
+
+// responseTool is one Responses API function tool declaration.
+type responseTool struct {
+	// Type identifies the tool kind.
+	Type string `json:"type"`
+
+	// Name is the model-facing function name.
+	Name string `json:"name"`
+
+	// Description explains when the model should call the function.
+	Description string `json:"description"`
+
+	// Parameters is the function argument JSON Schema.
+	Parameters json.RawMessage `json:"parameters"`
+}
+
 // chatMessage is one OpenAI-compatible chat message.
 type chatMessage struct {
 	// Role identifies the chat speaker.
@@ -406,8 +755,25 @@ type chatDelta struct {
 	// Content stores text emitted by this chunk.
 	Content string `json:"content"`
 
+	// Reasoning stores displayable reasoning text emitted by compatible
+	// providers that use a generic reasoning field.
+	Reasoning string `json:"reasoning"`
+
+	// ReasoningContent stores displayable reasoning text emitted by
+	// OpenAI-compatible providers such as some local model runtimes.
+	ReasoningContent string `json:"reasoning_content"`
+
 	// ToolCalls stores streamed tool calls emitted by this chunk.
 	ToolCalls []chatToolCall `json:"tool_calls"`
+}
+
+// reasoningText returns the first populated chat reasoning delta field.
+func (d chatDelta) reasoningText() string {
+	if d.ReasoningContent != "" {
+		return d.ReasoningContent
+	}
+
+	return d.Reasoning
 }
 
 // chatTool is one OpenAI function tool declaration.
@@ -453,4 +819,46 @@ type chatToolFunction struct {
 
 	// Arguments stores the raw JSON argument object.
 	Arguments string `json:"arguments,omitempty"`
+}
+
+// responseStreamEvent is a partially decoded Responses API stream event.
+type responseStreamEvent struct {
+	// Type identifies the streamed event.
+	Type string `json:"type"`
+
+	// Delta stores text deltas for output text and reasoning summaries.
+	Delta string `json:"delta"`
+
+	// Item stores completed output item details.
+	Item responseOutputItem `json:"item"`
+
+	// Response stores failed or incomplete response details.
+	Response responseEventResponse `json:"response"`
+}
+
+// responseOutputItem stores one completed Responses output item.
+type responseOutputItem struct {
+	// Type identifies the output item kind.
+	Type string `json:"type"`
+
+	// CallID is the call identifier for function calls.
+	CallID string `json:"call_id"`
+
+	// Name is the function name.
+	Name string `json:"name"`
+
+	// Arguments stores raw JSON function arguments.
+	Arguments string `json:"arguments"`
+}
+
+// responseEventResponse stores failed or incomplete response state.
+type responseEventResponse struct {
+	// Error stores provider error details when present.
+	Error responseEventError `json:"error"`
+}
+
+// responseEventError stores provider error text.
+type responseEventError struct {
+	// Message is the human-readable error description.
+	Message string `json:"message"`
 }

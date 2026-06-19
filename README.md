@@ -58,6 +58,16 @@ OPENAI_API_KEY=... go run ./cmd/harness chat \
   --model gpt-4.1-mini
 ```
 
+Run chat with OpenAI reasoning summaries when the selected model supports them:
+
+```bash
+OPENAI_API_KEY=... go run ./cmd/harness chat \
+  --provider openai \
+  --openai-api responses \
+  --model gpt-5.5 \
+  --reasoning-summary auto
+```
+
 Use a custom endpoint:
 
 ```bash

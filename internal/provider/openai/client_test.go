@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"harness/internal/model"
@@ -160,6 +161,153 @@ func TestClientStreamsFragmentedToolCall(t *testing.T) {
 	}
 }
 
+// TestClientStreamsChatReasoning verifies OpenAI-compatible chat deltas can
+// surface displayable reasoning text when a provider sends it.
+func TestClientStreamsChatReasoning(t *testing.T) {
+	server := httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprint(
+				w, "data: "+
+					"{\"choices\":[{\"delta\":{\"reasoning_co"+
+					"ntent\":\"checking\"}}]}\n\n",
+			)
+			fmt.Fprint(
+				w, "data: "+
+					"{\"choices\":[{\"delta\":{\"content\":\"hi"+
+					"\"}}]}\n\n",
+			)
+			fmt.Fprint(w, "data: [DONE]\n\n")
+		}),
+	)
+	defer server.Close()
+
+	client := &Client{BaseURL: server.URL, Model: "test-model"}
+	events, err := client.Stream(context.Background(), model.Request{
+		Messages: []model.Message{{
+			Role:    model.RoleUser,
+			Content: "think",
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := collectEvents(events)
+	if len(got) != 3 {
+		t.Fatalf("expected three events, got %#v", got)
+	}
+	if got[0].Type != model.EventReasoningDelta ||
+		got[0].Text != "checking" {
+
+		t.Fatalf("unexpected reasoning event: %#v", got[0])
+	}
+	if got[1].Type != model.EventTextDelta || got[1].Text != "hi" {
+		t.Fatalf("unexpected text event: %#v", got[1])
+	}
+}
+
+// TestClientStreamsResponsesAPI verifies Responses API reasoning summaries,
+// text, and function calls are converted into neutral events.
+func TestClientStreamsResponsesAPI(t *testing.T) {
+	var gotPath string
+	var gotRequest responseRequest
+	server := httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			gotPath = r.URL.Path
+			if err := json.NewDecoder(r.Body).Decode(
+				&gotRequest,
+			); err != nil {
+
+				t.Fatal(err)
+			}
+
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprint(
+				w, "data: "+
+					"{\"type\":\"response.reasoning_summary"+
+					"_text.delta\",\"delta\":\"checking\"}"+
+					"\n\n",
+			)
+			fmt.Fprint(
+				w, "data: "+
+					"{\"type\":\"response.output_text.delta"+
+					"\",\"delta\":\"hi\"}\n\n",
+			)
+			fmt.Fprint(
+				w, "data: "+
+					"{\"type\":\"response.output_item.done\""+
+					",\"item\":{\"type\":\"function_call\",\"ca"+
+					"ll_id\":\"call_1\",\"name\":\"ls\",\"argume"+
+					"nts\":\"{\\\"path\\\":\\\".\\\"}\"}}"+
+					"\n\n",
+			)
+			fmt.Fprint(
+				w,
+				"data: {\"type\":\"response.completed\"}\n\n",
+			)
+		}),
+	)
+	defer server.Close()
+
+	client := &Client{
+		BaseURL:          server.URL,
+		Model:            "test-model",
+		API:              APIResponses,
+		ReasoningEffort:  "medium",
+		ReasoningSummary: "auto",
+	}
+	events, err := client.Stream(context.Background(), model.Request{
+		Messages: []model.Message{
+			{Role: model.RoleSystem, Content: "rules"},
+			{Role: model.RoleUser, Content: "list files"},
+		},
+		Tools: []model.ToolSpec{{
+			Name:        "ls",
+			Description: "List files",
+			Parameters:  json.RawMessage(`{"type":"object"}`),
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := collectEvents(events)
+	if gotPath != responsesPath {
+		t.Fatalf("unexpected path: %q", gotPath)
+	}
+	if gotRequest.Instructions != "rules" {
+		t.Fatalf("unexpected instructions: %q", gotRequest.Instructions)
+	}
+	if gotRequest.Reasoning == nil ||
+		gotRequest.Reasoning.Effort != "medium" ||
+		gotRequest.Reasoning.Summary != "auto" {
+
+		t.Fatalf("unexpected reasoning config: %#v",
+			gotRequest.Reasoning)
+	}
+	if len(got) != 4 {
+		t.Fatalf("expected four events, got %#v", got)
+	}
+	if got[0].Type != model.EventReasoningDelta ||
+		got[0].Text != "checking" {
+
+		t.Fatalf("unexpected reasoning event: %#v", got[0])
+	}
+	if got[1].Type != model.EventTextDelta || got[1].Text != "hi" {
+		t.Fatalf("unexpected text event: %#v", got[1])
+	}
+	if got[2].Type != model.EventToolCall ||
+		got[2].ToolCall.ID != "call_1" ||
+		got[2].ToolCall.Name != "ls" {
+
+		t.Fatalf("unexpected tool call: %#v", got[2])
+	}
+	if got[3].Type != model.EventDone {
+		t.Fatalf("unexpected done event: %#v", got[3])
+	}
+}
+
 // TestClientReturnsHTTPError verifies that non-2xx responses fail before a
 // stream is returned.
 func TestClientReturnsHTTPError(t *testing.T) {
@@ -183,6 +331,27 @@ func TestClientReturnsHTTPError(t *testing.T) {
 	)
 	if err == nil {
 		t.Fatal("expected http error")
+	}
+}
+
+// TestClientRejectsUnknownAPI verifies invalid API shape configuration fails
+// before any HTTP request is attempted.
+func TestClientRejectsUnknownAPI(t *testing.T) {
+	client := &Client{
+		Model: "test-model",
+		API:   "mystery",
+	}
+	_, err := client.Stream(context.Background(), model.Request{
+		Messages: []model.Message{{
+			Role:    model.RoleUser,
+			Content: "hello",
+		}},
+	})
+	if err == nil {
+		t.Fatal("expected unknown API error")
+	}
+	if !strings.Contains(err.Error(), `unknown openai api "mystery"`) {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

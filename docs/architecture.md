@@ -181,9 +181,11 @@ provider plugins later
 ```
 
 The first real provider is `internal/provider/openai`, a stdlib-only
-OpenAI-compatible Chat Completions streaming client. It uses plain `net/http`
-and server-sent event parsing, not an SDK. Echo remains the default provider for
-offline development and tests.
+OpenAI-compatible streaming client. It uses plain `net/http` and server-sent
+event parsing, not an SDK. Chat Completions remains the default API shape for
+compatibility with local OpenAI-compatible endpoints. The same provider can use
+the Responses API when callers want OpenAI reasoning summaries or richer output
+items.
 
 OpenAI-compatible usage is selected explicitly:
 
@@ -193,6 +195,23 @@ OPENAI_API_KEY=... go run ./cmd/harness \
   --model gpt-4.1-mini \
   -p "say hello"
 ```
+
+Reasoning summaries are provider and model dependent. For OpenAI reasoning
+models, callers can opt into Responses API mode and request displayable
+summaries:
+
+```bash
+OPENAI_API_KEY=... go run ./cmd/harness chat \
+  --provider openai \
+  --openai-api responses \
+  --model gpt-5.5 \
+  --reasoning-effort medium \
+  --reasoning-summary auto
+```
+
+The harness treats these as displayable summaries, not raw hidden
+chain-of-thought. It renders them as live `thinking:` blocks in chat mode and
+does not persist them into the JSONL transcript in this first version.
 
 Local or proxy-compatible endpoints can override the base URL:
 
@@ -204,10 +223,11 @@ OPENAI_API_KEY=unused go run ./cmd/harness \
   -p "say hello"
 ```
 
-The CLI also reads `HARNESS_PROVIDER`, `OPENAI_MODEL`, `OPENAI_BASE_URL`, and
-`OPENAI_API_KEY`. Codex OAuth and token refresh remain separate future auth
-work; this step only proves the provider HTTP stream behind the existing model
-interface.
+The CLI also reads `HARNESS_PROVIDER`, `HARNESS_OPENAI_API`, `OPENAI_MODEL`,
+`OPENAI_BASE_URL`, `OPENAI_API_KEY`, `OPENAI_REASONING_EFFORT`, and
+`OPENAI_REASONING_SUMMARY`. Codex OAuth and token refresh remain separate future
+auth work; this step only proves the provider HTTP stream behind the existing
+model interface.
 
 ## Context Building
 

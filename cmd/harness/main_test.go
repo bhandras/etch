@@ -535,6 +535,7 @@ func TestChatObserverSeparatesAssistantReplies(t *testing.T) {
 	var stdout bytes.Buffer
 	observer := &chatObserver{stdout: &stdout}
 
+	observer.ReasoningCompleted("checking the README")
 	observer.ToolCallStarted(model.ToolCall{
 		ID:        "call_1",
 		Name:      "read",
@@ -555,8 +556,8 @@ func TestChatObserverSeparatesAssistantReplies(t *testing.T) {
 
 	got := stdout.String()
 	if !strings.Contains(
-		got,
-		"-> read README.md\n\n   read 1 lines\n\nassistant: done\n",
+		got, "thinking:\n   checking the README\n\n-> read "+
+			"README.md\n\n   read 1 lines\n\nassistant: done\n",
 	) {
 
 		t.Fatalf("assistant reply was not separated: %q", got)

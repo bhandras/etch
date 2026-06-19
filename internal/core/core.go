@@ -86,6 +86,14 @@ type ToolCallObserver interface {
 	ToolCallStarted(call model.ToolCall)
 }
 
+// ReasoningObserver receives displayable model reasoning summaries.
+type ReasoningObserver interface {
+	// ReasoningCompleted receives the complete reasoning summary emitted
+	// by one model pass. Raw hidden chain-of-thought should not be sent
+	// through this hook.
+	ReasoningCompleted(text string)
+}
+
 // RunTurn executes one prompt against a model client and persists the exchange.
 func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 	if strings.TrimSpace(req.Prompt) == "" {
@@ -134,6 +142,7 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 		if err != nil {
 			return nil, err
 		}
+		notifyReasoningCompleted(req.Observer, response.Reasoning)
 		if len(response.ToolCalls) == 0 {
 			assistant, err = store.Append(
 				session.EventAssistantMessage, parentID,
@@ -268,6 +277,10 @@ type modelResponse struct {
 	// Text is the complete assistant text assembled from streamed deltas.
 	Text string
 
+	// Reasoning is the complete displayable reasoning summary assembled
+	// from streamed deltas.
+	Reasoning string
+
 	// ToolCalls stores complete tool calls requested by the model.
 	ToolCalls []model.ToolCall
 }
@@ -294,11 +307,13 @@ func collectModelResponse(ctx context.Context, client model.Client,
 	return collectStream(ctx, stream)
 }
 
-// collectStream consumes a model stream and joins text and tool-call events.
+// collectStream consumes a model stream and joins reasoning, text, and tool
+// call events.
 func collectStream(ctx context.Context,
 	stream <-chan model.Event) (modelResponse, error) {
 
 	var text strings.Builder
+	var reasoning strings.Builder
 	var calls []model.ToolCall
 	for {
 		select {
@@ -309,6 +324,7 @@ func collectStream(ctx context.Context,
 			if !ok {
 				return modelResponse{
 					Text:      text.String(),
+					Reasoning: reasoning.String(),
 					ToolCalls: calls,
 				}, nil
 			}
@@ -316,12 +332,16 @@ func collectStream(ctx context.Context,
 			case model.EventTextDelta:
 				text.WriteString(event.Text)
 
+			case model.EventReasoningDelta:
+				reasoning.WriteString(event.Text)
+
 			case model.EventToolCall:
 				calls = append(calls, event.ToolCall)
 
 			case model.EventDone:
 				return modelResponse{
 					Text:      text.String(),
+					Reasoning: reasoning.String(),
 					ToolCalls: calls,
 				}, nil
 
@@ -334,6 +354,17 @@ func collectStream(ctx context.Context,
 					"model event type %q", event.Type)
 			}
 		}
+	}
+}
+
+// notifyReasoningCompleted sends reasoning summaries to interested observers.
+func notifyReasoningCompleted(observer Observer, text string) {
+	if observer == nil || strings.TrimSpace(text) == "" {
+		return
+	}
+	reasoningObserver, ok := observer.(ReasoningObserver)
+	if ok {
+		reasoningObserver.ReasoningCompleted(text)
 	}
 }
 

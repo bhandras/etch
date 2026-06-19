@@ -51,28 +51,31 @@ const (
 
 // cliConfig stores parsed command-line options for one invocation.
 type cliConfig struct {
-	command        string
-	prompt         string
-	sessionDir     string
-	jsonOutput     bool
-	sessionID      string
-	provider       string
-	model          string
-	baseURL        string
-	apiKey         string
-	toolName       string
-	toolPath       string
-	toolCommand    string
-	toolContent    string
-	toolOldText    string
-	toolNewText    string
-	toolQuery      string
-	toolOffset     int
-	toolLimit      int
-	toolTimeout    int
-	toolIgnoreCase bool
-	keepMessages   int
-	maxToolRounds  int
+	command          string
+	prompt           string
+	sessionDir       string
+	jsonOutput       bool
+	sessionID        string
+	provider         string
+	model            string
+	baseURL          string
+	apiKey           string
+	openaiAPI        string
+	reasoningEffort  string
+	reasoningSummary string
+	toolName         string
+	toolPath         string
+	toolCommand      string
+	toolContent      string
+	toolOldText      string
+	toolNewText      string
+	toolQuery        string
+	toolOffset       int
+	toolLimit        int
+	toolTimeout      int
+	toolIgnoreCase   bool
+	keepMessages     int
+	maxToolRounds    int
 }
 
 // main runs the command and exits with the returned status code.
@@ -380,6 +383,19 @@ func (o *chatObserver) ToolCallStarted(call model.ToolCall) {
 		Arguments: call.Arguments,
 	}) {
 		fmt.Fprintln(o.stdout, line)
+	}
+}
+
+// ReasoningCompleted renders one model-provided thinking summary block.
+func (o *chatObserver) ReasoningCompleted(text string) {
+	o.printSeparator()
+	fmt.Fprintln(o.stdout, "thinking:")
+	for _, line := range strings.Split(strings.TrimRight(text, "\n"), "\n") {
+		if strings.TrimSpace(line) == "" {
+			fmt.Fprintln(o.stdout)
+			continue
+		}
+		fmt.Fprintln(o.stdout, "   "+line)
 	}
 }
 
@@ -917,6 +933,11 @@ func parseChatFlags(args []string, stderr io.Writer) (cliConfig, error) {
 		model:      envDefault("OPENAI_MODEL", ""),
 		baseURL:    envDefault("OPENAI_BASE_URL", openai.DefaultBaseURL),
 		apiKey:     os.Getenv("OPENAI_API_KEY"),
+		openaiAPI: envDefault(
+			"HARNESS_OPENAI_API", openai.APIChatCompletions,
+		),
+		reasoningEffort:  envDefault("OPENAI_REASONING_EFFORT", ""),
+		reasoningSummary: envDefault("OPENAI_REASONING_SUMMARY", ""),
 		maxToolRounds: envIntDefault(
 			"HARNESS_MAX_TOOL_ROUNDS", core.DefaultMaxToolRounds,
 		),
@@ -936,6 +957,7 @@ func parseChatFlags(args []string, stderr io.Writer) (cliConfig, error) {
 		"model provider: echo or openai",
 	)
 	fs.StringVar(&cfg.model, "model", cfg.model, "provider model name")
+	addOpenAIFlags(fs, &cfg)
 	fs.StringVar(
 		&cfg.baseURL, "base-url", cfg.baseURL,
 		"OpenAI-compatible API base URL",
@@ -972,8 +994,13 @@ func parseCompactFlags(args []string, stderr io.Writer) (cliConfig, error) {
 		baseURL: envDefault(
 			"OPENAI_BASE_URL", openai.DefaultBaseURL,
 		),
-		apiKey:       os.Getenv("OPENAI_API_KEY"),
-		keepMessages: core.DefaultCompactKeepMessages,
+		apiKey: os.Getenv("OPENAI_API_KEY"),
+		openaiAPI: envDefault(
+			"HARNESS_OPENAI_API", openai.APIChatCompletions,
+		),
+		reasoningEffort:  envDefault("OPENAI_REASONING_EFFORT", ""),
+		reasoningSummary: envDefault("OPENAI_REASONING_SUMMARY", ""),
+		keepMessages:     core.DefaultCompactKeepMessages,
 	}
 	fs := flag.NewFlagSet(commandCompact, flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -990,6 +1017,7 @@ func parseCompactFlags(args []string, stderr io.Writer) (cliConfig, error) {
 		"model provider: echo or openai",
 	)
 	fs.StringVar(&cfg.model, "model", cfg.model, "provider model name")
+	addOpenAIFlags(fs, &cfg)
 	fs.StringVar(
 		&cfg.baseURL, "base-url", cfg.baseURL,
 		"OpenAI-compatible API base URL",
@@ -1018,6 +1046,11 @@ func parseRunFlags(args []string, stderr io.Writer) (cliConfig, error) {
 	cfg.model = envDefault("OPENAI_MODEL", "")
 	cfg.baseURL = envDefault("OPENAI_BASE_URL", openai.DefaultBaseURL)
 	cfg.apiKey = os.Getenv("OPENAI_API_KEY")
+	cfg.openaiAPI = envDefault(
+		"HARNESS_OPENAI_API", openai.APIChatCompletions,
+	)
+	cfg.reasoningEffort = envDefault("OPENAI_REASONING_EFFORT", "")
+	cfg.reasoningSummary = envDefault("OPENAI_REASONING_SUMMARY", "")
 	cfg.maxToolRounds = envIntDefault(
 		"HARNESS_MAX_TOOL_ROUNDS", core.DefaultMaxToolRounds,
 	)
@@ -1036,6 +1069,7 @@ func parseRunFlags(args []string, stderr io.Writer) (cliConfig, error) {
 		"model provider: echo or openai",
 	)
 	fs.StringVar(&cfg.model, "model", cfg.model, "provider model name")
+	addOpenAIFlags(fs, &cfg)
 	fs.StringVar(
 		&cfg.baseURL, "base-url", cfg.baseURL,
 		"OpenAI-compatible API base URL",
@@ -1068,6 +1102,24 @@ func apiKeyFlagValue(fs *flag.FlagSet) *string {
 	return &value
 }
 
+// addOpenAIFlags registers provider-specific OpenAI controls.
+func addOpenAIFlags(fs *flag.FlagSet, cfg *cliConfig) {
+	fs.StringVar(
+		&cfg.openaiAPI, "openai-api", cfg.openaiAPI,
+		"OpenAI API shape: chat or responses",
+	)
+	fs.StringVar(
+		&cfg.reasoningEffort, "reasoning-effort", cfg.reasoningEffort,
+		"OpenAI reasoning effort: none, minimal, low, medium, "+
+			"high, or xhigh",
+	)
+	fs.StringVar(
+		&cfg.reasoningSummary, "reasoning-summary",
+		cfg.reasoningSummary,
+		"OpenAI reasoning summary: auto, concise, or detailed",
+	)
+}
+
 // applyAPIKeyFlag lets an explicit flag value override environment auth.
 func applyAPIKeyFlag(cfg *cliConfig, apiKey string) {
 	if apiKey != "" {
@@ -1092,9 +1144,12 @@ func modelClient(cfg cliConfig) (model.Client, error) {
 		}
 
 		return &openai.Client{
-			BaseURL: cfg.baseURL,
-			APIKey:  cfg.apiKey,
-			Model:   cfg.model,
+			BaseURL:          cfg.baseURL,
+			APIKey:           cfg.apiKey,
+			Model:            cfg.model,
+			API:              cfg.openaiAPI,
+			ReasoningEffort:  cfg.reasoningEffort,
+			ReasoningSummary: cfg.reasoningSummary,
 		}, nil
 
 	default:
