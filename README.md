@@ -34,7 +34,8 @@ Harness currently has:
 - OpenAI-compatible streaming through the standard library
 - project instruction loading from `AGENTS.md`
 - manual context compaction and `/context` stats
-- built-in tools for `ls`, `read`, `write`, `edit`, and `bash`
+- built-in tools for `ls`, `find`, `grep`, `read`, `write`, `edit`, and
+  `bash`
 - human-readable tool call and tool result rendering
 
 The default provider is an offline echo model, so the CLI can run without
@@ -77,6 +78,8 @@ Run a built-in tool directly:
 
 ```bash
 go run ./cmd/harness tool ls .
+go run ./cmd/harness tool find readme .
+go run ./cmd/harness tool grep Harness README.md
 go run ./cmd/harness tool read README.md
 go run ./cmd/harness tool bash -- pwd
 ```
@@ -87,6 +90,5 @@ Harness is not a finished agent product. It is a small harness for learning the
 shape of a good coding-agent core: explicit loops, durable logs, narrow tools,
 and a plugin boundary that keeps the binary small.
 
-The near-term direction is to improve context management, add search tools,
-make plugin execution real, and keep the core boring while the edges become more
-capable.
+The near-term direction is to improve context management, make plugin execution
+real, and keep the core boring while the edges become more capable.

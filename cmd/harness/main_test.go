@@ -288,6 +288,44 @@ func TestToolReadRunsDirectly(t *testing.T) {
 	}
 }
 
+// TestToolFindRunsDirectly verifies the manual recursive path search smoke
+// path.
+func TestToolFindRunsDirectly(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "README.md"), "")
+
+	var stdout, stderr bytes.Buffer
+	code := run(
+		[]string{"tool", "find", "readme", dir}, &stdout, &stderr,
+	)
+	if code != 0 {
+		t.Fatalf("tool failed: code=%d stdout=%q stderr=%q", code,
+			stdout.String(), stderr.String())
+	}
+	if strings.TrimSpace(stdout.String()) != "README.md" {
+		t.Fatalf("unexpected tool output: %q", stdout.String())
+	}
+}
+
+// TestToolGrepRunsDirectly verifies the manual literal search smoke path.
+func TestToolGrepRunsDirectly(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "note.txt"), "alpha\nNeedle\n")
+
+	var stdout, stderr bytes.Buffer
+	code := run(
+		[]string{"tool", "grep", "--ignore-case", "needle", dir},
+		&stdout, &stderr,
+	)
+	if code != 0 {
+		t.Fatalf("tool failed: code=%d stdout=%q stderr=%q", code,
+			stdout.String(), stderr.String())
+	}
+	if strings.TrimSpace(stdout.String()) != "note.txt:2:Needle" {
+		t.Fatalf("unexpected tool output: %q", stdout.String())
+	}
+}
+
 // TestToolWriteRunsDirectly verifies the manual whole-file write smoke path.
 func TestToolWriteRunsDirectly(t *testing.T) {
 	dir := t.TempDir()

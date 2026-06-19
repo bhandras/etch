@@ -51,26 +51,28 @@ const (
 
 // cliConfig stores parsed command-line options for one invocation.
 type cliConfig struct {
-	command       string
-	prompt        string
-	sessionDir    string
-	jsonOutput    bool
-	sessionID     string
-	provider      string
-	model         string
-	baseURL       string
-	apiKey        string
-	toolName      string
-	toolPath      string
-	toolCommand   string
-	toolContent   string
-	toolOldText   string
-	toolNewText   string
-	toolOffset    int
-	toolLimit     int
-	toolTimeout   int
-	keepMessages  int
-	maxToolRounds int
+	command        string
+	prompt         string
+	sessionDir     string
+	jsonOutput     bool
+	sessionID      string
+	provider       string
+	model          string
+	baseURL        string
+	apiKey         string
+	toolName       string
+	toolPath       string
+	toolCommand    string
+	toolContent    string
+	toolOldText    string
+	toolNewText    string
+	toolQuery      string
+	toolOffset     int
+	toolLimit      int
+	toolTimeout    int
+	toolIgnoreCase bool
+	keepMessages   int
+	maxToolRounds  int
 }
 
 // main runs the command and exits with the returned status code.
@@ -664,6 +666,10 @@ func parseToolFlags(args []string, stderr io.Writer) (cliConfig, error) {
 		&cfg.toolNewText, "new", "",
 		"exact replacement text for tools that edit files",
 	)
+	fs.BoolVar(
+		&cfg.toolIgnoreCase, "ignore-case", false,
+		"case-insensitive matching for tools that search text",
+	)
 	if err := fs.Parse(args[1:]); err != nil {
 		return cliConfig{}, err
 	}
@@ -684,6 +690,26 @@ func parseToolFlags(args []string, stderr io.Writer) (cliConfig, error) {
 				"one path")
 		}
 		cfg.toolPath = fs.Arg(0)
+
+	case tool.NameFind:
+		if fs.NArg() < 1 || fs.NArg() > 2 {
+			return cliConfig{}, fmt.Errorf("find accepts a query " +
+				"and optional path")
+		}
+		cfg.toolQuery = fs.Arg(0)
+		if fs.NArg() == 2 {
+			cfg.toolPath = fs.Arg(1)
+		}
+
+	case tool.NameGrep:
+		if fs.NArg() < 1 || fs.NArg() > 2 {
+			return cliConfig{}, fmt.Errorf("grep accepts a " +
+				"pattern and optional path")
+		}
+		cfg.toolQuery = fs.Arg(0)
+		if fs.NArg() == 2 {
+			cfg.toolPath = fs.Arg(1)
+		}
 
 	case tool.NameWrite:
 		if fs.NArg() != 1 {
@@ -747,6 +773,42 @@ func toolArguments(cfg cliConfig) (string, error) {
 		encoded, err := json.Marshal(args)
 		if err != nil {
 			return "", fmt.Errorf("marshal read arguments: %w", err)
+		}
+
+		return string(encoded), nil
+
+	case tool.NameFind:
+		args := struct {
+			Path  string `json:"path,omitempty"`
+			Query string `json:"query,omitempty"`
+			Limit int    `json:"limit,omitempty"`
+		}{
+			Path:  cfg.toolPath,
+			Query: cfg.toolQuery,
+			Limit: cfg.toolLimit,
+		}
+		encoded, err := json.Marshal(args)
+		if err != nil {
+			return "", fmt.Errorf("marshal find arguments: %w", err)
+		}
+
+		return string(encoded), nil
+
+	case tool.NameGrep:
+		args := struct {
+			Path       string `json:"path,omitempty"`
+			Pattern    string `json:"pattern"`
+			Limit      int    `json:"limit,omitempty"`
+			IgnoreCase bool   `json:"ignoreCase,omitempty"`
+		}{
+			Path:       cfg.toolPath,
+			Pattern:    cfg.toolQuery,
+			Limit:      cfg.toolLimit,
+			IgnoreCase: cfg.toolIgnoreCase,
+		}
+		encoded, err := json.Marshal(args)
+		if err != nil {
+			return "", fmt.Errorf("marshal grep arguments: %w", err)
 		}
 
 		return string(encoded), nil

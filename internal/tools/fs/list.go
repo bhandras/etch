@@ -129,7 +129,7 @@ func renderableNames(ctx context.Context,
 // skipDir reports whether a directory should be hidden from builtin tools.
 func skipDir(name string) bool {
 	switch name {
-	case ".git", ".harness", "node_modules", "vendor":
+	case ".git", ".harness", "bin", "node_modules", "vendor":
 		return true
 
 	default:

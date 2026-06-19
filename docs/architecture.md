@@ -305,7 +305,7 @@ keeps the builtin core self-contained.
 The first operation is `ls`, implemented in pure Go under `internal/tools/fs`.
 It lists one directory, includes ordinary dotfiles, sorts case-insensitively,
 marks directories with `/`, skips internal directories such as `.git`,
-`.harness`, `node_modules`, and `vendor`, and emits explicit truncation or
+`.harness`, `bin`, `node_modules`, and `vendor`, and emits explicit truncation or
 empty-directory notices.
 
 The second operation is `read`, also implemented in pure Go under
@@ -346,6 +346,21 @@ local shell environment because executing external programs is its purpose; the
 agent core and read/write/search tools should still avoid hidden binary
 dependencies.
 
+The sixth operation is `find`, a recursive path discovery tool implemented in
+pure Go. It matches case-insensitive substrings against slash-separated relative
+paths, includes files and directories, skips internal directories such as
+`.git`, `.harness`, `bin`, `node_modules`, and `vendor`, sorts output
+deterministically, and emits explicit no-match, truncation, and
+skipped-directory notices.
+
+The seventh operation is `grep`, a recursive literal text search tool
+implemented in pure Go. It returns compact `path:line:text` matches, skips
+internal directories, skips binary-looking files, skips unusually large files,
+caps total and per-file matches, and supports opt-in case-insensitive matching.
+The first version intentionally avoids regexp semantics; most agent discovery
+tasks need identifiers, error strings, TODOs, config keys, and neighboring line
+numbers before they need a full search language.
+
 The builtin tool registry lives under `internal/tool`. Registered tools wrap
 `internal/tools/fs` operations as model-callable functions, and the CLI exposes
 the same operations for direct smoke testing:
@@ -355,6 +370,8 @@ go run ./cmd/harness tool ls .
 go run ./cmd/harness tool ls --limit 20 .
 go run ./cmd/harness tool read AGENTS.md
 go run ./cmd/harness tool read --offset 20 --limit 40 AGENTS.md
+go run ./cmd/harness tool find main .
+go run ./cmd/harness tool grep DefaultMaxToolRounds .
 go run ./cmd/harness tool write --content 'hello\n' notes/hello.txt
 go run ./cmd/harness tool edit --old hello --new goodbye notes/hello.txt
 go run ./cmd/harness tool bash -- go test ./...

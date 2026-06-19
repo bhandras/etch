@@ -51,6 +51,46 @@ func TestDefaultRegistryExecutesRead(t *testing.T) {
 	}
 }
 
+// TestDefaultRegistryExecutesFind verifies that the registry exposes and
+// dispatches pure-Go recursive path discovery.
+func TestDefaultRegistryExecutesFind(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "README.md"), "")
+
+	registry := DefaultRegistry()
+	result, err := registry.Execute(context.Background(), model.ToolCall{
+		ID:        "call_1",
+		Name:      NameFind,
+		Arguments: `{"path":` + quoteJSON(dir) + `,"query":"readme"}`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(result.Text) != "README.md" {
+		t.Fatalf("unexpected find result: %q", result.Text)
+	}
+}
+
+// TestDefaultRegistryExecutesGrep verifies that the registry exposes and
+// dispatches pure-Go literal text search.
+func TestDefaultRegistryExecutesGrep(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "note.txt"), "alpha\nneedle\n")
+
+	registry := DefaultRegistry()
+	result, err := registry.Execute(context.Background(), model.ToolCall{
+		ID: "call_1", Name: NameGrep,
+		Arguments: `{"path":` + quoteJSON(dir) +
+			`,"pattern":"needle"}`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(result.Text) != "note.txt:2:needle" {
+		t.Fatalf("unexpected grep result: %q", result.Text)
+	}
+}
+
 // TestDefaultRegistryExecutesWrite verifies that the registry exposes and
 // dispatches the pure-Go whole-file writing tool.
 func TestDefaultRegistryExecutesWrite(t *testing.T) {
@@ -147,8 +187,8 @@ func writeFile(t *testing.T, path string, content string) {
 func TestSpecsReturnsStableOrder(t *testing.T) {
 	registry := DefaultRegistry()
 	specs := registry.Specs()
-	if len(specs) != 5 {
-		t.Fatalf("expected five specs, got %d", len(specs))
+	if len(specs) != 7 {
+		t.Fatalf("expected seven specs, got %d", len(specs))
 	}
 	if specs[0].Name != NameBash {
 		t.Fatalf("unexpected tool name: %q", specs[0].Name)
@@ -156,13 +196,19 @@ func TestSpecsReturnsStableOrder(t *testing.T) {
 	if specs[1].Name != NameEdit {
 		t.Fatalf("unexpected tool name: %q", specs[1].Name)
 	}
-	if specs[2].Name != NameLS {
+	if specs[2].Name != NameFind {
 		t.Fatalf("unexpected tool name: %q", specs[2].Name)
 	}
-	if specs[3].Name != NameRead {
+	if specs[3].Name != NameGrep {
 		t.Fatalf("unexpected tool name: %q", specs[3].Name)
 	}
-	if specs[4].Name != NameWrite {
+	if specs[4].Name != NameLS {
 		t.Fatalf("unexpected tool name: %q", specs[4].Name)
+	}
+	if specs[5].Name != NameRead {
+		t.Fatalf("unexpected tool name: %q", specs[5].Name)
+	}
+	if specs[6].Name != NameWrite {
+		t.Fatalf("unexpected tool name: %q", specs[6].Name)
 	}
 }

@@ -19,6 +19,12 @@ const (
 	// NameRead is the model-facing name for the text file reading tool.
 	NameRead = "read"
 
+	// NameFind is the model-facing name for recursive path discovery.
+	NameFind = "find"
+
+	// NameGrep is the model-facing name for literal text search.
+	NameGrep = "grep"
+
 	// NameWrite is the model-facing name for the whole-file writing tool.
 	NameWrite = "write"
 
@@ -55,6 +61,8 @@ func DefaultRegistry() *Registry {
 	registry := NewRegistry()
 	registry.Register(lsTool{})
 	registry.Register(readTool{})
+	registry.Register(findTool{})
+	registry.Register(grepTool{})
 	registry.Register(writeTool{})
 	registry.Register(editTool{})
 	registry.Register(bashTool{})
@@ -184,6 +192,107 @@ func (readTool) Execute(ctx context.Context, arguments string) (Result, error) {
 	}
 
 	text, err := fs.Read(ctx, req)
+	if err != nil {
+		return Result{}, err
+	}
+
+	return Result{Text: text}, nil
+}
+
+// findTool wraps the pure-Go recursive path search operation as a model tool.
+type findTool struct{}
+
+// Spec returns the model-facing schema for the find tool.
+func (findTool) Spec() model.ToolSpec {
+	return model.ToolSpec{
+		Name: NameFind,
+		Description: "Find files and directories recursively by " +
+			"case-insensitive path substring. Use this to discover " +
+			"project files without relying on external fd/find binaries.",
+		Parameters: json.RawMessage(`{
+			"type":"object",
+			"properties":{
+				"path":{
+					"type":"string",
+					"description":"Directory or file where searching starts. Defaults to the current directory."
+				},
+				"query":{
+					"type":"string",
+					"description":"Case-insensitive substring matched against relative paths. Empty returns all non-internal paths."
+				},
+				"limit":{
+					"type":"integer",
+					"description":"Maximum matches to return. Defaults to 500."
+				}
+			}
+		}`),
+	}
+}
+
+// Execute decodes find arguments and returns matching paths.
+func (findTool) Execute(ctx context.Context, arguments string) (Result, error) {
+	var req fs.FindRequest
+	if strings.TrimSpace(arguments) != "" {
+		if err := json.Unmarshal([]byte(arguments), &req); err != nil {
+			return Result{}, fmt.Errorf("decode find arguments: %w",
+				err)
+		}
+	}
+
+	text, err := fs.Find(ctx, req)
+	if err != nil {
+		return Result{}, err
+	}
+
+	return Result{Text: text}, nil
+}
+
+// grepTool wraps the pure-Go literal text search operation as a model tool.
+type grepTool struct{}
+
+// Spec returns the model-facing schema for the grep tool.
+func (grepTool) Spec() model.ToolSpec {
+	return model.ToolSpec{
+		Name: NameGrep,
+		Description: "Search files recursively for literal text and " +
+			"return path:line:text matches. Use this to locate symbols, " +
+			"errors, TODOs, and config keys without external rg/grep.",
+		Parameters: json.RawMessage(`{
+			"type":"object",
+			"properties":{
+				"path":{
+					"type":"string",
+					"description":"File or directory where searching starts. Defaults to the current directory."
+				},
+				"pattern":{
+					"type":"string",
+					"description":"Non-empty literal text to search for."
+				},
+				"limit":{
+					"type":"integer",
+					"description":"Maximum total matches to return. Defaults to 100."
+				},
+				"ignoreCase":{
+					"type":"boolean",
+					"description":"Whether to match literal text case-insensitively."
+				}
+			},
+			"required":["pattern"]
+		}`),
+	}
+}
+
+// Execute decodes grep arguments and returns literal text matches.
+func (grepTool) Execute(ctx context.Context, arguments string) (Result, error) {
+	var req fs.GrepRequest
+	if strings.TrimSpace(arguments) != "" {
+		if err := json.Unmarshal([]byte(arguments), &req); err != nil {
+			return Result{}, fmt.Errorf("decode grep arguments: %w",
+				err)
+		}
+	}
+
+	text, err := fs.Grep(ctx, req)
 	if err != nil {
 		return Result{}, err
 	}

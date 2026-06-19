@@ -53,6 +53,7 @@ func TestListSkipsInternalDirectories(t *testing.T) {
 	for _, name := range []string{
 		".git",
 		".harness",
+		"bin",
 		"node_modules",
 		"vendor",
 	} {
@@ -75,6 +76,7 @@ func TestListSkipsInternalDirectories(t *testing.T) {
 	for _, name := range []string{
 		".git",
 		".harness",
+		"bin",
 		"node_modules",
 		"vendor",
 	} {
@@ -83,7 +85,7 @@ func TestListSkipsInternalDirectories(t *testing.T) {
 				got)
 		}
 	}
-	if !strings.Contains(got, "(skipped 4 internal entries)") {
+	if !strings.Contains(got, "(skipped 5 internal entries)") {
 		t.Fatalf("listing missing skipped notice: %q", got)
 	}
 }
