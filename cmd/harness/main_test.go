@@ -269,6 +269,59 @@ func TestToolBashRunsDirectly(t *testing.T) {
 	}
 }
 
+// TestRunChatProcessesMultipleTurns verifies the minimal line-oriented chat
+// loop keeps a session alive across prompts.
+func TestRunChatProcessesMultipleTurns(t *testing.T) {
+	t.Setenv("HARNESS_PROVIDER", "")
+	t.Setenv("OPENAI_MODEL", "")
+	t.Setenv("OPENAI_BASE_URL", "")
+	t.Setenv("OPENAI_API_KEY", "")
+
+	cfg := cliConfig{
+		command:    commandChat,
+		sessionDir: filepath.Join(t.TempDir(), "sessions"),
+		provider:   providerEcho,
+	}
+	var stdout, stderr bytes.Buffer
+	code := runChat(
+		cfg, strings.NewReader("hello\nfollow-up\n/exit\n"), &stdout,
+		&stderr,
+	)
+	if code != 0 {
+		t.Fatalf("chat failed: code=%d stdout=%q stderr=%q", code,
+			stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "assistant: hello") {
+		t.Fatalf("missing first answer: %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "assistant: follow-up") {
+		t.Fatalf("missing second answer: %q", stdout.String())
+	}
+}
+
+// TestRunChatListsTools verifies that slash commands run without starting a
+// model turn.
+func TestRunChatListsTools(t *testing.T) {
+	cfg := cliConfig{
+		command:    commandChat,
+		sessionDir: filepath.Join(t.TempDir(), "sessions"),
+		provider:   providerEcho,
+	}
+	var stdout, stderr bytes.Buffer
+	code := runChat(
+		cfg, strings.NewReader("/tools\n/exit\n"), &stdout, &stderr,
+	)
+	if code != 0 {
+		t.Fatalf("chat failed: code=%d stdout=%q stderr=%q", code,
+			stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "bash") ||
+		!strings.Contains(stdout.String(), "edit") {
+
+		t.Fatalf("missing tools: %q", stdout.String())
+	}
+}
+
 // writeFile creates a small file fixture for CLI tests.
 func writeFile(t *testing.T, path string, content string) {
 	t.Helper()

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"flag"
@@ -35,6 +36,9 @@ const (
 
 	// commandTool executes a builtin tool directly for smoke testing.
 	commandTool = "tool"
+
+	// commandChat starts a minimal interactive line-oriented chat loop.
+	commandChat = "chat"
 
 	// providerEcho selects the dependency-free deterministic model client.
 	providerEcho = "echo"
@@ -88,6 +92,9 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 
 	case commandTool:
 		return runTool(cfg, stdout, stderr)
+
+	case commandChat:
+		return runChat(cfg, os.Stdin, stdout, stderr)
 
 	default:
 		fmt.Fprintf(stderr, "error: unknown command %q\n", cfg.command)
@@ -176,6 +183,151 @@ func runTool(cfg cliConfig, stdout io.Writer, stderr io.Writer) int {
 	return 0
 }
 
+// runChat starts a line-oriented interactive chat session.
+func runChat(cfg cliConfig, stdin io.Reader, stdout io.Writer,
+	stderr io.Writer) int {
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintln(stderr, "error: get working directory:", err)
+
+		return 1
+	}
+
+	modelClient, err := modelClient(cfg)
+	if err != nil {
+		fmt.Fprintln(stderr, "error:", err)
+
+		return 1
+	}
+
+	var sessionPath string
+	if cfg.sessionID != "" {
+		entry, err := session.Resolve(cfg.sessionDir, cfg.sessionID)
+		if err != nil {
+			fmt.Fprintln(stderr, "error:", err)
+
+			return 1
+		}
+		sessionPath = entry.Path
+		fmt.Fprintf(
+			stdout, "continuing session %s\n", shortID(entry.ID),
+		)
+	}
+
+	scanner := bufio.NewScanner(stdin)
+	scanner.Buffer(make([]byte, 0, 4096), 1024*1024)
+	printChatPrompt(stdout)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			printChatPrompt(stdout)
+			continue
+		}
+		if strings.HasPrefix(line, "/") {
+			keepGoing, nextPath := handleChatCommand(
+				cfg, line, sessionPath, stdout, stderr,
+			)
+			sessionPath = nextPath
+			if !keepGoing {
+				return 0
+			}
+			printChatPrompt(stdout)
+
+			continue
+		}
+
+		result, err := core.RunTurn(
+			context.Background(), core.TurnRequest{
+				Prompt:      line,
+				SessionDir:  cfg.sessionDir,
+				SessionPath: sessionPath,
+				CWD:         cwd,
+				Model:       modelClient,
+				Tools:       tool.DefaultRegistry(),
+			},
+		)
+		if err != nil {
+			fmt.Fprintln(stderr, "error:", err)
+
+			return 1
+		}
+		sessionPath = result.SessionPath
+		if err := renderSessionPathAfter(
+			result.SessionPath, result.UserEventID, stdout,
+		); err != nil {
+
+			fmt.Fprintln(stderr, "error:", err)
+
+			return 1
+		}
+		printChatPrompt(stdout)
+	}
+	if err := scanner.Err(); err != nil {
+		fmt.Fprintln(stderr, "error: read chat input:", err)
+
+		return 1
+	}
+
+	return 0
+}
+
+// handleChatCommand executes one slash command and returns whether to continue.
+func handleChatCommand(cfg cliConfig, line string, sessionPath string,
+	stdout io.Writer, stderr io.Writer) (bool, string) {
+
+	switch line {
+	case "/exit", "/quit":
+		return false, sessionPath
+
+	case "/new":
+		fmt.Fprintln(stdout, "started a new session")
+
+		return true, ""
+
+	case "/show":
+		if sessionPath == "" {
+			fmt.Fprintln(stdout, "no active session")
+
+			return true, sessionPath
+		}
+		if err := renderSessionPath(sessionPath, stdout); err != nil {
+			fmt.Fprintln(stderr, "error:", err)
+		}
+
+		return true, sessionPath
+
+	case "/sessions":
+		listSessions(cfg, stdout, stderr)
+
+		return true, sessionPath
+
+	case "/tools":
+		for _, spec := range tool.DefaultRegistry().Specs() {
+			fmt.Fprintln(stdout, spec.Name)
+		}
+
+		return true, sessionPath
+
+	case "/help":
+		fmt.Fprintln(
+			stdout, "/exit /quit /new /show /sessions /tools /help",
+		)
+
+		return true, sessionPath
+
+	default:
+		fmt.Fprintf(stdout, "unknown command %s\n", line)
+
+		return true, sessionPath
+	}
+}
+
+// printChatPrompt writes the fixed line-mode prompt.
+func printChatPrompt(stdout io.Writer) {
+	fmt.Fprint(stdout, "harness> ")
+}
+
 // listSessions renders the local session index in text or JSON form.
 func listSessions(cfg cliConfig, stdout io.Writer, stderr io.Writer) int {
 	entries, err := session.List(cfg.sessionDir)
@@ -244,22 +396,61 @@ func showSession(cfg cliConfig, stdout io.Writer, stderr io.Writer) int {
 		return 0
 	}
 
+	if err := renderEvents(events, stdout); err != nil {
+		fmt.Fprintln(stderr, "error:", err)
+
+		return 1
+	}
+
+	return 0
+}
+
+// renderSessionPath renders one session transcript from a JSONL path.
+func renderSessionPath(path string, stdout io.Writer) error {
+	events, err := session.ReadAll(path)
+	if err != nil {
+		return err
+	}
+
+	return renderEvents(events, stdout)
+}
+
+// renderSessionPathAfter renders transcript messages after the given event ID.
+func renderSessionPathAfter(path string, afterID string,
+	stdout io.Writer) error {
+
+	events, err := session.ReadAll(path)
+	if err != nil {
+		return err
+	}
+
+	start := 0
+	for i, event := range events {
+		if event.ID == afterID {
+			start = i + 1
+			break
+		}
+	}
+
+	return renderEvents(events[start:], stdout)
+}
+
+// renderEvents renders model-visible session messages as transcript lines.
+func renderEvents(events []session.Event, stdout io.Writer) error {
 	for _, event := range events {
 		if !isMessageEvent(event.Type) {
 			continue
 		}
 		message, err := decodeMessage(event)
 		if err != nil {
-			fmt.Fprintln(stderr, "error:", err)
-
-			return 1
+			return err
 		}
 		for _, line := range render.MessageLines(message) {
 			fmt.Fprintln(stdout, line)
 		}
 	}
 
-	return 0
+	return nil
 }
 
 // parseFlags converts CLI arguments into the command configuration.
@@ -274,6 +465,9 @@ func parseFlags(args []string, stderr io.Writer) (cliConfig, error) {
 
 		case commandTool:
 			return parseToolFlags(args[1:], stderr)
+
+		case commandChat:
+			return parseChatFlags(args[1:], stderr)
 		}
 	}
 
@@ -465,6 +659,43 @@ func toolArguments(cfg cliConfig) (string, error) {
 	default:
 		return "", fmt.Errorf("unknown tool %q", cfg.toolName)
 	}
+}
+
+// parseChatFlags converts chat subcommand flags into configuration.
+func parseChatFlags(args []string, stderr io.Writer) (cliConfig, error) {
+	cfg := cliConfig{
+		command:    commandChat,
+		sessionDir: defaultSessionDir,
+		provider:   envDefault("HARNESS_PROVIDER", providerEcho),
+		model:      envDefault("OPENAI_MODEL", ""),
+		baseURL:    envDefault("OPENAI_BASE_URL", openai.DefaultBaseURL),
+		apiKey:     os.Getenv("OPENAI_API_KEY"),
+	}
+	fs := flag.NewFlagSet(commandChat, flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	fs.StringVar(
+		&cfg.sessionDir, "session-dir", defaultSessionDir,
+		"session log directory",
+	)
+	fs.StringVar(
+		&cfg.sessionID, "session", "",
+		"existing session id or prefix to continue",
+	)
+	fs.StringVar(
+		&cfg.provider, "provider", cfg.provider,
+		"model provider: echo or openai",
+	)
+	fs.StringVar(&cfg.model, "model", cfg.model, "provider model name")
+	fs.StringVar(
+		&cfg.baseURL, "base-url", cfg.baseURL,
+		"OpenAI-compatible API base URL",
+	)
+	fs.StringVar(&cfg.apiKey, "api-key", cfg.apiKey, "OpenAI API key")
+	if err := fs.Parse(args); err != nil {
+		return cliConfig{}, err
+	}
+
+	return cfg, nil
 }
 
 // parseRunFlags converts default command flags into a run configuration.
