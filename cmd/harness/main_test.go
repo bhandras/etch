@@ -496,6 +496,41 @@ func TestRunChatContextAndCompactCommands(t *testing.T) {
 	}
 }
 
+// TestRunChatStatusCommand verifies the status slash command reports durable
+// session activity without starting a separate model turn.
+func TestRunChatStatusCommand(t *testing.T) {
+	cfg := cliConfig{
+		command:    commandChat,
+		sessionDir: filepath.Join(t.TempDir(), "sessions"),
+		provider:   providerEcho,
+	}
+	var stdout, stderr bytes.Buffer
+	code := runChat(
+		cfg, strings.NewReader("hello\n/status\n/exit\n"), &stdout,
+		&stderr,
+	)
+	if code != 0 {
+		t.Fatalf("chat failed: code=%d stdout=%q stderr=%q", code,
+			stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "session age:") {
+		t.Fatalf("missing session age: %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "turns: 1") {
+		t.Fatalf("missing turn count: %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "model calls: 1") {
+		t.Fatalf("missing model call count: %q", stdout.String())
+	}
+	if !strings.Contains(
+		stdout.String(),
+		"actual model usage: not recorded yet",
+	) {
+
+		t.Fatalf("missing usage placeholder: %q", stdout.String())
+	}
+}
+
 // TestChatObserverRendersToolEvents verifies that live chat feedback pairs each
 // local tool call with its result instead of batching call headers first.
 func TestChatObserverRendersToolEvents(t *testing.T) {

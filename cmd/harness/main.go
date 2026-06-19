@@ -342,6 +342,9 @@ func runChat(cfg cliConfig, stdin io.Reader, stdout io.Writer,
 type chatObserver struct {
 	// renderer owns transient terminal formatting for one chat turn.
 	renderer *liveChatRenderer
+
+	// toolCalls counts local tool calls executed during this turn.
+	toolCalls int
 }
 
 // EventAppended renders model-visible assistant and tool events.
@@ -378,6 +381,7 @@ func (o *chatObserver) EventAppended(event session.Event) {
 
 // ToolCallStarted renders one live tool call immediately before execution.
 func (o *chatObserver) ToolCallStarted(call model.ToolCall) {
+	o.toolCalls++
 	o.renderer.renderToolCall(call)
 }
 
@@ -388,7 +392,9 @@ func (o *chatObserver) ReasoningCompleted(text string) {
 
 // Finish renders terminal-only end-of-turn decoration.
 func (o *chatObserver) Finish(elapsed time.Duration) {
-	o.renderer.finish(elapsed)
+	o.renderer.finish(elapsed, liveTurnStats{
+		ToolCalls: o.toolCalls,
+	})
 }
 
 // handleChatCommand executes one slash command and returns whether to continue.
@@ -434,6 +440,18 @@ func handleChatCommand(cfg cliConfig, line string, sessionPath string,
 
 		return true, sessionPath
 
+	case "/status":
+		if sessionPath == "" {
+			fmt.Fprintln(stdout, "no active session")
+
+			return true, sessionPath
+		}
+		if err := printSessionStatus(sessionPath, stdout); err != nil {
+			fmt.Fprintln(stderr, "error:", err)
+		}
+
+		return true, sessionPath
+
 	case "/compact":
 		if sessionPath == "" {
 			fmt.Fprintln(stdout, "no active session")
@@ -469,7 +487,7 @@ func handleChatCommand(cfg cliConfig, line string, sessionPath string,
 	case "/help":
 		fmt.Fprintln(
 			stdout, "/exit /quit /new /show /sessions /context "+
-				"/compact /tools /help",
+				"/status /compact /tools /help",
 		)
 
 		return true, sessionPath
@@ -614,6 +632,21 @@ func printContextStats(path string, stdout io.Writer) error {
 
 	fmt.Fprintln(stdout, promptctx.FormatStats(stats))
 	fmt.Fprintln(stdout, promptctx.FormatProjectContext(projectContext))
+
+	return nil
+}
+
+// printSessionStatus renders durable activity statistics for a session.
+func printSessionStatus(path string, stdout io.Writer) error {
+	events, err := session.ReadAll(path)
+	if err != nil {
+		return err
+	}
+	status, err := session.BuildStatus(events, time.Now())
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(stdout, session.FormatStatus(status))
 
 	return nil
 }

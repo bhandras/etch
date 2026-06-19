@@ -287,6 +287,12 @@ punctuation-like runes as individual tokens. This is enough to compare context
 layers and spot growth without adding model-specific tokenizer tables to the
 core binary.
 
+Session status is separate from context projection. The `/status` command reads
+the same JSONL log and reports operational counters such as session age, event
+count, user turns, model calls, tool calls, compactions, and message bytes. This
+view should grow to include provider-reported token usage once model clients
+persist usage events.
+
 ## OpenAI And Codex Auth
 
 OpenAI support is bundled, not a third-party plugin. It is the main dogfooding

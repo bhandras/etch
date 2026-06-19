@@ -119,3 +119,21 @@ func TestRenderToolCallKeepsHeaderActive(t *testing.T) {
 		t.Fatalf("missing active tool call header: %q", got)
 	}
 }
+
+// TestFormatTurnStatsSummarizesToolCounts verifies the footer keeps per-turn
+// counters compact and grammatical.
+func TestFormatTurnStatsSummarizesToolCounts(t *testing.T) {
+	if got := formatTurnStats(liveTurnStats{}); got != "" {
+		t.Fatalf("unexpected empty stats: %q", got)
+	}
+	if got := formatTurnStats(liveTurnStats{ToolCalls: 1}); got !=
+		" · 1 tool" {
+
+		t.Fatalf("unexpected singular stats: %q", got)
+	}
+	if got := formatTurnStats(liveTurnStats{ToolCalls: 3}); got !=
+		" · 3 tools" {
+
+		t.Fatalf("unexpected plural stats: %q", got)
+	}
+}

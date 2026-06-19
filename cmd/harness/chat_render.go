@@ -59,6 +59,12 @@ type terminalTone struct {
 	italic bool
 }
 
+// liveTurnStats stores compact per-turn counters for the footer.
+type liveTurnStats struct {
+	// ToolCalls is the number of local tool calls executed in the turn.
+	ToolCalls int
+}
+
 // newLiveChatRenderer creates the live renderer for one chat turn.
 func newLiveChatRenderer(stdout io.Writer,
 	prefixBlankLine bool) *liveChatRenderer {
@@ -108,13 +114,13 @@ func (r *liveChatRenderer) renderToolResult(message session.MessageData) {
 }
 
 // finish renders a terminal-only footer after a completed turn.
-func (r *liveChatRenderer) finish(elapsed time.Duration) {
+func (r *liveChatRenderer) finish(elapsed time.Duration, stats liveTurnStats) {
 	if !r.style.enabled || !r.printed {
 		return
 	}
 	fmt.Fprintf(
-		r.stdout, "\n%s- Worked for %s -%s\n", ansiDim,
-		formatElapsed(elapsed), ansiReset,
+		r.stdout, "\n%s- Worked for %s%s -%s\n", ansiDim,
+		formatElapsed(elapsed), formatTurnStats(stats), ansiReset,
 	)
 }
 
@@ -350,4 +356,16 @@ func formatElapsed(elapsed time.Duration) string {
 	seconds = seconds % 60
 
 	return fmt.Sprintf("%dm %ds", minutes, seconds)
+}
+
+// formatTurnStats returns optional compact counters for the turn footer.
+func formatTurnStats(stats liveTurnStats) string {
+	if stats.ToolCalls == 0 {
+		return ""
+	}
+	if stats.ToolCalls == 1 {
+		return " · 1 tool"
+	}
+
+	return fmt.Sprintf(" · %d tools", stats.ToolCalls)
 }
