@@ -325,6 +325,38 @@ func TestRunChatListsTools(t *testing.T) {
 	}
 }
 
+// TestRunChatContextAndCompactCommands verifies the context stats and manual
+// compaction slash commands.
+func TestRunChatContextAndCompactCommands(t *testing.T) {
+	cfg := cliConfig{
+		command:      commandChat,
+		sessionDir:   filepath.Join(t.TempDir(), "sessions"),
+		provider:     providerEcho,
+		keepMessages: 1,
+	}
+	var stdout, stderr bytes.Buffer
+	code := runChat(
+		cfg, strings.NewReader(
+			"one\ntwo\n/context\n/compact\n/context\n/exit\n",
+		),
+		&stdout,
+		&stderr,
+	)
+	if code != 0 {
+		t.Fatalf("chat failed: code=%d stdout=%q stderr=%q", code,
+			stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "summary: inactive") {
+		t.Fatalf("missing inactive context stats: %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "compacted context:") {
+		t.Fatalf("missing compact result: %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "summary: active") {
+		t.Fatalf("missing active context stats: %q", stdout.String())
+	}
+}
+
 // TestChatObserverRendersToolEvents verifies that live chat feedback uses the
 // shared human transcript renderer.
 func TestChatObserverRendersToolEvents(t *testing.T) {

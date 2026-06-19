@@ -27,7 +27,19 @@ func BuildHistoryMessages(req HistoryRequest) ([]model.Message, error) {
 		})
 	}
 
-	for _, event := range req.Events {
+	summary, startIndex, err := latestSummary(req.Events)
+	if err != nil {
+		return nil, err
+	}
+	if summary != nil {
+		messages = append(messages, model.Message{
+			Role: model.RoleSystem,
+			Content: "Conversation summary for earlier history:\n" +
+				summary.Summary,
+		})
+	}
+
+	for _, event := range req.Events[startIndex:] {
 		message, ok, err := messageFromEvent(event)
 		if err != nil {
 			return nil, err
@@ -38,6 +50,41 @@ func BuildHistoryMessages(req HistoryRequest) ([]model.Message, error) {
 	}
 
 	return messages, nil
+}
+
+// latestSummary returns the newest compaction summary and replay start index.
+func latestSummary(events []session.Event) (*session.SummaryData, int, error) {
+	for i := len(events) - 1; i >= 0; i-- {
+		if events[i].Type != session.EventContextSummary {
+			continue
+		}
+
+		var summary session.SummaryData
+		if err := json.Unmarshal(events[i].Data, &summary); err != nil {
+			return nil, 0, fmt.Errorf("decode summary %s: %w",
+				events[i].ID, err)
+		}
+
+		start := indexAfterSummary(events, summary.FirstKeptEventID)
+
+		return &summary, start, nil
+	}
+
+	return nil, 0, nil
+}
+
+// indexAfterSummary finds where raw replay should resume.
+func indexAfterSummary(events []session.Event, firstKeptID string) int {
+	if firstKeptID == "" {
+		return 0
+	}
+	for i, event := range events {
+		if event.ID == firstKeptID {
+			return i
+		}
+	}
+
+	return 0
 }
 
 // messageFromEvent converts one durable message event into a model message.

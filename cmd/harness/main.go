@@ -41,30 +41,34 @@ const (
 	// commandChat starts a minimal interactive line-oriented chat loop.
 	commandChat = "chat"
 
+	// commandCompact summarizes older session history into a context event.
+	commandCompact = "compact"
+
 	// providerEcho selects the dependency-free deterministic model client.
 	providerEcho = "echo"
 )
 
 // cliConfig stores parsed command-line options for one invocation.
 type cliConfig struct {
-	command     string
-	prompt      string
-	sessionDir  string
-	jsonOutput  bool
-	sessionID   string
-	provider    string
-	model       string
-	baseURL     string
-	apiKey      string
-	toolName    string
-	toolPath    string
-	toolCommand string
-	toolContent string
-	toolOldText string
-	toolNewText string
-	toolOffset  int
-	toolLimit   int
-	toolTimeout int
+	command      string
+	prompt       string
+	sessionDir   string
+	jsonOutput   bool
+	sessionID    string
+	provider     string
+	model        string
+	baseURL      string
+	apiKey       string
+	toolName     string
+	toolPath     string
+	toolCommand  string
+	toolContent  string
+	toolOldText  string
+	toolNewText  string
+	toolOffset   int
+	toolLimit    int
+	toolTimeout  int
+	keepMessages int
 }
 
 // main runs the command and exits with the returned status code.
@@ -96,6 +100,9 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 
 	case commandChat:
 		return runChat(cfg, os.Stdin, stdout, stderr)
+
+	case commandCompact:
+		return runCompact(cfg, stdout, stderr)
 
 	default:
 		fmt.Fprintf(stderr, "error: unknown command %q\n", cfg.command)
@@ -191,6 +198,42 @@ func runTool(cfg cliConfig, stdout io.Writer, stderr io.Writer) int {
 	return 0
 }
 
+// runCompact appends a model-written summary to an existing session.
+func runCompact(cfg cliConfig, stdout io.Writer, stderr io.Writer) int {
+	entry, err := session.Resolve(cfg.sessionDir, cfg.sessionID)
+	if err != nil {
+		fmt.Fprintln(stderr, "error:", err)
+
+		return 1
+	}
+	modelClient, err := modelClient(cfg)
+	if err != nil {
+		fmt.Fprintln(stderr, "error:", err)
+
+		return 1
+	}
+
+	result, err := core.CompactSession(context.Background(),
+		core.CompactRequest{
+			SessionPath:  entry.Path,
+			Model:        modelClient,
+			KeepMessages: cfg.keepMessages,
+			ModelName:    cfg.model,
+		})
+	if err != nil {
+		fmt.Fprintln(stderr, "error:", err)
+
+		return 1
+	}
+
+	fmt.Fprintf(
+		stdout, "compacted session %s\nsummary event: %s\n",
+		shortID(entry.ID), result.SummaryEventID,
+	)
+
+	return 0
+}
+
 // runChat starts a line-oriented interactive chat session.
 func runChat(cfg cliConfig, stdin io.Reader, stdout io.Writer,
 	stderr io.Writer) int {
@@ -240,7 +283,8 @@ func runChat(cfg cliConfig, stdin io.Reader, stdout io.Writer,
 		}
 		if strings.HasPrefix(line, "/") {
 			keepGoing, nextPath := handleChatCommand(
-				cfg, line, sessionPath, stdout, stderr,
+				cfg, line, sessionPath, modelClient, stdout,
+				stderr,
 			)
 			sessionPath = nextPath
 			if !keepGoing {
@@ -310,7 +354,8 @@ func (o *chatObserver) EventAppended(event session.Event) {
 
 // handleChatCommand executes one slash command and returns whether to continue.
 func handleChatCommand(cfg cliConfig, line string, sessionPath string,
-	stdout io.Writer, stderr io.Writer) (bool, string) {
+	modelClient model.Client, stdout io.Writer,
+	stderr io.Writer) (bool, string) {
 
 	switch line {
 	case "/exit", "/quit":
@@ -338,6 +383,43 @@ func handleChatCommand(cfg cliConfig, line string, sessionPath string,
 
 		return true, sessionPath
 
+	case "/context":
+		if sessionPath == "" {
+			fmt.Fprintln(stdout, "no active session")
+
+			return true, sessionPath
+		}
+		if err := printContextStats(sessionPath, stdout); err != nil {
+			fmt.Fprintln(stderr, "error:", err)
+		}
+
+		return true, sessionPath
+
+	case "/compact":
+		if sessionPath == "" {
+			fmt.Fprintln(stdout, "no active session")
+
+			return true, sessionPath
+		}
+		result, err := core.CompactSession(context.Background(),
+			core.CompactRequest{
+				SessionPath:  sessionPath,
+				Model:        modelClient,
+				KeepMessages: cfg.keepMessages,
+				ModelName:    cfg.model,
+			})
+		if err != nil {
+			fmt.Fprintln(stderr, "error:", err)
+
+			return true, sessionPath
+		}
+		fmt.Fprintf(
+			stdout, "compacted context: %s\n",
+			result.SummaryEventID,
+		)
+
+		return true, sessionPath
+
 	case "/tools":
 		for _, spec := range tool.DefaultRegistry().Specs() {
 			fmt.Fprintln(stdout, spec.Name)
@@ -347,7 +429,8 @@ func handleChatCommand(cfg cliConfig, line string, sessionPath string,
 
 	case "/help":
 		fmt.Fprintln(
-			stdout, "/exit /quit /new /show /sessions /tools /help",
+			stdout, "/exit /quit /new /show /sessions /context "+
+				"/compact /tools /help",
 		)
 
 		return true, sessionPath
@@ -471,6 +554,30 @@ func renderSessionPathAfter(path string, afterID string,
 	return renderEvents(events[start:], stdout)
 }
 
+// printContextStats renders prompt context projection statistics for a session.
+func printContextStats(path string, stdout io.Writer) error {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("get working directory: %w", err)
+	}
+	systemText, err := promptctx.SystemText(cwd)
+	if err != nil {
+		return err
+	}
+	events, err := session.ReadAll(path)
+	if err != nil {
+		return err
+	}
+	stats, err := promptctx.BuildStats(events, systemText)
+	if err != nil {
+		return err
+	}
+
+	fmt.Fprintln(stdout, promptctx.FormatStats(stats))
+
+	return nil
+}
+
 // renderEvents renders model-visible session messages as transcript lines.
 func renderEvents(events []session.Event, stdout io.Writer) error {
 	for _, event := range events {
@@ -504,6 +611,9 @@ func parseFlags(args []string, stderr io.Writer) (cliConfig, error) {
 
 		case commandChat:
 			return parseChatFlags(args[1:], stderr)
+
+		case commandCompact:
+			return parseCompactFlags(args[1:], stderr)
 		}
 	}
 
@@ -727,8 +837,60 @@ func parseChatFlags(args []string, stderr io.Writer) (cliConfig, error) {
 		"OpenAI-compatible API base URL",
 	)
 	fs.StringVar(&cfg.apiKey, "api-key", cfg.apiKey, "OpenAI API key")
+	fs.IntVar(
+		&cfg.keepMessages, "keep-messages",
+		core.DefaultCompactKeepMessages,
+		"recent message events kept raw by /compact",
+	)
 	if err := fs.Parse(args); err != nil {
 		return cliConfig{}, err
+	}
+
+	return cfg, nil
+}
+
+// parseCompactFlags converts compact subcommand flags into configuration.
+func parseCompactFlags(args []string, stderr io.Writer) (cliConfig, error) {
+	cfg := cliConfig{
+		command:    commandCompact,
+		sessionDir: defaultSessionDir,
+		provider:   envDefault("HARNESS_PROVIDER", providerEcho),
+		model:      envDefault("OPENAI_MODEL", ""),
+		baseURL: envDefault(
+			"OPENAI_BASE_URL", openai.DefaultBaseURL,
+		),
+		apiKey:       os.Getenv("OPENAI_API_KEY"),
+		keepMessages: core.DefaultCompactKeepMessages,
+	}
+	fs := flag.NewFlagSet(commandCompact, flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	fs.StringVar(
+		&cfg.sessionDir, "session-dir", defaultSessionDir,
+		"session log directory",
+	)
+	fs.StringVar(
+		&cfg.sessionID, "session", "",
+		"existing session id or prefix to compact",
+	)
+	fs.StringVar(
+		&cfg.provider, "provider", cfg.provider,
+		"model provider: echo or openai",
+	)
+	fs.StringVar(&cfg.model, "model", cfg.model, "provider model name")
+	fs.StringVar(
+		&cfg.baseURL, "base-url", cfg.baseURL,
+		"OpenAI-compatible API base URL",
+	)
+	fs.StringVar(&cfg.apiKey, "api-key", cfg.apiKey, "OpenAI API key")
+	fs.IntVar(
+		&cfg.keepMessages, "keep-messages", cfg.keepMessages,
+		"recent message events kept raw",
+	)
+	if err := fs.Parse(args); err != nil {
+		return cliConfig{}, err
+	}
+	if cfg.sessionID == "" {
+		return cliConfig{}, fmt.Errorf("compact requires --session")
 	}
 
 	return cfg, nil

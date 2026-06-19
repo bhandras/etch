@@ -31,6 +31,9 @@ const (
 	// EventToolMessage records a tool result admitted to the session.
 	EventToolMessage = "message.tool"
 
+	// EventContextSummary records an append-only compaction summary.
+	EventContextSummary = "context.summary"
+
 	// RoleUser identifies user messages in message event payloads.
 	RoleUser = "user"
 
@@ -117,6 +120,24 @@ type ToolCallData struct {
 
 	// Arguments stores the raw JSON argument object.
 	Arguments string `json:"arguments"`
+}
+
+// SummaryData is the payload stored in a context.summary event.
+type SummaryData struct {
+	// Summary is the model-written checkpoint for older session history.
+	Summary string `json:"summary"`
+
+	// RangeStartID is the first event covered by the summary.
+	RangeStartID string `json:"rangeStartId"`
+
+	// RangeEndID is the last event covered by the summary.
+	RangeEndID string `json:"rangeEndId"`
+
+	// FirstKeptEventID is the first raw event retained after the summary.
+	FirstKeptEventID string `json:"firstKeptEventId"`
+
+	// Model records the summarization model name when known.
+	Model string `json:"model,omitempty"`
 }
 
 // IndexEntry is one summary row in the local session index.

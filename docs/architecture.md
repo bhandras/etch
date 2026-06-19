@@ -212,8 +212,21 @@ first context implementation.
 
 Session continuation replays prior user, assistant, and tool messages into the
 next model request. Assistant tool calls and tool results are preserved in the
-provider-neutral message shape so OpenAI-compatible history remains valid. Later
-compaction should append summary events and project context metadata rather than
+provider-neutral message shape so OpenAI-compatible history remains valid.
+
+Manual compaction appends a `context.summary` event to the same JSONL log. The
+full session history remains on disk, but future context projection includes the
+latest summary plus recent raw message events instead of replaying the summarized
+prefix. The first compaction path is explicit rather than automatic:
+
+```bash
+go run ./cmd/harness compact --session <id-prefix>
+```
+
+Inside `harness chat`, `/compact` appends a summary for the active session and
+`/context` prints approximate context stats such as total events, whether a
+summary is active, raw replay events, and projected context bytes. Future
+automatic compaction should build on this append-only event shape rather than
 rewriting or deleting older JSONL events.
 
 ## OpenAI And Codex Auth
