@@ -36,6 +36,36 @@ func TestEditFileAppliesExactReplacement(t *testing.T) {
 	}
 }
 
+// TestEditFileDryRunReturnsDiffWithoutWriting verifies that preview mode uses
+// the normal validation and diff path while leaving the file untouched.
+func TestEditFileDryRunReturnsDiffWithoutWriting(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	path := filepath.Join(dir, "note.txt")
+	writeFile(t, path, "alpha\nbeta\n")
+
+	result, err := EditFile(context.Background(), EditRequest{
+		Path:   "note.txt",
+		DryRun: true,
+		Edits: []Edit{{
+			OldText: "beta",
+			NewText: "gamma",
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertFileContent(t, path, "alpha\nbeta\n")
+	if !strings.Contains(result, "Previewed 1 edit") {
+		t.Fatalf("unexpected result: %q", result)
+	}
+	if !strings.Contains(result, "-beta") ||
+		!strings.Contains(result, "+gamma") {
+
+		t.Fatalf("missing diff output: %q", result)
+	}
+}
+
 // TestEditFileAppliesMultipleEditsAgainstOriginal verifies that replacements
 // are located before any mutation shifts offsets.
 func TestEditFileAppliesMultipleEditsAgainstOriginal(t *testing.T) {

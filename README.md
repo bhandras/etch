@@ -41,7 +41,7 @@ Harness currently has:
 - provider-reported token usage for OpenAI Chat Completions and Responses API
   streams
 - built-in tools for `ls`, `find`, `grep`, `read`, `write`, `edit`, and
-  `bash`
+  `bash`, including dry-run previews for exact replacement edits
 - external process hooks for session, turn, prompt, context, tool, and
   compaction events
 - human-readable tool call and tool result rendering, including colored live

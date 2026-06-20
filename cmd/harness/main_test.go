@@ -423,6 +423,38 @@ func TestToolEditRunsDirectly(t *testing.T) {
 	}
 }
 
+// TestToolEditDryRunRunsDirectly verifies the manual exact replacement preview
+// path without mutating the target file.
+func TestToolEditDryRunRunsDirectly(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	writeFile(t, filepath.Join(dir, "note.txt"), "hello\n")
+
+	var stdout, stderr bytes.Buffer
+	code := run(
+		[]string{
+			"tool", "edit", "--old", "hello", "--new", "goodbye",
+			"--dry-run", "note.txt",
+		},
+		&stdout,
+		&stderr,
+	)
+	if code != 0 {
+		t.Fatalf("tool failed: code=%d stdout=%q stderr=%q", code,
+			stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Previewed 1 edit") {
+		t.Fatalf("unexpected tool output: %q", stdout.String())
+	}
+	content, err := os.ReadFile(filepath.Join(dir, "note.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "hello\n" {
+		t.Fatalf("unexpected file content: %q", string(content))
+	}
+}
+
 // TestToolBashRunsDirectly verifies the manual bounded command smoke path.
 func TestToolBashRunsDirectly(t *testing.T) {
 	var stdout, stderr bytes.Buffer

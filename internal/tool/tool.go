@@ -384,6 +384,10 @@ func (editTool) Spec() model.ToolSpec {
 						},
 						"required":["oldText","newText"]
 					}
+				},
+				"dryRun":{
+					"type":"boolean",
+					"description":"When true, validate the replacements and return the diff without modifying the file."
 				}
 			},
 			"required":["path","edits"]

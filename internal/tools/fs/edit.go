@@ -21,6 +21,9 @@ type EditRequest struct {
 
 	// Edits are exact replacements matched against the original file.
 	Edits []Edit
+
+	// DryRun previews validated replacements without modifying the file.
+	DryRun bool `json:"dryRun,omitempty"`
 }
 
 // Edit describes one exact text replacement.
@@ -76,6 +79,14 @@ func EditFile(ctx context.Context, req EditRequest) (string, error) {
 		return "", fmt.Errorf("edit produced no changes")
 	}
 	diff := unifiedDiff(path, normalized, edited, defaultEditDiffMaxBytes)
+
+	unit := editUnit(len(spans))
+	if req.DryRun {
+		return editResult(
+			"Previewed", len(spans), unit, "for", path, diff,
+		), nil
+	}
+
 	edited = restoreLineEndings(edited, lineEnding)
 	if err := atomicWriteFile(
 		ctx, path, []byte(prefix+edited),
@@ -83,18 +94,33 @@ func EditFile(ctx context.Context, req EditRequest) (string, error) {
 		return "", err
 	}
 
-	unit := "edits"
-	if len(spans) == 1 {
-		unit = "edit"
+	return editResult(
+		"Successfully applied", len(spans), unit, "to", path, diff,
+	), nil
+}
+
+// editUnit returns the singular or plural noun for an edit count.
+func editUnit(count int) string {
+	if count == 1 {
+		return "edit"
 	}
 
-	result := fmt.Sprintf("Successfully applied %d %s to %s.", len(spans),
-		unit, path)
+	return "edits"
+}
+
+// editResult formats the shared edit and dry-run preview response body.
+func editResult(
+	action string, count int, unit string, preposition string, path string,
+	diff string,
+) string {
+
+	result := fmt.Sprintf("%s %d %s %s %s.", action, count, unit,
+		preposition, path)
 	if diff != "" {
 		result += "\n\n" + diff
 	}
 
-	return result, nil
+	return result
 }
 
 // editSpan records an exact replacement location in normalized content.

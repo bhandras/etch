@@ -76,6 +76,7 @@ type cliConfig struct {
 	toolLimit        int
 	toolTimeout      int
 	toolIgnoreCase   bool
+	toolDryRun       bool
 	keepMessages     int
 	maxToolRounds    int
 	hooks            []harnessconfig.HookConfig
@@ -792,6 +793,10 @@ func parseToolFlags(args []string, stderr io.Writer) (cliConfig, error) {
 		&cfg.toolIgnoreCase, "ignore-case", false,
 		"case-insensitive matching for tools that search text",
 	)
+	fs.BoolVar(
+		&cfg.toolDryRun, "dry-run", false,
+		"preview edit changes without modifying files",
+	)
 	if err := fs.Parse(args[1:]); err != nil {
 		return cliConfig{}, err
 	}
@@ -958,6 +963,7 @@ func toolArguments(cfg cliConfig) (string, error) {
 				OldText string `json:"oldText"`
 				NewText string `json:"newText"`
 			} `json:"edits"`
+			DryRun bool `json:"dryRun,omitempty"`
 		}{
 			Path: cfg.toolPath,
 			Edits: []struct {
@@ -967,6 +973,7 @@ func toolArguments(cfg cliConfig) (string, error) {
 				OldText: cfg.toolOldText,
 				NewText: cfg.toolNewText,
 			}},
+			DryRun: cfg.toolDryRun,
 		}
 		encoded, err := json.Marshal(args)
 		if err != nil {
