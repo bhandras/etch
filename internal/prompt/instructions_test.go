@@ -62,8 +62,8 @@ func TestSystemTextLoadsSystemFilesBeforeInstructions(t *testing.T) {
 
 		t.Fatalf("missing context layer: %q", project.SystemText)
 	}
-	if !(rootSystem < childSystem && childSystem < rootRules &&
-		rootRules < childRules) {
+	if rootSystem >= childSystem || childSystem >= rootRules ||
+		rootRules >= childRules {
 
 		t.Fatalf("context layers out of order: %q", project.SystemText)
 	}
@@ -134,7 +134,7 @@ func TestSystemTextOrdersSkillsAfterPinnedFiles(t *testing.T) {
 	if systemIndex < 0 || rulesIndex < 0 || skillsIndex < 0 {
 		t.Fatalf("missing context layer: %q", text)
 	}
-	if !(systemIndex < rulesIndex && rulesIndex < skillsIndex) {
+	if systemIndex >= rulesIndex || rulesIndex >= skillsIndex {
 		t.Fatalf("context layers out of order: %q", text)
 	}
 }

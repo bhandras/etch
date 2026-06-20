@@ -286,11 +286,7 @@ func (s *pluginServer) handleToolExecute(ctx context.Context, req request) {
 		return
 	}
 
-	result, err := tool.Handler(ctx, ToolCall{
-		CallID:    params.CallID,
-		Name:      params.Name,
-		Arguments: params.Arguments,
-	})
+	result, err := tool.Handler(ctx, ToolCall(params))
 	if err != nil {
 		s.writeError(req.ID, err.Error())
 

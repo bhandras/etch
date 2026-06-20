@@ -1024,26 +1024,6 @@ func renderSessionPath(path string, stdout io.Writer) error {
 	return renderEvents(events, stdout)
 }
 
-// renderSessionPathAfter renders transcript messages after the given event ID.
-func renderSessionPathAfter(path string, afterID string,
-	stdout io.Writer) error {
-
-	events, err := session.ReadAll(path)
-	if err != nil {
-		return err
-	}
-
-	start := 0
-	for i, event := range events {
-		if event.ID == afterID {
-			start = i + 1
-			break
-		}
-	}
-
-	return renderEvents(events[start:], stdout)
-}
-
 // printContextStats renders prompt context projection statistics for a session.
 func printContextStats(path string, cfg cliConfig, stdout io.Writer) error {
 	cwd, err := os.Getwd()

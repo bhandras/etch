@@ -1,4 +1,4 @@
-.PHONY: help build test fmt fmt-check commitmsg-lint commitlint commitmsg-fmt
+.PHONY: help build test lint fmt fmt-check commitmsg-lint commitlint commitmsg-fmt
 
 GOCC ?= go
 
@@ -7,6 +7,7 @@ COMMITMSG_DIR := $(TOOLS_DIR)/commitmsg
 LLFORMAT_DIR := $(TOOLS_DIR)/llformat
 LLFORMAT_PKG := github.com/bhandras/llformat/cmd/llformat
 LLFORMAT_BIN := $(CURDIR)/$(LLFORMAT_DIR)/bin/llformat
+GOLANGCI_LINT_PKG := github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
 EXAMPLE_PLUGIN_DIR := plugins/example
 BINDIR ?= bin
 HARNESS_BIN ?= $(BINDIR)/harness
@@ -16,6 +17,7 @@ help:
 		'Targets:' \
 		'  build           Build the harness binary into bin/harness.' \
 		'  test            Run the Go test suite.' \
+		'  lint            Run golangci-lint for all Go modules.' \
 		'  fmt             Format handwritten Go source with llformat.' \
 		'  fmt-check       Run fmt and fail if git sees formatting changes.' \
 		'  commitmsg-lint  Lint commit messages. Use range=, commit=, or file=.' \
@@ -29,6 +31,10 @@ build:
 test:
 	$(GOCC) test ./...
 	cd $(EXAMPLE_PLUGIN_DIR); $(GOCC) test ./...
+
+lint:
+	$(GOCC) run $(GOLANGCI_LINT_PKG) run ./...
+	cd $(EXAMPLE_PLUGIN_DIR); $(GOCC) run $(GOLANGCI_LINT_PKG) run ./...
 
 $(LLFORMAT_BIN): $(LLFORMAT_DIR)/go.mod $(LLFORMAT_DIR)/tools.go
 	@mkdir -p $(LLFORMAT_DIR)/bin

@@ -1,0 +1,105 @@
+version: "2"
+
+run:
+  go: "1.23"
+  timeout: 5m
+
+linters:
+  default: none
+  enable:
+    - errorlint
+    - gosec
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+  settings:
+    errorlint:
+      errorf: true
+    gosec:
+      excludes:
+        - G104
+    govet:
+      disable:
+        - stdversion
+  exclusions:
+    generated: lax
+    rules:
+      # Tests deliberately use temporary files, test servers, and local process
+      # fixtures that are not security-sensitive production paths.
+      - path: _test\.go
+        linters:
+          - gosec
+
+      # Harness intentionally launches configured shell/plugin commands. The
+      # safety boundary is explicit configuration plus hook/policy layers, not
+      # banning dynamic subprocesses outright.
+      - path: internal/plugins/client\.go
+        linters:
+          - gosec
+        text: "G204"
+
+      - path: internal/hooks/hooks\.go
+        linters:
+          - gosec
+        text: "G204"
+
+      - path: internal/tools/shell/run\.go
+        linters:
+          - gosec
+        text: "G204"
+
+      - path: internal/auth/openai/oauth\.go
+        linters:
+          - gosec
+        text: "G117"
+
+      - path: internal/auth/openai/oauth\.go
+        linters:
+          - gosec
+        text: "G304"
+
+      - path: internal/session/session\.go
+        linters:
+          - gosec
+        text: "G304"
+
+      - path: internal/config/config\.go
+        linters:
+          - gosec
+        text: "G304"
+
+      - path: internal/prompt/instructions\.go
+        linters:
+          - gosec
+        text: "G304"
+
+      - path: internal/prompt/skills\.go
+        linters:
+          - gosec
+        text: "G304"
+
+      - path: internal/tools/fs/edit\.go
+        linters:
+          - gosec
+        text: "G304"
+
+      - path: internal/tools/fs/grep\.go
+        linters:
+          - gosec
+        text: "G304"
+
+      - path: internal/tools/fs/read\.go
+        linters:
+          - gosec
+        text: "G304"
+
+      - path: internal/tools/fs/write\.go
+        linters:
+          - gosec
+        text: "G304"
+
+      - path: internal/tools/fs/atomic_write\.go
+        linters:
+          - gosec
+        text: "G301"
