@@ -504,6 +504,23 @@ func TestRunTurnNotifiesObserver(t *testing.T) {
 		t.Fatalf("unexpected reasoning summaries: %#v",
 			observer.reasoning)
 	}
+	if len(observer.reasoningDeltas) != 1 ||
+		observer.reasoningDeltas[0] != "checking files" {
+
+		t.Fatalf("unexpected reasoning deltas: %#v",
+			observer.reasoningDeltas)
+	}
+	if len(observer.textDeltas) != 1 || observer.textDeltas[0] != "done" {
+		t.Fatalf("unexpected text deltas: %#v", observer.textDeltas)
+	}
+	if observer.timing.ModelDuration <= 0 {
+		t.Fatalf("missing model timing: %#v", observer.timing)
+	}
+	if observer.timing.ToolBatches != 1 ||
+		observer.timing.LargestToolBatch != 1 {
+
+		t.Fatalf("unexpected tool batch timing: %#v", observer.timing)
+	}
 }
 
 // TestRunTurnAutoCompactsLargeContext verifies that automatic compaction
@@ -732,11 +749,23 @@ type recordingObserver struct {
 	// toolCalls stores live tool-start notifications in arrival order.
 	toolCalls []model.ToolCall
 
+	// toolBatches stores live batch notifications in arrival order.
+	toolBatches [][]model.ToolCall
+
+	// textDeltas stores streamed assistant text deltas in arrival order.
+	textDeltas []string
+
+	// reasoningDeltas stores streamed reasoning deltas in arrival order.
+	reasoningDeltas []string
+
 	// reasoning stores model-provided reasoning summaries in arrival order.
 	reasoning []string
 
 	// autoCompactions stores automatic context maintenance notifications.
 	autoCompactions []AutoCompactResult
+
+	// timing stores the final turn timing notification when present.
+	timing TurnTiming
 }
 
 // EventAppended records one persisted event.
@@ -749,6 +778,26 @@ func (o *recordingObserver) ToolCallStarted(call model.ToolCall) {
 	o.toolCalls = append(o.toolCalls, call)
 }
 
+// ToolBatchStarted records one model-requested batch notification.
+func (o *recordingObserver) ToolBatchStarted(calls []model.ToolCall) {
+	o.toolBatches = append(
+		o.toolBatches,
+		append(
+			[]model.ToolCall{}, calls...,
+		),
+	)
+}
+
+// ModelTextDelta records one streamed assistant text delta.
+func (o *recordingObserver) ModelTextDelta(text string) {
+	o.textDeltas = append(o.textDeltas, text)
+}
+
+// ModelReasoningDelta records one streamed reasoning delta.
+func (o *recordingObserver) ModelReasoningDelta(text string) {
+	o.reasoningDeltas = append(o.reasoningDeltas, text)
+}
+
 // ReasoningCompleted records one model reasoning summary notification.
 func (o *recordingObserver) ReasoningCompleted(text string) {
 	o.reasoning = append(o.reasoning, text)
@@ -757,6 +806,11 @@ func (o *recordingObserver) ReasoningCompleted(text string) {
 // AutoCompacted records one automatic compaction notification.
 func (o *recordingObserver) AutoCompacted(result AutoCompactResult) {
 	o.autoCompactions = append(o.autoCompactions, result)
+}
+
+// TurnTiming records coarse turn timing after successful completion.
+func (o *recordingObserver) TurnTiming(timing TurnTiming) {
+	o.timing = timing
 }
 
 // types returns recorded event types in arrival order.

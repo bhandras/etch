@@ -72,6 +72,9 @@ func TestBuildStatusCountsSessionActivity(t *testing.T) {
 	if status.ToolCalls != 1 || status.ToolResults != 1 {
 		t.Fatalf("unexpected tool counts: %#v", status)
 	}
+	if status.ToolBatches != 1 || status.LargestToolBatch != 1 {
+		t.Fatalf("unexpected tool batch counts: %#v", status)
+	}
 	if status.Compactions != 1 {
 		t.Fatalf("unexpected compactions: %d", status.Compactions)
 	}
@@ -94,6 +97,15 @@ func TestBuildStatusCountsSessionActivity(t *testing.T) {
 	}
 	if !strings.Contains(text, "compactions: 1 (1 auto, 0 manual)") {
 		t.Fatalf("missing compaction trigger counts: %q", text)
+	}
+	if !strings.Contains(text, "- tool batches: 1 (largest 1)") {
+		t.Fatalf("missing tool batch counts: %q", text)
+	}
+	if !strings.Contains(text, "- model wait: 2s") {
+		t.Fatalf("missing model wait: %q", text)
+	}
+	if !strings.Contains(text, "- tool result wait: 1s") {
+		t.Fatalf("missing tool wait: %q", text)
 	}
 	if !strings.Contains(text, "- cached input: 64 tokens") {
 		t.Fatalf("missing cached input usage: %q", text)

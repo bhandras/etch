@@ -166,8 +166,13 @@ error
 done
 ```
 
-Streaming is a UX feature, not only an API detail. The terminal should render
-partial assistant text and tool-call progress as soon as it arrives.
+Streaming is a UX feature, not only an API detail. The core exposes observer
+callbacks for assistant text deltas, reasoning deltas, tool batches, individual
+tool starts, and coarse turn timing. The minimal line-oriented terminal should
+use those callbacks for live status, reasoning progress, and tool-call
+progress, while rendering assistant prose from the finalized durable message.
+Richer TUIs can attach a stream controller for partial assistant text without
+making the core depend on terminal code.
 
 We should begin with a small provider set:
 
@@ -442,8 +447,9 @@ core binary.
 
 Session status is separate from context projection. The `/status` command reads
 the same JSONL log and reports operational counters such as session age, event
-count, user turns, model calls, tool calls, auto/manual compactions, message
-bytes, and provider-reported token usage when available.
+count, user turns, model calls, tool calls, tool batches, auto/manual
+compactions, message bytes, approximate timing from event gaps, and
+provider-reported token usage when available.
 
 Model clients should emit provider-reported token usage when available. The
 core stores those counters as `model.usage` JSONL events so `/status` can report
@@ -776,11 +782,18 @@ agent show <session-id-prefix>
 agent show --json <session-id-prefix>
 ```
 
-The terminal should stream assistant text, show dot-led tool and reasoning
-blocks compactly, collapse large tool output by default, and support
-cancellation. Live chat rendering is intentionally separate from transcript
-rendering: chat can use terminal tone, small markdown styling, capped tool
-output, and turn footers, while `show` remains a plain durable transcript view.
+The terminal should show dot-led assistant, tool, and reasoning blocks
+compactly, collapse large tool output by default, and display a small animated
+working line with elapsed time while model or tool work is active. The
+line-oriented chat renderer intentionally renders assistant prose from the
+final durable message rather than raw stream deltas, because provider delta
+events can be too fragmented for reliable line-mode presentation. Live chat
+rendering is intentionally separate from transcript rendering: chat can use
+terminal tone, small markdown styling, capped tool output, grouped tool-call
+batches, colored diffs, and turn footers, while `show` remains a plain durable
+transcript view. Full interactive interruption should be implemented with
+context cancellation and raw terminal input instead of being
+hidden in the renderer.
 
 A local HTTP server can come later. If we add one, it should expose the same
 session log, model stream, and tool registry as the terminal uses. The server

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"harness/internal/hooks"
 	"harness/internal/model"
@@ -115,6 +116,23 @@ type AutoCompactResult struct {
 	ThresholdTokens int
 }
 
+// TurnTiming records coarse wall-clock timing for one completed turn.
+type TurnTiming struct {
+	// ModelDuration is the cumulative time spent waiting for model streams.
+	ModelDuration time.Duration
+
+	// ToolDuration is the cumulative time spent executing tools and
+	// post-tool hooks.
+	ToolDuration time.Duration
+
+	// ToolBatches is the number of model passes that requested tools.
+	ToolBatches int
+
+	// LargestToolBatch is the largest number of tools requested by one
+	// model pass.
+	LargestToolBatch int
+}
+
 // Observer receives turn events as soon as they are persisted.
 type Observer interface {
 	// EventAppended receives one durable event after it has been written to
@@ -127,6 +145,24 @@ type ToolCallObserver interface {
 	// ToolCallStarted receives one model-requested tool call immediately
 	// before the core executes it locally.
 	ToolCallStarted(call model.ToolCall)
+}
+
+// ToolBatchObserver receives one model-requested batch before execution.
+type ToolBatchObserver interface {
+	// ToolBatchStarted receives all tool calls requested by one model pass
+	// after pre-tool hooks have transformed or blocked them.
+	ToolBatchStarted(calls []model.ToolCall)
+}
+
+// StreamObserver receives live model stream deltas before persistence.
+type StreamObserver interface {
+	// ModelTextDelta receives one assistant text delta as soon as the
+	// model emits it.
+	ModelTextDelta(text string)
+
+	// ModelReasoningDelta receives one displayable reasoning delta as soon
+	// as the model emits it.
+	ModelReasoningDelta(text string)
 }
 
 // ReasoningObserver receives displayable model reasoning summaries.
@@ -142,6 +178,12 @@ type AutoCompactObserver interface {
 	// AutoCompacted receives a compact report after a summary event is
 	// persisted for the current turn.
 	AutoCompacted(result AutoCompactResult)
+}
+
+// TimingObserver receives coarse timing data for one successful turn.
+type TimingObserver interface {
+	// TurnTiming receives model/tool timing after the turn completes.
+	TurnTiming(timing TurnTiming)
 }
 
 // RunTurn executes one prompt against a model client and persists the exchange.
@@ -212,6 +254,7 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 	finalReceived := false
 	var text string
 	toolCallCount := 0
+	var timing TurnTiming
 	for round := 0; round < maxToolRounds; round++ {
 		callMessages, err := runContextBuildHooks(
 			ctx, req, messages, round,
@@ -219,9 +262,11 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 		if err != nil {
 			return nil, err
 		}
+		modelStarted := time.Now()
 		response, err := collectModelResponse(
-			ctx, req.Model, callMessages, req.Tools,
+			ctx, req.Model, callMessages, req.Tools, req.Observer,
 		)
+		timing.ModelDuration += time.Since(modelStarted)
 		if err != nil {
 			return nil, err
 		}
@@ -256,6 +301,13 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 		if err != nil {
 			return nil, err
 		}
+		if len(toolCalls) > 0 {
+			timing.ToolBatches++
+			if len(toolCalls) > timing.LargestToolBatch {
+				timing.LargestToolBatch = len(toolCalls)
+			}
+			notifyToolBatchStarted(req.Observer, toolCalls)
+		}
 		assistant, err = store.Append(
 			session.EventAssistantMessage, parentID,
 			session.AssistantToolCallMessage(
@@ -288,6 +340,7 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 		for _, call := range toolCalls {
 			toolCallCount++
 			notifyToolCallStarted(req.Observer, call)
+			toolStarted := time.Now()
 			result := tool.Result{}
 			toolFailed := false
 			if reason, ok := blockedCalls[call.ID]; ok {
@@ -314,6 +367,7 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 			result, err = runPostToolUseHooks(
 				ctx, req, call, result, toolFailed,
 			)
+			timing.ToolDuration += time.Since(toolStarted)
 			if err != nil {
 				return nil, err
 			}
@@ -348,6 +402,7 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 	); err != nil {
 		return nil, err
 	}
+	notifyTurnTiming(req.Observer, timing)
 
 	return &TurnResult{
 		SessionPath:      store.Path(),
@@ -540,6 +595,17 @@ func notifyToolCallStarted(observer Observer, call model.ToolCall) {
 	}
 }
 
+// notifyToolBatchStarted sends live progress for one model-requested batch.
+func notifyToolBatchStarted(observer Observer, calls []model.ToolCall) {
+	if observer == nil || len(calls) == 0 {
+		return
+	}
+	batchObserver, ok := observer.(ToolBatchObserver)
+	if ok {
+		batchObserver.ToolBatchStarted(calls)
+	}
+}
+
 // notifyAutoCompacted sends automatic compaction reports to interested
 // observers.
 func notifyAutoCompacted(observer Observer, result AutoCompactResult) {
@@ -549,6 +615,17 @@ func notifyAutoCompacted(observer Observer, result AutoCompactResult) {
 	autoObserver, ok := observer.(AutoCompactObserver)
 	if ok {
 		autoObserver.AutoCompacted(result)
+	}
+}
+
+// notifyTurnTiming sends coarse turn timing to interested observers.
+func notifyTurnTiming(observer Observer, timing TurnTiming) {
+	if observer == nil {
+		return
+	}
+	timingObserver, ok := observer.(TimingObserver)
+	if ok {
+		timingObserver.TurnTiming(timing)
 	}
 }
 
@@ -658,8 +735,8 @@ type modelResponse struct {
 
 // collectModelResponse starts a model stream and collects one assistant pass.
 func collectModelResponse(ctx context.Context, client model.Client,
-	messages []model.Message,
-	registry *tool.Registry) (modelResponse, error) {
+	messages []model.Message, registry *tool.Registry,
+	observer Observer) (modelResponse, error) {
 
 	var specs []model.ToolSpec
 	if registry != nil {
@@ -675,13 +752,13 @@ func collectModelResponse(ctx context.Context, client model.Client,
 			err)
 	}
 
-	return collectStream(ctx, stream)
+	return collectStream(ctx, stream, observer)
 }
 
 // collectStream consumes a model stream and joins reasoning, text, and tool
 // call events.
-func collectStream(ctx context.Context,
-	stream <-chan model.Event) (modelResponse, error) {
+func collectStream(ctx context.Context, stream <-chan model.Event,
+	observer Observer) (modelResponse, error) {
 
 	var text strings.Builder
 	var reasoning strings.Builder
@@ -704,9 +781,11 @@ func collectStream(ctx context.Context,
 			switch event.Type {
 			case model.EventTextDelta:
 				text.WriteString(event.Text)
+				notifyModelTextDelta(observer, event.Text)
 
 			case model.EventReasoningDelta:
 				reasoning.WriteString(event.Text)
+				notifyModelReasoningDelta(observer, event.Text)
 
 			case model.EventToolCall:
 				calls = append(calls, event.ToolCall)
@@ -755,6 +834,28 @@ func appendModelUsage(store *session.Store, parentID string,
 	}
 
 	return event, nil
+}
+
+// notifyModelTextDelta sends streamed assistant text to live observers.
+func notifyModelTextDelta(observer Observer, text string) {
+	if observer == nil || text == "" {
+		return
+	}
+	streamObserver, ok := observer.(StreamObserver)
+	if ok {
+		streamObserver.ModelTextDelta(text)
+	}
+}
+
+// notifyModelReasoningDelta sends streamed reasoning text to live observers.
+func notifyModelReasoningDelta(observer Observer, text string) {
+	if observer == nil || text == "" {
+		return
+	}
+	streamObserver, ok := observer.(StreamObserver)
+	if ok {
+		streamObserver.ModelReasoningDelta(text)
+	}
 }
 
 // notifyReasoningCompleted sends reasoning summaries to interested observers.

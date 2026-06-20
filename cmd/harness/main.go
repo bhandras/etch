@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -11,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"text/tabwriter"
 	"time"
 
@@ -620,6 +620,8 @@ func runCompact(cfg cliConfig, stdout io.Writer, stderr io.Writer) int {
 func runChat(cfg cliConfig, stdin io.Reader, stdout io.Writer,
 	stderr io.Writer) int {
 
+	defer showTerminalCursor(stdout)
+
 	cwd, err := os.Getwd()
 	if err != nil {
 		fmt.Fprintln(stderr, "error: get working directory:", err)
@@ -656,6 +658,7 @@ func runChat(cfg cliConfig, stdin io.Reader, stdout io.Writer,
 	defer closePlugins()
 
 	var sessionPath string
+	initialUsage := model.Usage{}
 	if cfg.sessionID != "" {
 		entry, err := session.Resolve(cfg.sessionDir, cfg.sessionID)
 		if err != nil {
@@ -664,37 +667,63 @@ func runChat(cfg cliConfig, stdin io.Reader, stdout io.Writer,
 			return 1
 		}
 		sessionPath = entry.Path
+		initialUsage, err = chatSessionUsage(sessionPath)
+		if err != nil {
+			fmt.Fprintln(stderr, "error:", err)
+
+			return 1
+		}
 		fmt.Fprintf(
 			stdout, "continuing session %s\n", shortID(entry.ID),
 		)
 	}
 
-	scanner := bufio.NewScanner(stdin)
-	scanner.Buffer(make([]byte, 0, 4096), 1024*1024)
-	printChatPrompt(stdout)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
+	input := newChatInput(stdin, stdout)
+	defer func() {
+		_ = input.Close()
+	}()
+	composer := terminalComposer(input)
+	chrome := newChatChrome(cfg, cwd, initialUsage)
+	if composer != nil {
+		composer.SetFooter(chrome.Footer())
+	}
+	for result := range readChatLines(input) {
+		if result.Err != nil {
+			if errors.Is(result.Err, errChatInputInterrupted) {
+				return 130
+			}
+			fmt.Fprintln(
+				stderr, "error: read chat input:", result.Err,
+			)
+
+			return 1
+		}
+		if !result.OK {
+			break
+		}
+		line := strings.TrimSpace(result.Line)
 		if line == "" {
-			printChatPrompt(stdout)
 			continue
 		}
 		if strings.HasPrefix(line, "/") {
-			keepGoing, nextPath := handleChatCommand(
-				cfg, line, sessionPath, modelClient, registry,
-				stdout, stderr, hookRunner,
+			keepGoing, nextPath := runChatCommandWithOutput(
+				composer, cfg, line, sessionPath, modelClient,
+				registry, stdout, stderr, hookRunner,
 			)
 			sessionPath = nextPath
 			if !keepGoing {
 				return 0
 			}
-			printChatPrompt(stdout)
 
 			continue
 		}
 
 		observer := &chatObserver{
 			renderer: newLiveChatRenderer(stdout, true),
+			chrome:   chrome,
 		}
+		observer.renderer.composer = composer
+		observer.renderer.startStatus("Working")
 		startedAt := time.Now()
 		result, err := core.RunTurn(
 			context.Background(), core.TurnRequest{
@@ -717,21 +746,160 @@ func runChat(cfg cliConfig, stdin io.Reader, stdout io.Writer,
 			},
 		)
 		if err != nil {
+			observer.renderer.stopStatus()
 			fmt.Fprintln(stderr, "error:", err)
 
 			return 1
 		}
 		observer.Finish(time.Since(startedAt))
 		sessionPath = result.SessionPath
-		printChatPrompt(stdout)
-	}
-	if err := scanner.Err(); err != nil {
-		fmt.Fprintln(stderr, "error: read chat input:", err)
-
-		return 1
 	}
 
 	return 0
+}
+
+// runChatCommandWithOutput clears the live prompt around slash-command output.
+func runChatCommandWithOutput(composer *terminalChatInput, cfg cliConfig,
+	line string, sessionPath string, modelClient model.Client,
+	registry *tool.Registry, stdout io.Writer, stderr io.Writer,
+	hookRunner *hooks.Runner) (bool, string) {
+
+	keepGoing := true
+	nextPath := sessionPath
+	write := func() {
+		padded := chatCommandOutputPadded(line)
+		if padded {
+			fmt.Fprintln(stdout)
+		}
+		keepGoing, nextPath = handleChatCommand(
+			cfg, line, sessionPath, modelClient, registry, stdout,
+			stderr, hookRunner,
+		)
+		if padded {
+			fmt.Fprintln(stdout)
+		}
+	}
+	if composer != nil {
+		composer.WithOutput(write)
+	} else {
+		write()
+	}
+
+	return keepGoing, nextPath
+}
+
+// chatCommandOutputPadded reports whether a slash command writes visible text.
+func chatCommandOutputPadded(line string) bool {
+	return line != "/exit" && line != "/quit"
+}
+
+// chatChrome owns the prompt footer text shared across chat turns.
+type chatChrome struct {
+	// mu serializes usage updates from model events with prompt redraws.
+	mu sync.Mutex
+
+	// cfg stores the provider and reasoning settings shown in the footer.
+	cfg cliConfig
+
+	// cwd stores the working directory shown in compact form.
+	cwd string
+
+	// usage stores cumulative provider counters for the chat session.
+	usage model.Usage
+}
+
+// newChatChrome creates the prompt footer state for one chat loop.
+func newChatChrome(cfg cliConfig, cwd string, usage model.Usage) *chatChrome {
+	return &chatChrome{
+		cfg:   cfg,
+		cwd:   cwd,
+		usage: usage,
+	}
+}
+
+// Footer returns the current prompt footer text.
+func (c *chatChrome) Footer() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return c.footerLocked()
+}
+
+// AddUsage records one provider usage event and returns the updated footer.
+func (c *chatChrome) AddUsage(usage model.Usage) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.usage = c.usage.Add(usage)
+
+	return c.footerLocked()
+}
+
+// footerLocked formats the current prompt footer while c.mu is held.
+func (c *chatChrome) footerLocked() string {
+	parts := []string{
+		chatFooterMode(c.cfg),
+		displayCWD(c.cwd),
+	}
+	if usage := formatUsageStats(c.usage); usage != "" {
+		parts = append(parts, usage)
+	}
+
+	return strings.Join(parts, " · ")
+}
+
+// chatFooterMode formats the selected model and reasoning effort.
+func chatFooterMode(cfg cliConfig) string {
+	label := cfg.model
+	if label == "" {
+		label = cfg.provider
+	}
+	if label == "" {
+		label = providerEcho
+	}
+	if cfg.reasoningEffort != "" && cfg.reasoningEffort != "none" {
+		label += " " + cfg.reasoningEffort
+	}
+
+	return label
+}
+
+// displayCWD returns cwd with the user's home directory collapsed to "~".
+func displayCWD(cwd string) string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return cwd
+	}
+	rel, err := filepath.Rel(home, cwd)
+	if err != nil || strings.HasPrefix(rel, "..") || rel == "." {
+		if rel == "." {
+			return "~"
+		}
+
+		return cwd
+	}
+
+	return filepath.Join("~", rel)
+}
+
+// chatSessionUsage loads cumulative provider usage from an existing session.
+func chatSessionUsage(path string) (model.Usage, error) {
+	events, err := session.ReadAll(path)
+	if err != nil {
+		return model.Usage{}, fmt.Errorf("read session usage: %w", err)
+	}
+	status, err := session.BuildStatus(events, time.Now())
+	if err != nil {
+		return model.Usage{}, fmt.Errorf("build session usage: %w", err)
+	}
+
+	return model.Usage{
+		InputTokens:           status.Usage.InputTokens,
+		CachedInputTokens:     status.Usage.CachedInputTokens,
+		OutputTokens:          status.Usage.OutputTokens,
+		ReasoningOutputTokens: status.Usage.ReasoningOutputTokens,
+		TotalTokens:           status.Usage.TotalTokens,
+	}, nil
 }
 
 // chatObserver renders appended assistant and tool messages during a turn.
@@ -739,11 +907,29 @@ type chatObserver struct {
 	// renderer owns transient terminal formatting for one chat turn.
 	renderer *liveChatRenderer
 
+	// chrome owns prompt footer state shared across turns.
+	chrome *chatChrome
+
 	// toolCalls counts local tool calls executed during this turn.
 	toolCalls int
 
+	// batchedCalls stores tool IDs already shown in a batch summary.
+	batchedCalls map[string]bool
+
+	// streamedReasoning reports whether reasoning deltas were received.
+	streamedReasoning bool
+
+	// reasoningStatus stores streamed reasoning text for status extraction.
+	reasoningStatus strings.Builder
+
+	// dynamicStatus reports whether statusText came from model reasoning.
+	dynamicStatus bool
+
 	// usage accumulates provider token counters reported during this turn.
 	usage model.Usage
+
+	// timing stores coarse timing reported by the core after the turn.
+	timing core.TurnTiming
 }
 
 // EventAppended renders model-visible assistant and tool events.
@@ -757,13 +943,19 @@ func (o *chatObserver) EventAppended(event session.Event) {
 
 			return
 		}
-		o.usage = o.usage.Add(model.Usage{
+		eventUsage := model.Usage{
 			InputTokens:           usage.InputTokens,
 			CachedInputTokens:     usage.CachedInputTokens,
 			OutputTokens:          usage.OutputTokens,
 			ReasoningOutputTokens: usage.ReasoningOutputTokens,
 			TotalTokens:           usage.TotalTokens,
-		})
+		}
+		o.usage = o.usage.Add(eventUsage)
+		if o.renderer.composer != nil && o.chrome != nil {
+			o.renderer.composer.SetFooter(
+				o.chrome.AddUsage(eventUsage),
+			)
+		}
 
 		return
 	}
@@ -797,15 +989,71 @@ func (o *chatObserver) EventAppended(event session.Event) {
 	}
 }
 
+// ToolBatchStarted renders one live summary for multi-tool model batches.
+func (o *chatObserver) ToolBatchStarted(calls []model.ToolCall) {
+	if len(calls) <= 1 {
+		return
+	}
+	if o.batchedCalls == nil {
+		o.batchedCalls = make(map[string]bool)
+	}
+	for _, call := range calls {
+		o.batchedCalls[call.ID] = true
+	}
+	o.updateCannedStatus("Running tools")
+	o.renderer.renderToolBatch(calls)
+}
+
 // ToolCallStarted renders one live tool call immediately before execution.
 func (o *chatObserver) ToolCallStarted(call model.ToolCall) {
 	o.toolCalls++
+	o.updateCannedStatus("Running tools")
+	if o.batchedCalls[call.ID] {
+		return
+	}
 	o.renderer.renderToolCall(call)
+}
+
+// ModelTextDelta records assistant stream progress without rendering raw
+// partial deltas in the line-oriented chat UI.
+func (o *chatObserver) ModelTextDelta(text string) {
+	o.updateCannedStatus("Responding")
+}
+
+// ModelReasoningDelta records streamed reasoning progress without rendering
+// partial summary fragments.
+func (o *chatObserver) ModelReasoningDelta(text string) {
+	o.streamedReasoning = true
+	o.reasoningStatus.WriteString(text)
+	if status := reasoningStatusText(
+		o.reasoningStatus.String(),
+	); status != "" {
+
+		o.dynamicStatus = true
+		o.renderer.updateStatus(status)
+
+		return
+	}
+	o.updateCannedStatus("Thinking")
 }
 
 // ReasoningCompleted renders one model-provided thinking summary block.
 func (o *chatObserver) ReasoningCompleted(text string) {
+	if status := reasoningStatusText(text); status != "" {
+		o.dynamicStatus = true
+		o.renderer.updateStatus(status)
+	} else if o.streamedReasoning {
+		o.updateCannedStatus("Working")
+	}
 	o.renderer.renderReasoning(text)
+}
+
+// updateCannedStatus changes status unless reasoning supplied a better label.
+func (o *chatObserver) updateCannedStatus(text string) {
+	if o.dynamicStatus {
+		return
+	}
+	o.renderer.updateStatus(text)
 }
 
 // AutoCompacted renders one automatic context maintenance notice.
@@ -813,11 +1061,17 @@ func (o *chatObserver) AutoCompacted(result core.AutoCompactResult) {
 	o.renderer.renderAutoCompact(result)
 }
 
+// TurnTiming records coarse timing for the turn footer.
+func (o *chatObserver) TurnTiming(timing core.TurnTiming) {
+	o.timing = timing
+}
+
 // Finish renders terminal-only end-of-turn decoration.
 func (o *chatObserver) Finish(elapsed time.Duration) {
 	o.renderer.finish(elapsed, liveTurnStats{
 		ToolCalls: o.toolCalls,
 		Usage:     o.usage,
+		Timing:    o.timing,
 	})
 }
 
@@ -934,7 +1188,8 @@ func handleChatCommand(cfg cliConfig, line string, sessionPath string,
 
 // printChatPrompt writes the fixed line-mode prompt.
 func printChatPrompt(stdout io.Writer) {
-	fmt.Fprint(stdout, "> ")
+	showTerminalCursor(stdout)
+	renderChatPrompt(stdout)
 }
 
 // listSessions renders the local session index in text or JSON form.

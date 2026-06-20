@@ -253,9 +253,21 @@ func TestClientStreamsResponsesAPI(t *testing.T) {
 			w.Header().Set("Content-Type", "text/event-stream")
 			fmt.Fprint(
 				w, "data: "+
+					"{\"type\":\"response.output_item.added"+
+					"\",\"item\":{\"type\":\"reasoning\",\"id\":\""+
+					"rs_1\"}}\n\n",
+			)
+			fmt.Fprint(
+				w, "data: "+
 					"{\"type\":\"response.reasoning_summary"+
 					"_text.delta\",\"delta\":\"checking\"}"+
 					"\n\n",
+			)
+			fmt.Fprint(
+				w, "data: "+
+					"{\"type\":\"response.output_item.added"+
+					"\",\"item\":{\"type\":\"message\",\"id\":\"ms"+
+					"g_1\",\"role\":\"assistant\"}}\n\n",
 			)
 			fmt.Fprint(
 				w, "data: "+
@@ -353,6 +365,44 @@ func TestClientStreamsResponsesAPI(t *testing.T) {
 	}
 	if got[4].Type != model.EventDone {
 		t.Fatalf("unexpected done event: %#v", got[4])
+	}
+}
+
+// TestResponseStreamDecoderIgnoresOrphanTextDeltas verifies Responses text
+// deltas are only forwarded while an assistant message item is active.
+func TestResponseStreamDecoderIgnoresOrphanTextDeltas(t *testing.T) {
+	decoder := responseStreamDecoder{}
+
+	orphan := decoder.decode([]byte(
+		`{"type":"response.output_text.delta","delta":"."}`,
+	))
+	if len(orphan) != 0 {
+		t.Fatalf("orphan text delta should be ignored: %#v", orphan)
+	}
+
+	decoder.decode([]byte(
+		`{"type":"response.output_item.added","item":{"type":"reasoning"}}`,
+	))
+	reasoningText := decoder.decode([]byte(
+		`{"type":"response.output_text.delta","delta":"."}`,
+	))
+	if len(reasoningText) != 0 {
+		t.Fatalf("reasoning item text delta should be ignored: %#v",
+			reasoningText)
+	}
+
+	decoder.decode([]byte(
+		`{"type":"response.output_item.added","item":{"type":"message","role":"assistant"}}`,
+	))
+	assistantText := decoder.decode([]byte(
+		`{"type":"response.output_text.delta","delta":"hello"}`,
+	))
+	if len(assistantText) != 1 ||
+		assistantText[0].Type != model.EventTextDelta ||
+		assistantText[0].Text != "hello" {
+
+		t.Fatalf("assistant text delta was not forwarded: %#v",
+			assistantText)
 	}
 }
 

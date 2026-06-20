@@ -34,6 +34,14 @@ type Status struct {
 	// ToolResults is the number of tool result messages recorded.
 	ToolResults int
 
+	// ToolBatches is the number of assistant messages that requested at
+	// least one tool call.
+	ToolBatches int
+
+	// LargestToolBatch is the largest number of tools requested by one
+	// assistant message.
+	LargestToolBatch int
+
 	// Compactions is the number of context summary events recorded.
 	Compactions int
 
@@ -52,6 +60,14 @@ type Status struct {
 
 	// Usage is the total provider-reported model usage recorded so far.
 	Usage UsageData
+
+	// ModelWait is the approximate time between the previous event and
+	// assistant messages.
+	ModelWait time.Duration
+
+	// ToolWait is the approximate time between the previous event and tool
+	// result messages.
+	ToolWait time.Duration
 }
 
 // BuildStatus computes session activity counters from durable events.
@@ -69,7 +85,16 @@ func BuildStatus(events []Event, now time.Time) (Status, error) {
 		status.Age = status.LastEventAt.Sub(status.StartedAt)
 	}
 
-	for _, event := range events {
+	previousTime := events[0].Time
+	for i, event := range events {
+		previousGap := time.Duration(0)
+		if i > 0 {
+			previousGap = event.Time.Sub(previousTime)
+			if previousGap < 0 {
+				previousGap = 0
+			}
+		}
+		previousTime = event.Time
 		switch event.Type {
 		case EventUserMessage:
 			message, err := decodeStatusMessage(event)
@@ -86,7 +111,16 @@ func BuildStatus(events []Event, now time.Time) (Status, error) {
 			}
 			status.ModelCalls++
 			status.ToolCalls += len(message.ToolCalls)
+			if len(message.ToolCalls) > 0 {
+				status.ToolBatches++
+				if len(message.ToolCalls) > status.LargestToolBatch {
+					status.LargestToolBatch = len(
+						message.ToolCalls,
+					)
+				}
+			}
 			status.MessageBytes += len(statusMessageText(message))
+			status.ModelWait += previousGap
 
 		case EventToolMessage:
 			message, err := decodeStatusMessage(event)
@@ -95,6 +129,7 @@ func BuildStatus(events []Event, now time.Time) (Status, error) {
 			}
 			status.ToolResults++
 			status.MessageBytes += len(statusMessageText(message))
+			status.ToolWait += previousGap
 
 		case EventContextSummary:
 			summary, err := decodeStatusSummary(event)
@@ -148,6 +183,10 @@ func FormatStatus(status Status) string {
 		status.ToolCalls, status.ToolResults,
 	)
 	fmt.Fprintf(
+		&out, "- tool batches: %d (largest %d)\n", status.ToolBatches,
+		status.LargestToolBatch,
+	)
+	fmt.Fprintf(
 		&out, "- compactions: %d (%d auto, %d manual)\n",
 		status.Compactions, status.AutoCompactions,
 		status.ManualCompactions,
@@ -156,6 +195,15 @@ func FormatStatus(status Status) string {
 	fmt.Fprintf(&out, "\nStored Text\n")
 	fmt.Fprintf(&out, "- messages: %d bytes\n", status.MessageBytes)
 	fmt.Fprintf(&out, "- summaries: %d bytes\n", status.SummaryBytes)
+
+	fmt.Fprintf(&out, "\nRecorded Timing\n")
+	fmt.Fprintf(
+		&out, "- model wait: %s\n", FormatDuration(status.ModelWait),
+	)
+	fmt.Fprintf(
+		&out, "- tool result wait: %s\n",
+		FormatDuration(status.ToolWait),
+	)
 
 	fmt.Fprintf(&out, "\nActual Model Usage\n")
 	if status.Usage.Empty() {

@@ -358,6 +358,7 @@ func streamResponsesAPI(ctx context.Context, body io.ReadCloser,
 	defer close(events)
 	defer body.Close()
 
+	decoder := responseStreamDecoder{}
 	scanner := bufio.NewScanner(body)
 	for scanner.Scan() {
 		select {
@@ -381,7 +382,7 @@ func streamResponsesAPI(ctx context.Context, body io.ReadCloser,
 			return
 		}
 
-		for _, event := range decodeResponseEvent([]byte(payload)) {
+		for _, event := range decoder.decode([]byte(payload)) {
 			if !sendEvent(ctx, events, event) {
 				return
 			}
@@ -397,8 +398,17 @@ func streamResponsesAPI(ctx context.Context, body io.ReadCloser,
 	}
 }
 
-// decodeResponseEvent converts one Responses API stream event.
-func decodeResponseEvent(payload []byte) []model.Event {
+// responseStreamDecoder converts Responses API SSE with item lifecycle state.
+type responseStreamDecoder struct {
+	// activeItemType is the current Responses output item receiving deltas.
+	activeItemType string
+
+	// activeItemRole is the role for active message items when present.
+	activeItemRole string
+}
+
+// decode converts one Responses API stream event.
+func (d *responseStreamDecoder) decode(payload []byte) []model.Event {
 	var event responseStreamEvent
 	if err := json.Unmarshal(payload, &event); err != nil {
 		return []model.Event{{
@@ -409,7 +419,19 @@ func decodeResponseEvent(payload []byte) []model.Event {
 	}
 
 	switch event.Type {
+	case "response.output_item.added":
+		d.activeItemType = event.Item.Type
+		d.activeItemRole = event.Item.Role
+
+		return nil
+
 	case "response.output_text.delta":
+		if d.activeItemType != "message" ||
+			(d.activeItemRole != "" &&
+				d.activeItemRole != model.RoleAssistant) {
+			return nil
+		}
+
 		return []model.Event{
 			{
 				Type: model.EventTextDelta,
@@ -418,10 +440,15 @@ func decodeResponseEvent(payload []byte) []model.Event {
 		}
 
 	case "response.reasoning_summary_text.delta":
+		if d.activeItemType != "reasoning" {
+			return nil
+		}
+
 		return []model.Event{{Type: model.EventReasoningDelta,
 			Text: event.Delta}}
 
 	case "response.output_item.done":
+		defer d.clearActiveItem()
 		if event.Item.Type != "function_call" {
 			return nil
 		}
@@ -454,6 +481,12 @@ func decodeResponseEvent(payload []byte) []model.Event {
 	default:
 		return nil
 	}
+}
+
+// clearActiveItem forgets the Responses output item receiving deltas.
+func (d *responseStreamDecoder) clearActiveItem() {
+	d.activeItemType = ""
+	d.activeItemRole = ""
 }
 
 // responseErrorText returns a concise message from a Responses error event.
@@ -884,6 +917,9 @@ type responseStreamEvent struct {
 type responseOutputItem struct {
 	// Type identifies the output item kind.
 	Type string `json:"type"`
+
+	// Role identifies message authors when Type is message.
+	Role string `json:"role"`
 
 	// CallID is the call identifier for function calls.
 	CallID string `json:"call_id"`

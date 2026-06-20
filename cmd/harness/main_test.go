@@ -266,6 +266,12 @@ func TestRunUsesStoredOpenAIOAuthCredentialsFirst(t *testing.T) {
 			w.Header().Set("Content-Type", "text/event-stream")
 			fmt.Fprint(
 				w, "data: "+
+					"{\"type\":\"response.output_item.added"+
+					"\",\"item\":{\"type\":\"message\",\"id\":\"ms"+
+					"g_1\",\"role\":\"assistant\"}}\n\n",
+			)
+			fmt.Fprint(
+				w, "data: "+
 					"{\"type\":\"response.output_text.delta"+
 					"\",\"delta\":\"hi\"}\n\n",
 			)
@@ -378,6 +384,12 @@ func TestRunUsesCodexAccessTokenEnv(t *testing.T) {
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			gotAuth = r.Header.Get("Authorization")
 			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprint(
+				w, "data: "+
+					"{\"type\":\"response.output_item.added"+
+					"\",\"item\":{\"type\":\"message\",\"id\":\"ms"+
+					"g_1\",\"role\":\"assistant\"}}\n\n",
+			)
 			fmt.Fprint(
 				w, "data: "+
 					"{\"type\":\"response.output_text.delta"+
@@ -1013,6 +1025,84 @@ func TestRunChatStatusCommand(t *testing.T) {
 	}
 }
 
+// TestRunChatCommandWithOutputRedrawsPrompt verifies slash-command output
+// moves the live composer aside and redraws it after command text.
+func TestRunChatCommandWithOutputRedrawsPrompt(t *testing.T) {
+	t.Setenv("COLUMNS", "32")
+	var stdout, stderr bytes.Buffer
+	composer := &terminalChatInput{
+		stdout: &stdout,
+		input:  []rune("typed while command runs"),
+	}
+	if err := composer.renderLocked(); err != nil {
+		t.Fatalf("initial composer render failed: %v", err)
+	}
+	stdout.Reset()
+
+	keepGoing, nextPath := runChatCommandWithOutput(
+		composer, cliConfig{}, "/help", "", nil, nil, &stdout, &stderr,
+		nil,
+	)
+	if !keepGoing {
+		t.Fatalf("help command stopped chat")
+	}
+	if nextPath != "" {
+		t.Fatalf("help command changed session path: %q", nextPath)
+	}
+
+	got := stdout.String()
+	helpAt := strings.Index(got, "/exit /quit")
+	promptAt := strings.LastIndex(got, "> typed while command runs")
+	if helpAt < 0 {
+		t.Fatalf("help output missing: %q", got)
+	}
+	if !strings.Contains(got, "\n/exit /quit") {
+		t.Fatalf("slash output missing leading padding: %q", got)
+	}
+	if !strings.Contains(got, "/tools /help\n\n") {
+		t.Fatalf("slash output missing trailing padding: %q", got)
+	}
+	if promptAt < 0 {
+		t.Fatalf("composer was not redrawn: %q", got)
+	}
+	if promptAt < helpAt {
+		t.Fatalf("composer was redrawn before slash output: %q", got)
+	}
+	if strings.Count(got, "> typed while command runs") != 1 {
+		t.Fatalf("composer redraw count mismatch: %q", got)
+	}
+}
+
+// TestChatChromeFormatsFooter verifies prompt footer metadata stays compact
+// while usage accumulates across model calls.
+func TestChatChromeFormatsFooter(t *testing.T) {
+	chrome := newChatChrome(cliConfig{
+		provider:        "openai",
+		model:           "gpt-5.5",
+		reasoningEffort: "high",
+	}, filepath.Join(string(os.PathSeparator), "tmp", "harness"),
+		model.Usage{})
+
+	got := chrome.Footer()
+	if !strings.Contains(got, "gpt-5.5 high") ||
+		!strings.Contains(got, "/tmp/harness") {
+
+		t.Fatalf("footer missing mode or cwd: %q", got)
+	}
+
+	got = chrome.AddUsage(model.Usage{
+		InputTokens:           100,
+		CachedInputTokens:     64,
+		OutputTokens:          20,
+		ReasoningOutputTokens: 5,
+		TotalTokens:           120,
+	})
+	want := "100 in · 64 cached · 20 out"
+	if !strings.Contains(got, want) {
+		t.Fatalf("footer missing usage:\nwant %q\ngot  %q", want, got)
+	}
+}
+
 // TestChatObserverRendersToolEvents verifies that live chat feedback pairs each
 // local tool call with its result instead of batching call headers first.
 func TestChatObserverRendersToolEvents(t *testing.T) {
@@ -1082,6 +1172,35 @@ func TestChatObserverSeparatesAssistantReplies(t *testing.T) {
 	) {
 
 		t.Fatalf("assistant reply was not separated: %q", got)
+	}
+}
+
+// TestChatObserverRendersFinalAfterNoiseOnlyDeltas verifies filtered live
+// stream fragments do not suppress the durable final assistant answer.
+func TestChatObserverRendersFinalAfterNoiseOnlyDeltas(t *testing.T) {
+	var stdout bytes.Buffer
+	observer := &chatObserver{
+		renderer: newLiveChatRenderer(&stdout, false),
+	}
+
+	observer.ModelTextDelta(".\n:\n`.\n")
+	observer.EventAppended(
+		messageEvent(
+			t, session.EventAssistantMessage, session.TextMessage(
+				session.RoleAssistant, "real final answer",
+			),
+		),
+	)
+
+	got := stdout.String()
+	if strings.Contains(got, "\n  .") ||
+		strings.Contains(got, "\n  :") ||
+		strings.Contains(got, "\n  `.") {
+
+		t.Fatalf("noise-only delta became visible: %q", got)
+	}
+	if !strings.Contains(got, "• real final answer\n") {
+		t.Fatalf("final assistant answer was suppressed: %q", got)
 	}
 }
 

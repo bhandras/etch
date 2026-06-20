@@ -46,8 +46,9 @@ Harness currently has:
 - external process hooks for session, turn, prompt, context, tool, and
   compaction events
 - explicit config-based stdio plugin tools over a small JSONL protocol
-- human-readable tool call and tool result rendering, including colored live
-  diffs for file edits and replacements
+- streaming terminal feedback with an animated working line, grouped tool-call
+  batches, compact tool output, and colored live diffs for file edits and
+  replacements
 
 The compiled default provider is an offline echo model, so the CLI can run
 without network access. Project config can change that default. Use the
@@ -257,10 +258,11 @@ Inside chat, use slash commands for local session and context operations:
 layers, active summaries, raw replay size, and approximate token counts.
 
 `/status` reports what has already happened in the session: age, turns, model
-calls, tool calls, compactions, message bytes, and provider-reported token usage.
-When providers report usage, Harness appends `model.usage` events to the JSONL
-log and sums them for `/status`, including input, cached input, output,
-reasoning output, and total tokens when available.
+calls, tool calls, tool batches, compactions, message bytes, approximate timing
+from JSONL event gaps, and provider-reported token usage. When providers report
+usage, Harness appends `model.usage` events to the JSONL log and sums them for
+`/status`, including input, cached input, output, reasoning output, and total
+tokens when available.
 
 ## Built-In Tools
 

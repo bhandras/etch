@@ -513,7 +513,7 @@ func summarizeEvents(ctx context.Context, client model.Client,
 		return "", fmt.Errorf("start compaction model stream: %w", err)
 	}
 
-	response, err := collectStream(ctx, stream)
+	response, err := collectStream(ctx, stream, nil)
 	if err != nil {
 		return "", err
 	}
