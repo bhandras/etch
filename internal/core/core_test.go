@@ -11,6 +11,7 @@ import (
 	"harness/internal/config"
 	"harness/internal/hooks"
 	"harness/internal/model"
+	"harness/internal/prompt"
 	"harness/internal/session"
 	"harness/internal/tool"
 )
@@ -505,6 +506,109 @@ func TestRunTurnNotifiesObserver(t *testing.T) {
 	}
 }
 
+// TestRunTurnAutoCompactsLargeContext verifies that automatic compaction
+// appends a summary before the model call that answers the current turn.
+func TestRunTurnAutoCompactsLargeContext(t *testing.T) {
+	dir := t.TempDir()
+	client := &scriptedToolClient{
+		events: [][]model.Event{
+			{
+				{
+					Type: model.EventTextDelta,
+					Text: "older turns summary",
+				},
+				{
+					Type: model.EventDone,
+				},
+			},
+			{
+				{
+					Type: model.EventTextDelta,
+					Text: "final",
+				},
+				{
+					Type: model.EventDone,
+				},
+			},
+		},
+	}
+	observer := &recordingObserver{}
+
+	first, err := RunTurn(context.Background(), TurnRequest{
+		Prompt:     strings.Repeat("alpha ", 60),
+		SessionDir: filepath.Join(dir, "sessions"),
+		CWD:        dir,
+		Model:      model.EchoClient{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := RunTurn(context.Background(), TurnRequest{
+		Prompt:                     strings.Repeat("beta ", 60),
+		SessionPath:                first.SessionPath,
+		CWD:                        dir,
+		Model:                      client,
+		ModelName:                  "test-model",
+		AutoCompactThresholdTokens: 20,
+		AutoCompactKeepMessages:    1,
+		Observer:                   observer,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.AssistantText != "final" {
+		t.Fatalf("unexpected assistant text: %q", result.AssistantText)
+	}
+	if len(observer.autoCompactions) != 1 {
+		t.Fatalf("expected auto compaction, got %#v", observer)
+	}
+	if len(client.requests) != 2 {
+		t.Fatalf("expected compaction and answer calls, got %d",
+			len(client.requests))
+	}
+
+	events, err := session.ReadAll(result.SessionPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var summary session.SummaryData
+	var summaryEvent session.Event
+	for _, event := range events {
+		if event.Type == session.EventContextSummary {
+			summaryEvent = event
+			if err := json.Unmarshal(
+				event.Data, &summary,
+			); err != nil {
+
+				t.Fatal(err)
+			}
+		}
+	}
+	if summaryEvent.ID == "" {
+		t.Fatal("missing context summary event")
+	}
+	if summary.Trigger != "auto" || summary.Model != "test-model" {
+		t.Fatalf("unexpected summary metadata: %#v", summary)
+	}
+	if events[len(events)-1].ParentID != summaryEvent.ID {
+		t.Fatalf("assistant should parent to summary: %#v", events)
+	}
+}
+
+// TestAutoCompactHasUsefulReplayRejectsDominantSummary verifies auto
+// compaction does not repeatedly summarize when the existing summary is the
+// larger part of the projected context.
+func TestAutoCompactHasUsefulReplayRejectsDominantSummary(t *testing.T) {
+	stats := prompt.Stats{
+		SummaryActive:   true,
+		SummaryTokens:   100,
+		RawReplayTokens: 50,
+	}
+	if autoCompactHasUsefulReplay(stats, 20) {
+		t.Fatal("expected dominant summary to suppress auto compaction")
+	}
+}
+
 // TestRunTurnFeedsToolErrorsBackToModel verifies that ordinary tool failures
 // are persisted as tool results so the model can recover.
 func TestRunTurnFeedsToolErrorsBackToModel(t *testing.T) {
@@ -630,6 +734,9 @@ type recordingObserver struct {
 
 	// reasoning stores model-provided reasoning summaries in arrival order.
 	reasoning []string
+
+	// autoCompactions stores automatic context maintenance notifications.
+	autoCompactions []AutoCompactResult
 }
 
 // EventAppended records one persisted event.
@@ -645,6 +752,11 @@ func (o *recordingObserver) ToolCallStarted(call model.ToolCall) {
 // ReasoningCompleted records one model reasoning summary notification.
 func (o *recordingObserver) ReasoningCompleted(text string) {
 	o.reasoning = append(o.reasoning, text)
+}
+
+// AutoCompacted records one automatic compaction notification.
+func (o *recordingObserver) AutoCompacted(result AutoCompactResult) {
+	o.autoCompactions = append(o.autoCompactions, result)
 }
 
 // types returns recorded event types in arrival order.

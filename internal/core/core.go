@@ -17,6 +17,10 @@ const (
 	// DefaultMaxToolRounds is the normal safety limit for model/tool
 	// exchange loops within one user turn.
 	DefaultMaxToolRounds = 32
+
+	// DefaultAutoCompactThresholdTokens is the approximate context size
+	// that triggers auto compaction when the feature is enabled.
+	DefaultAutoCompactThresholdTokens = 120000
 )
 
 // TurnRequest contains everything needed to run one non-interactive turn.
@@ -42,12 +46,24 @@ type TurnRequest struct {
 	// reply.
 	Model model.Client
 
+	// ModelName records the provider-specific model identifier in
+	// auto-compaction summary events.
+	ModelName string
+
 	// Tools contains builtin tools the model may call during the turn.
 	Tools *tool.Registry
 
 	// MaxToolRounds caps model/tool exchange loops within one turn. Values
 	// less than one use DefaultMaxToolRounds.
 	MaxToolRounds int
+
+	// AutoCompactThresholdTokens enables automatic compaction when the
+	// projected prompt context reaches this approximate token count.
+	AutoCompactThresholdTokens int
+
+	// AutoCompactKeepMessages is the number of latest message events kept
+	// raw by automatic compaction. Values less than one use the default.
+	AutoCompactKeepMessages int
 
 	// Observer receives durable events as they are appended during the
 	// turn.
@@ -77,6 +93,24 @@ type TurnResult struct {
 	AssistantText string `json:"assistantText"`
 }
 
+// AutoCompactResult describes one automatic compaction pass.
+type AutoCompactResult struct {
+	// SummaryEventID is the durable context.summary event appended by the
+	// automatic compaction pass.
+	SummaryEventID string
+
+	// BeforeTokens is the approximate projected context size before
+	// compaction.
+	BeforeTokens int
+
+	// AfterTokens is the approximate projected context size after
+	// compaction.
+	AfterTokens int
+
+	// ThresholdTokens is the configured approximate trigger threshold.
+	ThresholdTokens int
+}
+
 // Observer receives turn events as soon as they are persisted.
 type Observer interface {
 	// EventAppended receives one durable event after it has been written to
@@ -97,6 +131,13 @@ type ReasoningObserver interface {
 	// by one model pass. Raw hidden chain-of-thought should not be sent
 	// through this hook.
 	ReasoningCompleted(text string)
+}
+
+// AutoCompactObserver receives automatic compaction progress.
+type AutoCompactObserver interface {
+	// AutoCompacted receives a compact report after a summary event is
+	// persisted for the current turn.
+	AutoCompacted(result AutoCompactResult)
 }
 
 // RunTurn executes one prompt against a model client and persists the exchange.
@@ -145,6 +186,14 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 		return nil, err
 	}
 
+	autoCompact, history, err := maybeAutoCompact(ctx, req, store, history)
+	if err != nil {
+		return nil, err
+	}
+	if autoCompact != nil {
+		notifyAutoCompacted(req.Observer, *autoCompact)
+	}
+
 	messages, err := prompt.BuildHistoryMessages(prompt.HistoryRequest{
 		Events:     history,
 		SystemText: req.SystemText,
@@ -152,7 +201,7 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	parentID := user.ID
+	parentID := store.LastID()
 
 	maxToolRounds := toolRoundLimit(req.MaxToolRounds)
 	var assistant *session.Event
@@ -485,6 +534,84 @@ func notifyToolCallStarted(observer Observer, call model.ToolCall) {
 	if ok {
 		toolObserver.ToolCallStarted(call)
 	}
+}
+
+// notifyAutoCompacted sends automatic compaction reports to interested
+// observers.
+func notifyAutoCompacted(observer Observer, result AutoCompactResult) {
+	if observer == nil {
+		return
+	}
+	autoObserver, ok := observer.(AutoCompactObserver)
+	if ok {
+		autoObserver.AutoCompacted(result)
+	}
+}
+
+// maybeAutoCompact summarizes older history when projected context is large.
+func maybeAutoCompact(ctx context.Context, req TurnRequest,
+	store *session.Store, history []session.Event) (*AutoCompactResult,
+	[]session.Event, error) {
+
+	threshold := req.AutoCompactThresholdTokens
+	if threshold <= 0 {
+		return nil, history, nil
+	}
+
+	before, err := prompt.BuildStats(history, req.SystemText)
+	if err != nil {
+		return nil, nil, err
+	}
+	if before.ApproxContextTokens < threshold ||
+		!autoCompactHasUsefulReplay(before, threshold) {
+		return nil, history, nil
+	}
+
+	result, event, err := compactStore(ctx, CompactRequest{
+		SessionPath:  store.Path(),
+		Model:        req.Model,
+		KeepMessages: req.AutoCompactKeepMessages,
+		ModelName:    req.ModelName,
+		Trigger:      "auto",
+		Hooks:        req.Hooks,
+	}, store, history)
+	if err != nil {
+		if errors.Is(err, errNotEnoughHistory) {
+			return nil, history, nil
+		}
+
+		return nil, nil, err
+	}
+	history = append(history, *event)
+	notifyEvent(req.Observer, event)
+	after, err := prompt.BuildStats(history, req.SystemText)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return &AutoCompactResult{
+		SummaryEventID:  result.SummaryEventID,
+		BeforeTokens:    before.ApproxContextTokens,
+		AfterTokens:     after.ApproxContextTokens,
+		ThresholdTokens: threshold,
+	}, history, nil
+}
+
+// autoCompactHasUsefulReplay prevents repeated summaries when the active
+// summary or pinned context, rather than raw replay, dominates the request.
+func autoCompactHasUsefulReplay(stats prompt.Stats, threshold int) bool {
+	if !stats.SummaryActive {
+		return true
+	}
+	if stats.RawReplayTokens < stats.SummaryTokens {
+		return false
+	}
+	minimumReplay := threshold / 4
+	if minimumReplay < 1 {
+		minimumReplay = 1
+	}
+
+	return stats.RawReplayTokens >= minimumReplay
 }
 
 // openTurnStore creates or opens the session store for one turn.

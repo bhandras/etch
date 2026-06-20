@@ -37,6 +37,13 @@ type Status struct {
 	// Compactions is the number of context summary events recorded.
 	Compactions int
 
+	// AutoCompactions is the number of summaries triggered automatically.
+	AutoCompactions int
+
+	// ManualCompactions is the number of summaries triggered explicitly or
+	// recorded before trigger metadata existed.
+	ManualCompactions int
+
 	// MessageBytes is the total byte length of model-visible message text.
 	MessageBytes int
 
@@ -95,6 +102,11 @@ func BuildStatus(events []Event, now time.Time) (Status, error) {
 				return Status{}, err
 			}
 			status.Compactions++
+			if summary.Trigger == "auto" {
+				status.AutoCompactions++
+			} else {
+				status.ManualCompactions++
+			}
 			status.SummaryBytes += len(summary.Summary)
 
 		case EventModelUsage:
@@ -135,7 +147,11 @@ func FormatStatus(status Status) string {
 		&out, "- tool calls: %d requested, %d results\n",
 		status.ToolCalls, status.ToolResults,
 	)
-	fmt.Fprintf(&out, "- compactions: %d\n", status.Compactions)
+	fmt.Fprintf(
+		&out, "- compactions: %d (%d auto, %d manual)\n",
+		status.Compactions, status.AutoCompactions,
+		status.ManualCompactions,
+	)
 
 	fmt.Fprintf(&out, "\nStored Text\n")
 	fmt.Fprintf(&out, "- messages: %d bytes\n", status.MessageBytes)

@@ -381,10 +381,12 @@ Session continuation replays prior user, assistant, and tool messages into the
 next model request. Assistant tool calls and tool results are preserved in the
 provider-neutral message shape so OpenAI-compatible history remains valid.
 
-Manual compaction appends a `context.summary` event to the same JSONL log. The
-full session history remains on disk, but future context projection includes the
-latest summary plus recent raw message events instead of replaying the summarized
-prefix. The first compaction path is explicit rather than automatic:
+Compaction appends a `context.summary` event to the same JSONL log. The full
+session history remains on disk, but future context projection includes the
+latest summary plus recent raw message events instead of replaying the
+summarized prefix. The summary event records whether the trigger was `manual` or
+`auto` so hooks, status output, and later tooling can explain why the context
+changed. Manual compaction is available from the CLI:
 
 ```bash
 go run ./cmd/harness compact --session <id-prefix>
@@ -393,9 +395,21 @@ go run ./cmd/harness compact --session <id-prefix>
 Inside `harness chat`, `/compact` appends a summary for the active session and
 `/context` prints approximate context stats such as total events, whether a
 summary is active, raw replay events, projected context bytes, pinned system
-files, pinned instruction files, and available skills. Future automatic
-compaction should build on this append-only event shape rather than rewriting or
-deleting older JSONL events.
+files, pinned instruction files, auto-compaction settings, and available skills.
+Automatic compaction is opt-in through `[context]` config or chat flags. It runs
+after the current user message is appended and before the model request is
+built. If the projected context reaches the configured approximate token
+threshold, the core summarizes the older prefix, keeps the latest
+`session.keep_messages` message events raw, appends a `context.summary` event
+with `trigger = "auto"`, and then builds the model request from that updated
+projection. Pinned context such as the base prompt, `SYSTEM.md`, `AGENTS.md`,
+and the skill catalog is never compacted away.
+
+Automatic compaction avoids repeated summaries when an already-active summary
+or pinned context dominates the projected size; in that case, another
+compaction would not materially reduce the next request. Chat renders a muted
+terminal notice with before and after token estimates whenever automatic
+compaction appends a summary.
 
 Context stats show both bytes and approximate token counts. The first token
 estimator is deliberately stdlib-only rather than provider-exact: it treats
@@ -406,8 +420,8 @@ core binary.
 
 Session status is separate from context projection. The `/status` command reads
 the same JSONL log and reports operational counters such as session age, event
-count, user turns, model calls, tool calls, compactions, message bytes, and
-provider-reported token usage when available.
+count, user turns, model calls, tool calls, auto/manual compactions, message
+bytes, and provider-reported token usage when available.
 
 Model clients should emit provider-reported token usage when available. The
 core stores those counters as `model.usage` JSONL events so `/status` can report

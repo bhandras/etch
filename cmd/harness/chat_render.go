@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"harness/internal/core"
 	"harness/internal/model"
 	"harness/internal/render"
 	"harness/internal/session"
@@ -125,6 +126,15 @@ func (r *liveChatRenderer) renderToolResult(message session.MessageData) {
 			r.stdout, r.style.toolResultLine(message.Name, line),
 		)
 	}
+}
+
+// renderAutoCompact renders one automatic context maintenance notice.
+func (r *liveChatRenderer) renderAutoCompact(result core.AutoCompactResult) {
+	r.printSeparator()
+	line := fmt.Sprintf("Compacted context: ~%d -> ~%d tokens (threshold "+
+		"~%d, %s)", result.BeforeTokens, result.AfterTokens,
+		result.ThresholdTokens, result.SummaryEventID)
+	r.renderDotBlock([]string{line}, terminalTone{muted: true})
 }
 
 // finish renders a terminal-only footer after a completed turn.

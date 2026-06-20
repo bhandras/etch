@@ -15,6 +15,10 @@ dir = ".data/sessions"
 max_tool_rounds = 64
 keep_messages = 20
 
+[context]
+auto_compact = true
+auto_compact_threshold_tokens = 1000
+
 [provider]
 name = "openai"
 model = "gpt-5.5"
@@ -44,6 +48,11 @@ disabled = true
 		cfg.Session.KeepMessages != 20 {
 
 		t.Fatalf("unexpected session config: %#v", cfg.Session)
+	}
+	if !cfg.Context.AutoCompact ||
+		cfg.Context.AutoCompactThresholdTokens != 1000 {
+
+		t.Fatalf("unexpected context config: %#v", cfg.Context)
 	}
 	if cfg.Provider.Name != "openai" || cfg.Provider.Model != "gpt-5.5" {
 		t.Fatalf("unexpected provider config: %#v", cfg.Provider)

@@ -77,6 +77,8 @@ type cliConfig struct {
 	toolTimeout      int
 	toolIgnoreCase   bool
 	toolDryRun       bool
+	autoCompact      bool
+	autoCompactLimit int
 	keepMessages     int
 	maxToolRounds    int
 	hooks            []harnessconfig.HookConfig
@@ -345,10 +347,15 @@ func runChat(cfg cliConfig, stdin io.Reader, stdout io.Writer,
 				CWD:           cwd,
 				SystemText:    projectContext.SystemText,
 				Model:         modelClient,
+				ModelName:     cfg.model,
 				Tools:         tool.DefaultRegistry(),
 				MaxToolRounds: cfg.maxToolRounds,
-				Observer:      observer,
-				Hooks:         hookRunner,
+				AutoCompactThresholdTokens: autoCompactThreshold(
+					cfg,
+				),
+				AutoCompactKeepMessages: cfg.keepMessages,
+				Observer:                observer,
+				Hooks:                   hookRunner,
 			},
 		)
 		if err != nil {
@@ -443,6 +450,11 @@ func (o *chatObserver) ReasoningCompleted(text string) {
 	o.renderer.renderReasoning(text)
 }
 
+// AutoCompacted renders one automatic context maintenance notice.
+func (o *chatObserver) AutoCompacted(result core.AutoCompactResult) {
+	o.renderer.renderAutoCompact(result)
+}
+
 // Finish renders terminal-only end-of-turn decoration.
 func (o *chatObserver) Finish(elapsed time.Duration) {
 	o.renderer.finish(elapsed, liveTurnStats{
@@ -488,7 +500,10 @@ func handleChatCommand(cfg cliConfig, line string, sessionPath string,
 
 			return true, sessionPath
 		}
-		if err := printContextStats(sessionPath, stdout); err != nil {
+		if err := printContextStats(
+			sessionPath, cfg, stdout,
+		); err != nil {
+
 			fmt.Fprintln(stderr, "error:", err)
 		}
 
@@ -667,7 +682,7 @@ func renderSessionPathAfter(path string, afterID string,
 }
 
 // printContextStats renders prompt context projection statistics for a session.
-func printContextStats(path string, stdout io.Writer) error {
+func printContextStats(path string, cfg cliConfig, stdout io.Writer) error {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("get working directory: %w", err)
@@ -687,9 +702,33 @@ func printContextStats(path string, stdout io.Writer) error {
 
 	fmt.Fprintln(stdout, promptctx.FormatStats(stats))
 	fmt.Fprintln(stdout)
+	fmt.Fprintln(stdout, formatAutoCompactConfig(cfg))
+	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, promptctx.FormatProjectContext(projectContext))
 
 	return nil
+}
+
+// formatAutoCompactConfig renders chat context maintenance settings.
+func formatAutoCompactConfig(cfg cliConfig) string {
+	enabled := "false"
+	if cfg.autoCompact {
+		enabled = "true"
+	}
+	threshold := cfg.autoCompactLimit
+	if threshold <= 0 {
+		threshold = core.DefaultAutoCompactThresholdTokens
+	}
+	keepMessages := cfg.keepMessages
+	if keepMessages <= 0 {
+		keepMessages = core.DefaultCompactKeepMessages
+	}
+
+	return fmt.Sprintf("Auto Compact\n"+
+		"- enabled: %s\n"+
+		"- threshold: ~%d tokens\n"+
+		"- keep messages: %d",
+		enabled, threshold, keepMessages)
 }
 
 // printSessionStatus renders durable activity statistics for a session.
@@ -1034,6 +1073,13 @@ func parseChatFlags(args []string, stderr io.Writer) (cliConfig, error) {
 			"HARNESS_MAX_TOOL_ROUNDS",
 			configMaxToolRounds(defaults),
 		),
+		autoCompact: envBoolDefault(
+			"HARNESS_AUTO_COMPACT", defaults.Context.AutoCompact,
+		),
+		autoCompactLimit: envIntDefault(
+			"HARNESS_AUTO_COMPACT_THRESHOLD_TOKENS",
+			configAutoCompactThreshold(defaults),
+		),
 		keepMessages: configKeepMessages(defaults),
 		hooks:        defaults.Hooks,
 	}
@@ -1064,7 +1110,16 @@ func parseChatFlags(args []string, stderr io.Writer) (cliConfig, error) {
 	)
 	fs.IntVar(
 		&cfg.keepMessages, "keep-messages", cfg.keepMessages,
-		"recent message events kept raw by /compact",
+		"recent message events kept raw by compaction",
+	)
+	fs.BoolVar(
+		&cfg.autoCompact, "auto-compact", cfg.autoCompact,
+		"automatically compact large chat context before model calls",
+	)
+	fs.IntVar(
+		&cfg.autoCompactLimit, "auto-compact-threshold-tokens",
+		cfg.autoCompactLimit,
+		"approximate token threshold for automatic compaction",
 	)
 	if err := fs.Parse(args); err != nil {
 		return cliConfig{}, err
@@ -1072,6 +1127,10 @@ func parseChatFlags(args []string, stderr io.Writer) (cliConfig, error) {
 	if cfg.maxToolRounds < 1 {
 		return cliConfig{}, fmt.Errorf("max-tool-rounds must be " +
 			"positive")
+	}
+	if cfg.autoCompact && cfg.autoCompactLimit < 1 {
+		return cliConfig{}, fmt.Errorf(
+			"auto-compact-threshold-tokens must be positive")
 	}
 	applyAPIKeyFlag(&cfg, *apiKeyFlag)
 
@@ -1347,6 +1406,24 @@ func configKeepMessages(cfg harnessconfig.Config) int {
 	return core.DefaultCompactKeepMessages
 }
 
+// configAutoCompactThreshold returns the configured auto-compaction threshold.
+func configAutoCompactThreshold(cfg harnessconfig.Config) int {
+	if cfg.Context.AutoCompactThresholdTokens > 0 {
+		return cfg.Context.AutoCompactThresholdTokens
+	}
+
+	return core.DefaultAutoCompactThresholdTokens
+}
+
+// autoCompactThreshold returns the active auto-compaction threshold or zero.
+func autoCompactThreshold(cfg cliConfig) int {
+	if !cfg.autoCompact {
+		return 0
+	}
+
+	return cfg.autoCompactLimit
+}
+
 // envDefault returns an environment value or fallback when the value is unset.
 func envDefault(name string, fallback string) string {
 	if value := os.Getenv(name); value != "" {
@@ -1354,6 +1431,20 @@ func envDefault(name string, fallback string) string {
 	}
 
 	return fallback
+}
+
+// envBoolDefault returns a boolean environment value or fallback.
+func envBoolDefault(name string, fallback bool) bool {
+	value := os.Getenv(name)
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return fallback
+	}
+
+	return parsed
 }
 
 // envIntDefault returns a positive integer environment value or fallback.

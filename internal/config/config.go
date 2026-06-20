@@ -32,6 +32,9 @@ type Config struct {
 	// OpenAI stores defaults for OpenAI-compatible provider options.
 	OpenAI OpenAIConfig
 
+	// Context stores defaults for prompt context management.
+	Context ContextConfig
+
 	// Hooks stores configured external process hooks in file order.
 	Hooks []HookConfig
 }
@@ -47,6 +50,16 @@ type SessionConfig struct {
 	// KeepMessages is the number of recent message events preserved by
 	// manual compaction.
 	KeepMessages int
+}
+
+// ContextConfig stores defaults for model context maintenance.
+type ContextConfig struct {
+	// AutoCompact enables automatic session compaction before model calls.
+	AutoCompact bool
+
+	// AutoCompactThresholdTokens is the approximate context size that
+	// triggers automatic compaction when AutoCompact is true.
+	AutoCompactThresholdTokens int
 }
 
 // ProviderConfig stores provider defaults shared across provider backends.
@@ -281,7 +294,7 @@ func hookForArrayTable(name string) (HookConfig, error) {
 // knownTable reports whether name is a supported normal table.
 func knownTable(name string) bool {
 	switch name {
-	case "session", "provider", "openai", "hooks":
+	case "session", "provider", "openai", "context", "hooks":
 		return true
 
 	default:
@@ -331,6 +344,9 @@ func applyAssignment(cfg *Config, hook *HookConfig, table string, key string,
 	case table == "openai":
 		return applyOpenAIAssignment(&cfg.OpenAI, key, value)
 
+	case table == "context":
+		return applyContextAssignment(&cfg.Context, key, value)
+
 	case table == "hooks":
 		return fmt.Errorf("unknown hooks key %q", key)
 
@@ -367,6 +383,28 @@ func applySessionAssignment(cfg *SessionConfig, key string,
 
 	default:
 		return fmt.Errorf("unknown session key %q", key)
+	}
+}
+
+// applyContextAssignment stores one context table setting.
+func applyContextAssignment(cfg *ContextConfig, key string,
+	value string) error {
+
+	switch key {
+	case "auto_compact":
+		parsed, err := parseBool(value)
+		cfg.AutoCompact = parsed
+
+		return err
+
+	case "auto_compact_threshold_tokens":
+		parsed, err := parsePositiveInt(value)
+		cfg.AutoCompactThresholdTokens = parsed
+
+		return err
+
+	default:
+		return fmt.Errorf("unknown context key %q", key)
 	}
 }
 

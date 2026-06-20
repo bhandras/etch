@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -10,6 +11,9 @@ import (
 	"harness/internal/model"
 	"harness/internal/session"
 )
+
+// errNotEnoughHistory reports that a compaction request has no useful prefix.
+var errNotEnoughHistory = errors.New("not enough history to compact")
 
 const (
 	// DefaultCompactKeepMessages is the number of latest message events
@@ -34,6 +38,9 @@ type CompactRequest struct {
 
 	// ModelName records the summarization model name in the summary event.
 	ModelName string
+
+	// Trigger records why compaction started. Empty means manual.
+	Trigger string
 
 	// Hooks runs external lifecycle transformers around compaction. Nil
 	// means no hooks are configured.
@@ -65,10 +72,6 @@ func CompactSession(ctx context.Context,
 	if req.Model == nil {
 		return nil, fmt.Errorf("model client must not be nil")
 	}
-	keep := req.KeepMessages
-	if keep <= 0 {
-		keep = DefaultCompactKeepMessages
-	}
 
 	store, events, err := session.Open(req.SessionPath)
 	if err != nil {
@@ -76,18 +79,32 @@ func CompactSession(ctx context.Context,
 	}
 	defer store.Close()
 
+	result, _, err := compactStore(ctx, req, store, events)
+
+	return result, err
+}
+
+// compactStore summarizes older history through an already-open session store.
+func compactStore(ctx context.Context, req CompactRequest, store *session.Store,
+	events []session.Event) (*CompactResult, *session.Event, error) {
+
+	keep := req.KeepMessages
+	if keep <= 0 {
+		keep = DefaultCompactKeepMessages
+	}
 	cut, firstKeptID, err := compactionCut(events, keep)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if cut == 0 {
-		return nil, fmt.Errorf("not enough history to compact")
+		return nil, nil, errNotEnoughHistory
 	}
 
 	summary, err := compactSummary(ctx, req, events, cut, firstKeptID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
+	trigger := compactTrigger(req.Trigger)
 	event, err := store.Append(
 		session.EventContextSummary, store.LastID(),
 		session.SummaryData{
@@ -96,20 +113,21 @@ func CompactSession(ctx context.Context,
 			RangeEndID:       events[cut-1].ID,
 			FirstKeptEventID: firstKeptID,
 			Model:            req.ModelName,
+			Trigger:          trigger,
 		},
 	)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if req.Hooks != nil {
 		if err := req.Hooks.PostCompact(ctx, hooks.PostCompactEvent{
 			SessionPath:      req.SessionPath,
-			Trigger:          "manual",
+			Trigger:          trigger,
 			SummaryEventID:   event.ID,
 			FirstKeptEventID: firstKeptID,
 			Summary:          summary,
 		}); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 
@@ -118,7 +136,16 @@ func CompactSession(ctx context.Context,
 		SummaryEventID:   event.ID,
 		FirstKeptEventID: firstKeptID,
 		Summary:          summary,
-	}, nil
+	}, event, nil
+}
+
+// compactTrigger returns the durable trigger label for a compaction pass.
+func compactTrigger(trigger string) string {
+	if strings.TrimSpace(trigger) == "" {
+		return "manual"
+	}
+
+	return trigger
 }
 
 // compactSummary returns either a hook-provided or model-written summary.
@@ -126,9 +153,10 @@ func compactSummary(ctx context.Context, req CompactRequest,
 	events []session.Event, cut int, firstKeptID string) (string, error) {
 
 	if req.Hooks != nil {
+		trigger := compactTrigger(req.Trigger)
 		result, err := req.Hooks.PreCompact(ctx, hooks.PreCompactEvent{
 			SessionPath:      req.SessionPath,
-			Trigger:          "manual",
+			Trigger:          trigger,
 			RangeStartID:     events[0].ID,
 			RangeEndID:       events[cut-1].ID,
 			FirstKeptEventID: firstKeptID,

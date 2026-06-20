@@ -12,7 +12,18 @@
 # max_tool_rounds = 32
 
 # Recent message events kept raw when /compact or `harness compact` runs.
+# The same value is used by auto compaction when enabled.
 # keep_messages = 12
+
+[context]
+# Enable automatic context compaction before chat model calls when the projected
+# context reaches the configured approximate token threshold. The original JSONL
+# history stays on disk; auto compaction appends a context.summary event.
+# auto_compact = false
+
+# Approximate projected context size that triggers auto compaction. Harness uses
+# its dependency-free token estimate, not a model-specific tokenizer.
+# auto_compact_threshold_tokens = 120000
 
 [provider]
 # Model provider name. Supported built-ins are "echo" and "openai".

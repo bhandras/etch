@@ -563,6 +563,33 @@ func TestRunChatContextAndCompactCommands(t *testing.T) {
 	}
 }
 
+// TestRunChatAutoCompactsLargeContext verifies chat can compact session
+// history automatically before a large follow-up turn reaches the model.
+func TestRunChatAutoCompactsLargeContext(t *testing.T) {
+	cfg := cliConfig{
+		command:          commandChat,
+		sessionDir:       filepath.Join(t.TempDir(), "sessions"),
+		provider:         providerEcho,
+		keepMessages:     1,
+		autoCompact:      true,
+		autoCompactLimit: 20,
+	}
+	prompt := strings.Repeat("alpha ", 60) + "\n" +
+		strings.Repeat("beta ", 60) + "\n/status\n/exit\n"
+	var stdout, stderr bytes.Buffer
+	code := runChat(cfg, strings.NewReader(prompt), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("chat failed: code=%d stdout=%q stderr=%q", code,
+			stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Compacted context:") {
+		t.Fatalf("missing auto compact notice: %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "compactions: 1 (1 auto") {
+		t.Fatalf("missing auto compact status: %q", stdout.String())
+	}
+}
+
 // TestRunChatStatusCommand verifies the status slash command reports durable
 // session activity without starting a separate model turn.
 func TestRunChatStatusCommand(t *testing.T) {

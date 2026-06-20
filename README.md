@@ -36,8 +36,8 @@ Harness currently has:
 - pinned project context from `SYSTEM.md` and `AGENTS.md`
 - Agent Skills-style discovery from `.harness/skills/*/SKILL.md` and
   `.agents/skills/*/SKILL.md`
-- manual context compaction, `/context` projection stats, and `/status` session
-  stats
+- manual and automatic context compaction, `/context` projection stats, and
+  `/status` session stats
 - provider-reported token usage for OpenAI Chat Completions and Responses API
   streams
 - built-in tools for `ls`, `find`, `grep`, `read`, `write`, `edit`, and
@@ -117,7 +117,7 @@ Inside chat, use slash commands for local session and context operations:
 
 ```text
 /status    Show session age, turns, model calls, tool calls, and token usage.
-/context   Show projected context size and pinned context layers.
+/context   Show projected context size, pinned layers, and auto compact config.
 /compact   Append a model-written summary for older session history.
 /show      Render the active session transcript.
 /sessions  List known local sessions.
@@ -154,6 +154,20 @@ Use `SYSTEM.md` for project-specific agent identity and durable behavior. Use
 `AGENTS.md` for repository workflow, coding, documentation, verification, and
 commit-message rules. Both files are pinned ahead of compacted conversation
 history and capped at 32KB per file.
+
+Manual compaction is available through `/compact` and `harness compact`.
+Automatic compaction can be enabled in `.harness/config.toml`:
+
+```toml
+[context]
+auto_compact = true
+auto_compact_threshold_tokens = 120000
+```
+
+Harness checks the projected context before chat model calls. When the estimate
+reaches the threshold, it appends a `context.summary` event with
+`trigger = "auto"` and keeps the latest `session.keep_messages` message events
+raw. The original JSONL history remains on disk.
 
 Skills follow the Agent Skills `SKILL.md` convention. Harness discovers skill
 metadata from `.harness/skills/*/SKILL.md` and `.agents/skills/*/SKILL.md` in

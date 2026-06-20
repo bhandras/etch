@@ -142,6 +142,9 @@ type SummaryData struct {
 
 	// Model records the summarization model name when known.
 	Model string `json:"model,omitempty"`
+
+	// Trigger records why compaction started, such as manual or auto.
+	Trigger string `json:"trigger,omitempty"`
 }
 
 // UsageData is provider-reported token usage for one model call.

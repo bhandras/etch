@@ -44,6 +44,7 @@ func TestBuildStatusCountsSessionActivity(t *testing.T) {
 			t, EventContextSummary, "6", "5",
 			startedAt.Add(5*time.Second), SummaryData{
 				Summary: "older turns",
+				Trigger: "auto",
 			},
 		),
 		statusEvent(
@@ -74,6 +75,9 @@ func TestBuildStatusCountsSessionActivity(t *testing.T) {
 	if status.Compactions != 1 {
 		t.Fatalf("unexpected compactions: %d", status.Compactions)
 	}
+	if status.AutoCompactions != 1 || status.ManualCompactions != 0 {
+		t.Fatalf("unexpected compaction triggers: %#v", status)
+	}
 	if status.Usage.InputTokens != 100 ||
 		status.Usage.CachedInputTokens != 64 ||
 		status.Usage.TotalTokens != 120 {
@@ -87,6 +91,9 @@ func TestBuildStatusCountsSessionActivity(t *testing.T) {
 	}
 	if !strings.Contains(text, "Actual Model Usage") {
 		t.Fatalf("missing usage section: %q", text)
+	}
+	if !strings.Contains(text, "compactions: 1 (1 auto, 0 manual)") {
+		t.Fatalf("missing compaction trigger counts: %q", text)
 	}
 	if !strings.Contains(text, "- cached input: 64 tokens") {
 		t.Fatalf("missing cached input usage: %q", text)
