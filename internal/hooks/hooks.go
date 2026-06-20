@@ -16,8 +16,19 @@ import (
 )
 
 const (
+	// EventSessionStart fires after a session log is opened for a turn.
+	EventSessionStart = "SessionStart"
+
 	// EventUserPromptSubmit fires before a user prompt is persisted.
 	EventUserPromptSubmit = "UserPromptSubmit"
+
+	// EventTurnStart fires after the user prompt is persisted and before
+	// the first model call for that prompt.
+	EventTurnStart = "TurnStart"
+
+	// EventTurnComplete fires after the final assistant response for a
+	// user turn is persisted.
+	EventTurnComplete = "TurnComplete"
 
 	// EventContextBuild fires before each provider-neutral model request.
 	EventContextBuild = "ContextBuild"
@@ -49,6 +60,18 @@ type Runner struct {
 	hooks []config.HookConfig
 }
 
+// SessionStartEvent describes a session log opened for turn execution.
+type SessionStartEvent struct {
+	// SessionPath is the JSONL session log path.
+	SessionPath string `json:"sessionPath"`
+
+	// SessionID is the stable session identifier.
+	SessionID string `json:"sessionId"`
+
+	// Reason explains whether the session was newly created or resumed.
+	Reason string `json:"reason"`
+}
+
 // UserPromptSubmitEvent describes a prompt before it is admitted to history.
 type UserPromptSubmitEvent struct {
 	// Prompt is the user text that will be stored and sent to the model.
@@ -56,6 +79,45 @@ type UserPromptSubmitEvent struct {
 
 	// SessionPath is the session being continued, when any.
 	SessionPath string `json:"sessionPath,omitempty"`
+}
+
+// TurnStartEvent describes a user turn after prompt persistence.
+type TurnStartEvent struct {
+	// SessionPath is the JSONL session log path.
+	SessionPath string `json:"sessionPath"`
+
+	// SessionID is the stable session identifier.
+	SessionID string `json:"sessionId"`
+
+	// UserEventID is the durable user message event ID.
+	UserEventID string `json:"userEventId"`
+
+	// Prompt is the prompt admitted to the session.
+	Prompt string `json:"prompt"`
+}
+
+// TurnCompleteEvent describes a completed user turn.
+type TurnCompleteEvent struct {
+	// SessionPath is the JSONL session log path.
+	SessionPath string `json:"sessionPath"`
+
+	// SessionID is the stable session identifier.
+	SessionID string `json:"sessionId"`
+
+	// UserEventID is the durable user message event ID.
+	UserEventID string `json:"userEventId"`
+
+	// AssistantEventID is the durable final assistant message event ID.
+	AssistantEventID string `json:"assistantEventId"`
+
+	// Prompt is the prompt admitted to the session.
+	Prompt string `json:"prompt"`
+
+	// AssistantText is the final assistant response text.
+	AssistantText string `json:"assistantText"`
+
+	// ToolCalls is the number of local tool calls requested by the model.
+	ToolCalls int `json:"toolCalls"`
 }
 
 // UserPromptSubmitResult stores hook mutations for a submitted prompt.
@@ -253,6 +315,22 @@ func New(configs []config.HookConfig, cwd string) (*Runner, error) {
 	return &Runner{cwd: cwd, hooks: active}, nil
 }
 
+// SessionStart runs hooks that observe a newly opened session log.
+func (r *Runner) SessionStart(ctx context.Context,
+	event SessionStartEvent) error {
+
+	for _, hook := range r.matching(EventSessionStart, event.Reason) {
+		var ignored struct{}
+		if err := r.run(
+			ctx, hook, EventSessionStart, event, &ignored,
+		); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 // validateMatcher reports malformed regular expression matchers early.
 func validateMatcher(matcher string) error {
 	if matcher == "" || matcher == "*" {
@@ -265,13 +343,43 @@ func validateMatcher(matcher string) error {
 	return nil
 }
 
+// TurnStart runs hooks that observe the start of a user turn.
+func (r *Runner) TurnStart(ctx context.Context, event TurnStartEvent) error {
+	for _, hook := range r.matchingEvent(EventTurnStart) {
+		var ignored struct{}
+		if err := r.run(
+			ctx, hook, EventTurnStart, event, &ignored,
+		); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// TurnComplete runs hooks that observe the completion of a user turn.
+func (r *Runner) TurnComplete(ctx context.Context,
+	event TurnCompleteEvent) error {
+
+	for _, hook := range r.matchingEvent(EventTurnComplete) {
+		var ignored struct{}
+		if err := r.run(
+			ctx, hook, EventTurnComplete, event, &ignored,
+		); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 // UserPromptSubmit runs hooks that can transform or block a user prompt.
 func (r *Runner) UserPromptSubmit(ctx context.Context,
 	event UserPromptSubmitEvent) (UserPromptSubmitResult, error) {
 
 	var result UserPromptSubmitResult
 	current := event
-	for _, hook := range r.matching(EventUserPromptSubmit, "") {
+	for _, hook := range r.matchingEvent(EventUserPromptSubmit) {
 		var hookResult UserPromptSubmitResult
 		if err := r.run(
 			ctx, hook, EventUserPromptSubmit, current, &hookResult,
@@ -299,7 +407,7 @@ func (r *Runner) ContextBuild(ctx context.Context, event ContextBuildEvent) (
 
 	var result ContextBuildResult
 	current := event
-	for _, hook := range r.matching(EventContextBuild, "") {
+	for _, hook := range r.matchingEvent(EventContextBuild) {
 		var hookResult ContextBuildResult
 		if err := r.run(
 			ctx, hook, EventContextBuild, current, &hookResult,
@@ -488,6 +596,18 @@ func (r *Runner) matching(event string, value string) []config.HookConfig {
 			continue
 		}
 		out = append(out, hook)
+	}
+
+	return out
+}
+
+// matchingEvent returns hooks configured for event without applying matchers.
+func (r *Runner) matchingEvent(event string) []config.HookConfig {
+	out := make([]config.HookConfig, 0, len(r.hooks))
+	for _, hook := range r.hooks {
+		if hook.Event == event {
+			out = append(out, hook)
+		}
 	}
 
 	return out

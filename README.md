@@ -42,7 +42,8 @@ Harness currently has:
   streams
 - built-in tools for `ls`, `find`, `grep`, `read`, `write`, `edit`, and
   `bash`
-- external process hooks for prompt, context, tool, and compaction events
+- external process hooks for session, turn, prompt, context, tool, and
+  compaction events
 - human-readable tool call and tool result rendering
 
 The default provider is an offline echo model, so the CLI can run without
@@ -96,10 +97,13 @@ cp sample-config.toml .harness/config.toml
 are defaults only: environment variables override config, and explicit CLI flags
 override both.
 
-Hooks are configured in the same TOML file. A hook is an external shell command
-that receives a JSON event envelope on stdin and may write a JSON patch to
-stdout. For example, a `PreToolUse` hook can block a tool call or rewrite its
-arguments before the tool runs.
+Hooks are configured under `[hooks]` in the same TOML file. A hook is an
+external shell command that receives a JSON event envelope on stdin and may
+write a JSON patch to stdout. For example, a `SessionStart` hook can prepare
+per-session state, while a `PreToolUse` hook can block a tool call or rewrite
+its arguments before the tool runs. See
+[sample-config.toml](sample-config.toml) for the supported hook events,
+matchers, execution order, and payload/result shapes.
 
 Inspect local sessions:
 

@@ -65,6 +65,67 @@ func TestRunTurnPersistsEchoExchange(t *testing.T) {
 	}
 }
 
+// TestRunTurnEmitsLifecycleHooks verifies session and turn notification hooks
+// fire in execution order around a simple turn.
+func TestRunTurnEmitsLifecycleHooks(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "hooks.log")
+	hookScript := filepath.Join(dir, "record-hook.sh")
+	writeFile(
+		t, hookScript, "#!/bin/sh\npayload=$(cat)\nprintf '%s\\n' "+
+			"\"$payload\" >> \"$HOOK_LOG\"\nprintf '{}'\n",
+	)
+	if err := os.Chmod(hookScript, 0o755); err != nil {
+		t.Fatalf("chmod hook: %v", err)
+	}
+	command := "HOOK_LOG=" + shellQuote(logPath) + " " +
+		shellQuote(hookScript)
+	runner, err := hooks.New([]config.HookConfig{
+		{Event: hooks.EventSessionStart, Command: command},
+		{Event: hooks.EventTurnStart, Command: command},
+		{Event: hooks.EventTurnComplete, Command: command},
+	}, dir)
+	if err != nil {
+		t.Fatalf("create hooks: %v", err)
+	}
+
+	_, err = RunTurn(context.Background(), TurnRequest{
+		Prompt:     "hello",
+		SessionDir: filepath.Join(dir, "sessions"),
+		CWD:        dir,
+		Model:      model.EchoClient{},
+		Hooks:      runner,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read hook log: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	got := make([]string, 0, len(lines))
+	for _, line := range lines {
+		var envelope struct {
+			Event string `json:"event"`
+		}
+		if err := json.Unmarshal([]byte(line), &envelope); err != nil {
+			t.Fatalf("decode hook envelope: %v", err)
+		}
+		got = append(got, envelope.Event)
+	}
+	want := []string{
+		hooks.EventSessionStart,
+		hooks.EventTurnStart,
+		hooks.EventTurnComplete,
+	}
+	if !equalStrings(got, want) {
+		t.Fatalf("hook event order mismatch:\nwant %#v\ngot  %#v", want,
+			got)
+	}
+}
+
 // TestRunTurnPersistsModelUsage verifies provider token counters are durable
 // session events when a model stream reports them.
 func TestRunTurnPersistsModelUsage(t *testing.T) {
@@ -642,6 +703,11 @@ func quoteJSON(text string) string {
 	}
 
 	return string(encoded)
+}
+
+// shellQuote returns a single-quoted shell word for test hook commands.
+func shellQuote(text string) string {
+	return "'" + strings.ReplaceAll(text, "'", "'\\''") + "'"
 }
 
 // writeFile creates a small file fixture for core tests.

@@ -36,12 +36,45 @@
 # "concise", or "detailed".
 # reasoning_summary = "auto"
 
+[hooks]
 # Hooks are external shell commands. Harness sends a JSON envelope on stdin and
-# reads an optional JSON patch from stdout. Hooks run in file order, and
-# mutation-capable events pass each hook's output to the next hook.
+# reads an optional JSON object from stdout. Stderr is diagnostic text. A
+# non-zero exit status, invalid stdout JSON, or timeout fails the surrounding
+# harness operation.
+#
+# Hook commands run through the platform shell from the current project working
+# directory. The default timeout is 30 seconds when timeout_seconds is omitted.
+#
+# Harness sends this envelope shape to every hook:
+#
+# {
+#   "version": 1,
+#   "event": "PreToolUse",
+#   "cwd": "/absolute/project/path",
+#   "payload": { "...": "event-specific fields" }
+# }
+#
+# Hooks run sequentially in config file order. If multiple hooks match the same
+# event, the first matching hook runs first, then the second, and so on. For
+# mutation-capable events, each later hook sees the value returned by earlier
+# hooks. This makes hooks behave like deterministic transformer nodes in the
+# agent loop.
+#
+# Blocking events stop early:
+#
+# - UserPromptSubmit stops prompt admission when a hook returns block=true.
+# - PreToolUse stops later PreToolUse hooks for that tool call when blocked.
+# - PreCompact stops compaction when blocked.
+#
+# Non-blocking transform events continue through all matching hooks unless a
+# hook process fails, times out, or returns invalid JSON.
 #
 # Supported events:
+#
+# - SessionStart
 # - UserPromptSubmit
+# - TurnStart
+# - TurnComplete
 # - ContextBuild
 # - PreToolUse
 # - PostToolUse
@@ -49,15 +82,153 @@
 # - PostCompact
 #
 # Matcher behavior:
+#
+# - matcher is a Go regular expression, not a shell glob.
 # - Empty matcher or "*" matches every event instance.
-# - PreToolUse and PostToolUse match against the tool name.
+# - SessionStart matches against the reason: "new" or "resume".
+# - PreToolUse and PostToolUse match against the tool name, such as "bash".
 # - PreCompact and PostCompact match against the trigger, currently "manual".
-# - UserPromptSubmit and ContextBuild ignore matcher.
+# - UserPromptSubmit, TurnStart, TurnComplete, and ContextBuild ignore matcher.
+#
+# Prefer anchored matchers for policy hooks:
+#
+# matcher = "^(bash|write|edit)$"
+#
+# A looser matcher like "bash|write|edit" also works, but it matches substrings.
+#
+# SessionStart payload:
+#
+# {
+#   "sessionPath": ".harness/sessions/current.jsonl",
+#   "sessionId": "session-id",
+#   "reason": "new"
+# }
+#
+# SessionStart stdout is ignored, but should be empty or "{}" if written.
+#
+# UserPromptSubmit payload:
+#
+# {
+#   "prompt": "user text",
+#   "sessionPath": ".harness/sessions/current.jsonl"
+# }
+#
+# UserPromptSubmit stdout may be empty or:
+#
+# {"prompt": "replacement prompt"}
+# {"block": true, "reason": "why the prompt is rejected"}
+#
+# TurnStart payload:
+#
+# {
+#   "sessionPath": ".harness/sessions/current.jsonl",
+#   "sessionId": "session-id",
+#   "userEventId": "event_2",
+#   "prompt": "user text"
+# }
+#
+# TurnStart stdout is ignored, but should be empty or "{}" if written.
+#
+# TurnComplete payload:
+#
+# {
+#   "sessionPath": ".harness/sessions/current.jsonl",
+#   "sessionId": "session-id",
+#   "userEventId": "event_2",
+#   "assistantEventId": "event_5",
+#   "prompt": "user text",
+#   "assistantText": "final answer",
+#   "toolCalls": 2
+# }
+#
+# TurnComplete stdout is ignored, but should be empty or "{}" if written.
+#
+# ContextBuild payload:
+#
+# {
+#   "sessionPath": ".harness/sessions/current.jsonl",
+#   "round": 0,
+#   "messages": [
+#     {"role": "system", "content": "..."},
+#     {"role": "user", "content": "..."}
+#   ]
+# }
+#
+# ContextBuild stdout may be empty or:
+#
+# {"messages": [{"role": "user", "content": "replacement context"}]}
+#
+# PreToolUse payload:
+#
+# {
+#   "sessionPath": ".harness/sessions/current.jsonl",
+#   "tool": {
+#     "id": "call_1",
+#     "name": "bash",
+#     "arguments": "{\"command\":\"go test ./...\"}"
+#   }
+# }
+#
+# PreToolUse stdout may be empty or:
+#
+# {"arguments": "{\"command\":\"go test ./...\",\"timeoutSeconds\":60}"}
+# {"block": true, "reason": "dangerous command"}
+#
+# PostToolUse payload:
+#
+# {
+#   "sessionPath": ".harness/sessions/current.jsonl",
+#   "tool": {"id": "call_1", "name": "read", "arguments": "{\"path\":\"x\"}"},
+#   "output": "model-visible tool output",
+#   "error": false
+# }
+#
+# PostToolUse stdout may be empty or:
+#
+# {"output": "redacted or summarized output"}
+# {"output": "replacement output", "error": true}
+#
+# PreCompact payload:
+#
+# {
+#   "sessionPath": ".harness/sessions/current.jsonl",
+#   "trigger": "manual",
+#   "rangeStartId": "event_1",
+#   "rangeEndId": "event_20",
+#   "firstKeptEventId": "event_21"
+# }
+#
+# PreCompact stdout may be empty or:
+#
+# {"block": true, "reason": "do not compact this session"}
+# {"summary": "custom summary that skips model summarization"}
+#
+# PostCompact payload:
+#
+# {
+#   "sessionPath": ".harness/sessions/current.jsonl",
+#   "trigger": "manual",
+#   "summaryEventId": "event_30",
+#   "firstKeptEventId": "event_21",
+#   "summary": "persisted summary"
+# }
+#
+# PostCompact stdout is ignored, but should be empty or "{}" if written.
+
+# [[hooks.SessionStart]]
+# matcher = "^(new|resume)$"
+# command = ".harness/hooks/session-start.sh"
 
 # [[hooks.UserPromptSubmit]]
 # command = ".harness/hooks/check-prompt.sh"
 # timeout_seconds = 5
 # disabled = false
+
+# [[hooks.TurnStart]]
+# command = ".harness/hooks/turn-start.sh"
+
+# [[hooks.TurnComplete]]
+# command = ".harness/hooks/notify-turn-complete.sh"
 
 # [[hooks.ContextBuild]]
 # command = ".harness/hooks/filter-context.sh"

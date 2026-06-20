@@ -66,6 +66,33 @@ disabled = true
 	}
 }
 
+// TestParseAllowsHooksNamespace verifies [hooks] can group event hook arrays
+// without creating a hook entry on its own.
+func TestParseAllowsHooksNamespace(t *testing.T) {
+	cfg, err := Parse(`
+[hooks]
+
+[[hooks.PreToolUse]]
+matcher = "^bash$"
+command = "first"
+
+[[hooks.PreToolUse]]
+matcher = "^write$"
+command = "second"
+`)
+	if err != nil {
+		t.Fatalf("parse config: %v", err)
+	}
+	if len(cfg.Hooks) != 2 {
+		t.Fatalf("expected two hooks, got %d", len(cfg.Hooks))
+	}
+	if cfg.Hooks[0].Command != "first" ||
+		cfg.Hooks[1].Command != "second" {
+
+		t.Fatalf("hooks are not in file order: %#v", cfg.Hooks)
+	}
+}
+
 // TestFindWalksAncestors verifies project config discovery works from nested
 // working directories.
 func TestFindWalksAncestors(t *testing.T) {

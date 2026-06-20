@@ -281,7 +281,7 @@ func hookForArrayTable(name string) (HookConfig, error) {
 // knownTable reports whether name is a supported normal table.
 func knownTable(name string) bool {
 	switch name {
-	case "session", "provider", "openai":
+	case "session", "provider", "openai", "hooks":
 		return true
 
 	default:
@@ -312,7 +312,9 @@ func applyAssignment(cfg *Config, hook *HookConfig, table string, key string,
 	value string) error {
 
 	switch {
-	case strings.HasPrefix(table, "hooks"):
+	case strings.HasPrefix(table, "hooks.") ||
+		(table == "hooks" && hook != nil):
+
 		if hook == nil {
 			return fmt.Errorf("hook setting %q must be inside "+
 				"[[hooks.*]]", key)
@@ -328,6 +330,9 @@ func applyAssignment(cfg *Config, hook *HookConfig, table string, key string,
 
 	case table == "openai":
 		return applyOpenAIAssignment(&cfg.OpenAI, key, value)
+
+	case table == "hooks":
+		return fmt.Errorf("unknown hooks key %q", key)
 
 	case table == "":
 		return fmt.Errorf("top-level key %q is not supported", key)

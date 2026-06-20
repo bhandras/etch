@@ -110,6 +110,10 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 	if req.Model == nil {
 		return nil, fmt.Errorf("model client must not be nil")
 	}
+	sessionStartReason := "new"
+	if req.SessionPath != "" {
+		sessionStartReason = "resume"
+	}
 	promptText, err := runUserPromptHooks(ctx, req)
 	if err != nil {
 		return nil, err
@@ -122,6 +126,11 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 	}
 	defer store.Close()
 	req.SessionPath = store.Path()
+	if err := runSessionStartHooks(
+		ctx, req, store, sessionStartReason,
+	); err != nil {
+		return nil, err
+	}
 
 	user, err := store.Append(
 		session.EventUserMessage, store.LastID(),
@@ -132,6 +141,9 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 	}
 	history = append(history, *user)
 	notifyEvent(req.Observer, user)
+	if err := runTurnStartHooks(ctx, req, store, user); err != nil {
+		return nil, err
+	}
 
 	messages, err := prompt.BuildHistoryMessages(prompt.HistoryRequest{
 		Events:     history,
@@ -146,6 +158,7 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 	var assistant *session.Event
 	finalReceived := false
 	var text string
+	toolCallCount := 0
 	for round := 0; round < maxToolRounds; round++ {
 		callMessages, err := runContextBuildHooks(
 			ctx, req, messages, round,
@@ -220,6 +233,7 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 			parentID = usageEvent.ID
 		}
 		for _, call := range toolCalls {
+			toolCallCount++
 			notifyToolCallStarted(req.Observer, call)
 			result := tool.Result{}
 			toolFailed := false
@@ -276,6 +290,11 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 		return nil, fmt.Errorf("tool round limit exceeded before " +
 			"final assistant response")
 	}
+	if err := runTurnCompleteHooks(
+		ctx, req, store, user, assistant, text, toolCallCount,
+	); err != nil {
+		return nil, err
+	}
 
 	return &TurnResult{
 		SessionPath:      store.Path(),
@@ -293,6 +312,21 @@ func toolRoundLimit(requested int) int {
 	}
 
 	return DefaultMaxToolRounds
+}
+
+// runSessionStartHooks applies configured session lifecycle hooks.
+func runSessionStartHooks(ctx context.Context, req TurnRequest,
+	store *session.Store, reason string) error {
+
+	if req.Hooks == nil {
+		return nil
+	}
+
+	return req.Hooks.SessionStart(ctx, hooks.SessionStartEvent{
+		SessionPath: store.Path(),
+		SessionID:   store.ID(),
+		Reason:      reason,
+	})
 }
 
 // runUserPromptHooks applies configured prompt submission hooks.
@@ -320,6 +354,42 @@ func runUserPromptHooks(ctx context.Context, req TurnRequest) (string, error) {
 	}
 
 	return req.Prompt, nil
+}
+
+// runTurnStartHooks applies configured turn start lifecycle hooks.
+func runTurnStartHooks(ctx context.Context, req TurnRequest,
+	store *session.Store, user *session.Event) error {
+
+	if req.Hooks == nil {
+		return nil
+	}
+
+	return req.Hooks.TurnStart(ctx, hooks.TurnStartEvent{
+		SessionPath: store.Path(),
+		SessionID:   store.ID(),
+		UserEventID: user.ID,
+		Prompt:      req.Prompt,
+	})
+}
+
+// runTurnCompleteHooks applies configured turn completion lifecycle hooks.
+func runTurnCompleteHooks(ctx context.Context, req TurnRequest,
+	store *session.Store, user *session.Event, assistant *session.Event,
+	text string, toolCalls int) error {
+
+	if req.Hooks == nil {
+		return nil
+	}
+
+	return req.Hooks.TurnComplete(ctx, hooks.TurnCompleteEvent{
+		SessionPath:      store.Path(),
+		SessionID:        store.ID(),
+		UserEventID:      user.ID,
+		AssistantEventID: assistant.ID,
+		Prompt:           req.Prompt,
+		AssistantText:    text,
+		ToolCalls:        toolCalls,
+	})
 }
 
 // runContextBuildHooks applies configured model-context hooks.

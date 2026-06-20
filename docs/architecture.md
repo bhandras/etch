@@ -294,6 +294,8 @@ sends one JSON envelope on stdin and reads an optional JSON patch from stdout:
 Hooks are configured as array tables:
 
 ```toml
+[hooks]
+
 [[hooks.PreToolUse]]
 matcher = "bash|write|edit"
 command = ".harness/hooks/policy.sh"
@@ -304,7 +306,10 @@ disabled = false
 The first supported events are:
 
 ```text
+SessionStart
 UserPromptSubmit
+TurnStart
+TurnComplete
 ContextBuild
 PreToolUse
 PostToolUse
@@ -320,9 +325,10 @@ may later use JSONL-RPC and concurrent request IDs, but shell hooks should stay
 small, bounded, and easy to reason about.
 
 Matchers are regular expressions. Empty matchers and `*` match everything.
+`SessionStart` matches on the start reason, currently `new` or `resume`.
 `PreToolUse` and `PostToolUse` match on tool name. `PreCompact` and
-`PostCompact` match on the trigger, currently `manual`. `UserPromptSubmit` and
-`ContextBuild` ignore matchers.
+`PostCompact` match on the trigger, currently `manual`. `UserPromptSubmit`,
+`TurnStart`, `TurnComplete`, and `ContextBuild` ignore matchers.
 
 Hook stdout must be either empty or a JSON object for that event. For example,
 `PreToolUse` can return:
@@ -638,10 +644,13 @@ MCP is how the agent borrows tools.
 The permission model should be small but extensible.
 
 The current hook system can already enforce simple policy at the process
-boundary:
+boundary and observe lifecycle milestones:
 
 ```text
+SessionStart     -> prepare or audit session-local state
 UserPromptSubmit -> block prompt admission
+TurnStart        -> record per-turn start metadata
+TurnComplete     -> notify or audit final turn output
 PreToolUse       -> block or rewrite tool arguments
 PostToolUse      -> redact or rewrite tool output
 PreCompact       -> cancel compaction or provide a custom summary

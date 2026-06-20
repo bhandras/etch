@@ -59,6 +59,31 @@ func TestUserPromptSubmitBlocksPrompt(t *testing.T) {
 	}
 }
 
+// TestUserPromptSubmitIgnoresMatcher verifies prompt hooks run even if a
+// matcher is present because this event has no matcher target.
+func TestUserPromptSubmitIgnoresMatcher(t *testing.T) {
+	runner, err := New([]config.HookConfig{{
+		Event:   EventUserPromptSubmit,
+		Matcher: "^no-target$",
+		Command: "printf '{\"prompt\":\"changed\"}'",
+	}}, t.TempDir())
+	if err != nil {
+		t.Fatalf("create runner: %v", err)
+	}
+
+	result, err := runner.UserPromptSubmit(
+		context.Background(), UserPromptSubmitEvent{
+			Prompt: "original",
+		},
+	)
+	if err != nil {
+		t.Fatalf("run hook: %v", err)
+	}
+	if result.Prompt == nil || *result.Prompt != "changed" {
+		t.Fatalf("unexpected prompt result: %#v", result)
+	}
+}
+
 // TestContextBuildRoundTripsMessages verifies context hooks use explicit JSON
 // field names rather than Go struct field names.
 func TestContextBuildRoundTripsMessages(t *testing.T) {
