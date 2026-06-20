@@ -220,8 +220,9 @@ The first plugin protocol supports `initialize` and `tool.execute` requests.
 Plugin tools appear in the same tool list as built-ins, and their results are
 stored as ordinary `message.tool` session events.
 
-The repository includes a dependency-free example plugin at `plugins/example`.
-It exposes `plugin_echo` for smoke testing and `project_files` for a small
+The repository includes a small example plugin at `plugins/example`. It uses
+the thin `harness/sdk` package from [sdk/plugins.go](sdk/plugins.go), exposes
+`plugin_echo` for smoke testing, and exposes `project_files` for a small
 filesystem summary:
 
 ```bash

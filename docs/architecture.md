@@ -75,7 +75,7 @@ internal/plugins/           plugin process supervisor and RPC client
 internal/prompt/            prompt assembly and context sources
 internal/auth/              auth interfaces and credential storage
 internal/config/            global and project config
-sdk/agentapi/               stable plugin API types
+sdk/                        stable public plugin API helpers
 ```
 
 The core loop should stay explicit:
@@ -683,9 +683,13 @@ tools. The model sees one sorted tool list, and the core appends plugin tool
 results as ordinary `message.tool` session events. Tool-call hooks still wrap
 plugin tools because hooks run around the unified registry dispatch.
 
+The public helper layer lives in `sdk/plugins.go`. It defines the stable plugin
+authoring types and `ServePlugin`, which lets simple Go plugins declare tools
+without copying the JSONL wire server. The internal plugin client still owns
+process startup, timeouts, schema validation, and registry wiring.
+
 The repository carries one standalone example plugin under `plugins/example`.
-It is its own Go module, imports only the standard library, and exposes two
-tools:
+It is its own Go module, imports `harness/sdk`, and exposes two tools:
 
 - `plugin_echo` echoes text and reports basic text statistics, making it useful
   for smoke testing the plugin path.

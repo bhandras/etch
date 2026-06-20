@@ -1,7 +1,7 @@
 package main
 
 import (
-	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -12,21 +12,11 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"harness/sdk"
 )
 
 const (
-	// protocolVersion is the Harness plugin protocol version this example
-	// understands.
-	protocolVersion = "0.1.0"
-
-	// methodInitialize is the startup method Harness calls to discover
-	// plugin metadata and tool schemas.
-	methodInitialize = "initialize"
-
-	// methodToolExecute is the request method Harness calls for one tool
-	// execution.
-	methodToolExecute = "tool.execute"
-
 	// toolPluginEcho echoes text and basic text statistics.
 	toolPluginEcho = "plugin_echo"
 
@@ -39,90 +29,6 @@ const (
 	// maxProjectFileLimit prevents accidental giant directory walks.
 	maxProjectFileLimit = 5000
 )
-
-// request is one JSONL request received from Harness.
-type request struct {
-	// ID correlates the request with the plugin response.
-	ID string `json:"id"`
-
-	// Method names the requested plugin operation.
-	Method string `json:"method"`
-
-	// Params stores the method-specific JSON object.
-	Params json.RawMessage `json:"params,omitempty"`
-}
-
-// response is one JSONL response written back to Harness.
-type response struct {
-	// ID correlates this response with a Harness request.
-	ID string `json:"id"`
-
-	// Result stores the method-specific success object.
-	Result any `json:"result,omitempty"`
-
-	// Error stores a protocol or tool failure.
-	Error *responseError `json:"error,omitempty"`
-}
-
-// responseError describes one plugin failure.
-type responseError struct {
-	// Message explains the failure in human-readable text.
-	Message string `json:"message"`
-}
-
-// initializeParams stores the protocol version advertised by Harness.
-type initializeParams struct {
-	// ProtocolVersion is the highest protocol version supported by Harness.
-	ProtocolVersion string `json:"protocolVersion"`
-}
-
-// initializeResult describes this plugin's available tools.
-type initializeResult struct {
-	// Name is the display name Harness can use in diagnostics.
-	Name string `json:"name"`
-
-	// Tools are model-callable tool schemas exposed by this plugin.
-	Tools []toolSpec `json:"tools"`
-}
-
-// toolSpec describes one model-callable plugin tool.
-type toolSpec struct {
-	// Name is the model-facing tool identifier.
-	Name string `json:"name"`
-
-	// Description tells the model when to call the tool.
-	Description string `json:"description"`
-
-	// Parameters is a JSON Schema object for the tool arguments.
-	Parameters any `json:"parameters"`
-}
-
-// toolExecuteParams stores one tool invocation from Harness.
-type toolExecuteParams struct {
-	// CallID is the provider-assigned tool call identifier.
-	CallID string `json:"callID"`
-
-	// Name is the model-facing tool name to execute.
-	Name string `json:"name"`
-
-	// Arguments stores the raw tool argument object.
-	Arguments json.RawMessage `json:"arguments"`
-}
-
-// toolExecuteResult stores model-visible content after a tool call.
-type toolExecuteResult struct {
-	// Content is the ordered list of model-visible output parts.
-	Content []contentPart `json:"content"`
-}
-
-// contentPart is one output part returned to Harness.
-type contentPart struct {
-	// Type identifies how Text should be interpreted.
-	Type string `json:"type"`
-
-	// Text stores plain text output.
-	Text string `json:"text"`
-}
 
 // echoArgs stores plugin_echo arguments.
 type echoArgs struct {
@@ -157,129 +63,23 @@ type extensionCount struct {
 	count int
 }
 
-// main serves plugin requests from stdin until EOF.
+// main serves the example plugin protocol until stdin closes.
 func main() {
-	scanner := bufio.NewScanner(os.Stdin)
-	scanner.Buffer(make([]byte, 0, 4096), 1024*1024)
-	for scanner.Scan() {
-		handleLine(scanner.Bytes())
-	}
-	if err := scanner.Err(); err != nil {
-		fmt.Fprintf(os.Stderr, "read request: %v\n", err)
-	}
-}
-
-// handleLine decodes and dispatches one JSONL protocol request.
-func handleLine(line []byte) {
-	var req request
-	if err := json.Unmarshal(line, &req); err != nil {
-		writeResponse(
-			response{
-				ID: "",
-				Error: &responseError{
-					Message: "decode request: " +
-						err.Error(),
-				},
-			},
-		)
-
-		return
-	}
-
-	switch req.Method {
-	case methodInitialize:
-		handleInitialize(req)
-
-	case methodToolExecute:
-		handleToolExecute(req)
-
-	default:
-		writeResponse(response{
-			ID: req.ID,
-			Error: &responseError{
-				Message: "unknown method " + req.Method,
-			},
-		})
-	}
-}
-
-// handleInitialize validates the protocol version and returns tool schemas.
-func handleInitialize(req request) {
-	var params initializeParams
-	if len(req.Params) != 0 {
-		if err := json.Unmarshal(req.Params, &params); err != nil {
-			writeError(
-				req.ID,
-				"decode initialize params: "+err.Error(),
-			)
-
-			return
-		}
-	}
-	if params.ProtocolVersion != "" &&
-		params.ProtocolVersion != protocolVersion {
-
-		writeError(
-			req.ID, "unsupported protocol version "+
-				params.ProtocolVersion,
-		)
-
-		return
-	}
-
-	writeResponse(response{
-		ID: req.ID,
-		Result: initializeResult{
-			Name: "example",
-			Tools: []toolSpec{
-				pluginEchoSpec(),
-				projectFilesSpec(),
-			},
+	if err := sdk.ServePlugin(sdk.Plugin{
+		Name: "example",
+		Tools: []sdk.Tool{
+			pluginEchoSpec(),
+			projectFilesSpec(),
 		},
-	})
-}
+	}); err != nil {
 
-// handleToolExecute decodes one tool execution request and runs the tool.
-func handleToolExecute(req request) {
-	var params toolExecuteParams
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		writeError(req.ID, "decode tool params: "+err.Error())
-
-		return
+		fmt.Fprintln(os.Stderr, err)
 	}
-
-	var text string
-	var err error
-	switch params.Name {
-	case toolPluginEcho:
-		text, err = runPluginEcho(params.Arguments)
-
-	case toolProjectFiles:
-		text, err = runProjectFiles(params.Arguments)
-
-	default:
-		err = fmt.Errorf("unknown tool %s", params.Name)
-	}
-	if err != nil {
-		writeError(req.ID, err.Error())
-
-		return
-	}
-
-	writeResponse(response{
-		ID: req.ID,
-		Result: toolExecuteResult{
-			Content: []contentPart{{
-				Type: "text",
-				Text: text,
-			}},
-		},
-	})
 }
 
 // pluginEchoSpec returns the schema for the plugin_echo tool.
-func pluginEchoSpec() toolSpec {
-	return toolSpec{
+func pluginEchoSpec() sdk.Tool {
+	return sdk.Tool{
 		Name: toolPluginEcho,
 		Description: "Echo text through the example plugin and report " +
 			"small text statistics. Use this for plugin smoke tests.",
@@ -295,12 +95,13 @@ func pluginEchoSpec() toolSpec {
 				"text",
 			},
 		},
+		Handler: handlePluginEcho,
 	}
 }
 
 // projectFilesSpec returns the schema for the project_files tool.
-func projectFilesSpec() toolSpec {
-	return toolSpec{
+func projectFilesSpec() sdk.Tool {
+	return sdk.Tool{
 		Name: toolProjectFiles,
 		Description: "Summarize file counts, byte size, common " +
 			"extensions, and sample paths under a local directory.",
@@ -319,7 +120,38 @@ func projectFilesSpec() toolSpec {
 				},
 			},
 		},
+		Handler: handleProjectFiles,
 	}
+}
+
+// handlePluginEcho executes plugin_echo through the SDK handler interface.
+func handlePluginEcho(ctx context.Context,
+	call sdk.ToolCall) (sdk.ToolResult, error) {
+
+	if err := ctx.Err(); err != nil {
+		return sdk.ToolResult{}, err
+	}
+	text, err := runPluginEcho(call.Arguments)
+	if err != nil {
+		return sdk.ToolResult{}, err
+	}
+
+	return sdk.TextResult(text), nil
+}
+
+// handleProjectFiles executes project_files through the SDK handler interface.
+func handleProjectFiles(ctx context.Context,
+	call sdk.ToolCall) (sdk.ToolResult, error) {
+
+	if err := ctx.Err(); err != nil {
+		return sdk.ToolResult{}, err
+	}
+	text, err := runProjectFiles(call.Arguments)
+	if err != nil {
+		return sdk.ToolResult{}, err
+	}
+
+	return sdk.TextResult(text), nil
 }
 
 // runPluginEcho echoes text and includes dependency-free text statistics.
@@ -526,23 +358,4 @@ func countWords(text string) int {
 	}
 
 	return words
-}
-
-// writeError writes one failed protocol response.
-func writeError(id string, message string) {
-	writeResponse(response{
-		ID:    id,
-		Error: &responseError{Message: message},
-	})
-}
-
-// writeResponse writes one JSONL protocol response to stdout.
-func writeResponse(resp response) {
-	encoded, err := json.Marshal(resp)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "encode response: %v\n", err)
-
-		return
-	}
-	fmt.Fprintln(os.Stdout, string(encoded))
 }
