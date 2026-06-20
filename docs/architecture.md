@@ -269,6 +269,12 @@ base_url = "https://api.openai.com/v1"
 api = "chat"
 reasoning_effort = "minimal"
 reasoning_summary = "auto"
+
+[[plugins]]
+name = "example"
+command = "go run ./plugins/example/main.go"
+timeout_seconds = 30
+disabled = false
 ```
 
 `sample-config.toml` is the canonical human-readable inventory of supported
@@ -624,14 +630,28 @@ and output limits.
 
 ## Plugins
 
-Plugins are native extensions of the agent runtime. They can register tools and
-commands, provide context, observe events, add policy hooks, customize
-compaction, or eventually contribute UI panels and model providers.
+Plugins are native extensions of the agent runtime. The first implemented slice
+is intentionally narrow: explicit out-of-process tools configured in
+`.harness/config.toml`. Plugins can later grow to commands, context providers,
+event observers, policy hooks, compaction customizers, UI panels, and model
+providers, but those are not kernel features in this version.
 
-Plugins are out-of-process executables. A plugin can be its own Go module and
-can have its own dependencies without polluting the core binary. The same
-protocol can later support plugins written in Rust, Python, JavaScript, or any
-language that can read stdin and write stdout.
+Plugins are configured, not discovered. Harness does not scan project
+directories for executables. Each plugin must appear in config:
+
+```toml
+[[plugins]]
+name = "example"
+command = "go run ./plugins/example/main.go"
+timeout_seconds = 30
+disabled = false
+```
+
+The command runs through the platform shell from the current project working
+directory. The plugin is a child process with its own dependencies, so it can be
+written as a separate Go module or in any language that can read stdin and write
+stdout. The default timeout is 30 seconds and applies to initialization and tool
+calls when `timeout_seconds` is omitted.
 
 The first transport is:
 
@@ -644,23 +664,38 @@ the plugin's standard input and output. Standard error is reserved for logs.
 
 ```text
 core -> plugin stdin:  one JSON request per line
-plugin stdout -> core: one JSON response or notification per line
+plugin stdout -> core: one JSON response per line
 plugin stderr:         human-readable logs only
 ```
 
-The protocol is request/response plus notifications:
+The first protocol version is `0.1.0` and supports initialization plus tool
+execution:
 
 ```json
 {"id":"1","method":"initialize","params":{"protocolVersion":"0.1.0"}}
-{"id":"1","result":{"name":"git","tools":[],"hooks":[]}}
+{"id":"1","result":{"name":"git","tools":[{"name":"git_status","description":"Show git status.","parameters":{"type":"object","properties":{}}}]}}
 {"id":"2","method":"tool.execute","params":{"callID":"call_1","name":"git_status","arguments":{}}}
 {"id":"2","result":{"content":[{"type":"text","text":"clean"}]}}
-{"method":"tool.update","params":{"callID":"call_1","message":"reading status"}}
 ```
 
-Request IDs allow concurrent calls even though stdio is a single stream in each
-direction. The core should have one read loop, a pending-response map, and a
-mutex around writes.
+The harness registers plugin tools in the same model-facing registry as builtin
+tools. The model sees one sorted tool list, and the core appends plugin tool
+results as ordinary `message.tool` session events. Tool-call hooks still wrap
+plugin tools because hooks run around the unified registry dispatch.
+
+The repository carries one standalone example plugin under `plugins/example`.
+It is its own Go module, imports only the standard library, and exposes two
+tools:
+
+- `plugin_echo` echoes text and reports basic text statistics, making it useful
+  for smoke testing the plugin path.
+- `project_files` summarizes file counts, byte size, extension buckets, and
+  sample paths under a directory.
+
+The implementation currently serializes calls to one plugin process. This keeps
+the first protocol client small and predictable. The request IDs are still part
+of the wire format so a later supervisor can add a read loop, a
+pending-response map, and concurrent calls without changing plugin messages.
 
 Unix sockets, named pipes, TCP, or HTTP can be added later behind the same
 transport interface. They are not needed for the first version.

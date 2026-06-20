@@ -37,6 +37,9 @@ type Config struct {
 
 	// Hooks stores configured external process hooks in file order.
 	Hooks []HookConfig
+
+	// Plugins stores explicitly configured plugin processes in file order.
+	Plugins []PluginConfig
 }
 
 // SessionConfig stores defaults for local session handling.
@@ -113,6 +116,22 @@ type HookConfig struct {
 	Disabled bool
 }
 
+// PluginConfig describes one explicit out-of-process plugin command.
+type PluginConfig struct {
+	// Name is the human-readable plugin identifier used in diagnostics.
+	Name string
+
+	// Command starts the plugin process through the platform shell.
+	Command string
+
+	// TimeoutSeconds caps plugin initialization and tool calls. Zero means
+	// the plugin client uses its default timeout.
+	TimeoutSeconds int
+
+	// Disabled leaves the plugin definition in config without starting it.
+	Disabled bool
+}
+
 // Load finds and parses the nearest project-local config for cwd.
 func Load(cwd string) (Config, error) {
 	path, err := Find(cwd)
@@ -186,6 +205,7 @@ func Parse(text string) (Config, error) {
 	var cfg Config
 	var table string
 	var activeHook *HookConfig
+	var activePlugin *PluginConfig
 
 	lines := strings.Split(text, "\n")
 	for i, raw := range lines {
@@ -200,12 +220,34 @@ func Parse(text string) (Config, error) {
 			if err != nil {
 				return Config{}, lineError(lineNumber, err)
 			}
-			hook, err := hookForArrayTable(name)
-			if err != nil {
-				return Config{}, lineError(lineNumber, err)
+			activeHook = nil
+			activePlugin = nil
+			switch {
+			case name == "plugins":
+				cfg.Plugins = append(
+					cfg.Plugins, PluginConfig{},
+				)
+				activePlugin = &cfg.Plugins[len(cfg.Plugins)-1]
+
+			case name == "hooks" ||
+				strings.HasPrefix(name, "hooks."):
+
+				hook, err := hookForArrayTable(name)
+				if err != nil {
+					return Config{}, lineError(
+						lineNumber, err,
+					)
+				}
+				cfg.Hooks = append(cfg.Hooks, hook)
+				activeHook = &cfg.Hooks[len(cfg.Hooks)-1]
+
+			default:
+				return Config{}, lineError(
+					lineNumber,
+					fmt.Errorf("unknown array table %q",
+						name),
+				)
 			}
-			cfg.Hooks = append(cfg.Hooks, hook)
-			activeHook = &cfg.Hooks[len(cfg.Hooks)-1]
 			table = name
 
 			continue
@@ -224,6 +266,7 @@ func Parse(text string) (Config, error) {
 			}
 			table = name
 			activeHook = nil
+			activePlugin = nil
 
 			continue
 		}
@@ -233,7 +276,7 @@ func Parse(text string) (Config, error) {
 			return Config{}, lineError(lineNumber, err)
 		}
 		if err := applyAssignment(
-			&cfg, activeHook, table, key, value,
+			&cfg, activeHook, activePlugin, table, key, value,
 		); err != nil {
 			return Config{}, lineError(lineNumber, err)
 		}
@@ -298,7 +341,8 @@ func hookForArrayTable(name string) (HookConfig, error) {
 // knownTable reports whether name is a supported normal table.
 func knownTable(name string) bool {
 	switch name {
-	case "session", "provider", "openai", "context", "hooks":
+	case "session", "provider", "openai", "context", "hooks",
+		"plugins":
 		return true
 
 	default:
@@ -325,10 +369,13 @@ func parseAssignment(line string) (string, string, error) {
 }
 
 // applyAssignment stores one parsed key/value pair into cfg.
-func applyAssignment(cfg *Config, hook *HookConfig, table string, key string,
-	value string) error {
+func applyAssignment(cfg *Config, hook *HookConfig, plugin *PluginConfig,
+	table string, key string, value string) error {
 
 	switch {
+	case table == "plugins" && plugin != nil:
+		return applyPluginAssignment(plugin, key, value)
+
 	case strings.HasPrefix(table, "hooks.") ||
 		(table == "hooks" && hook != nil):
 
@@ -353,6 +400,10 @@ func applyAssignment(cfg *Config, hook *HookConfig, table string, key string,
 
 	case table == "hooks":
 		return fmt.Errorf("unknown hooks key %q", key)
+
+	case table == "plugins":
+		return fmt.Errorf("plugin setting %q must be inside "+
+			"[[plugins]]", key)
 
 	case table == "":
 		return fmt.Errorf("top-level key %q is not supported", key)
@@ -464,6 +515,38 @@ func applyOpenAIAssignment(cfg *OpenAIConfig, key string, value string) error {
 	}
 
 	return nil
+}
+
+// applyPluginAssignment stores one plugin table setting.
+func applyPluginAssignment(cfg *PluginConfig, key string, value string) error {
+	switch key {
+	case "name":
+		text, err := parseString(value)
+		cfg.Name = text
+
+		return err
+
+	case "command":
+		text, err := parseString(value)
+		cfg.Command = text
+
+		return err
+
+	case "timeout_seconds":
+		parsed, err := parsePositiveInt(value)
+		cfg.TimeoutSeconds = parsed
+
+		return err
+
+	case "disabled":
+		parsed, err := parseBool(value)
+		cfg.Disabled = parsed
+
+		return err
+
+	default:
+		return fmt.Errorf("unknown plugin key %q", key)
+	}
 }
 
 // applyHookAssignment stores one hook table setting.

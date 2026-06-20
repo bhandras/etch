@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +18,29 @@ import (
 	"harness/internal/model"
 	"harness/internal/session"
 )
+
+const (
+	// cliPluginHelperEnv enables the subprocess plugin used by CLI tests.
+	cliPluginHelperEnv = "HARNESS_CLI_PLUGIN_HELPER"
+)
+
+// TestMain runs command tests from an empty directory so project-config
+// discovery cannot inherit the developer's local .harness/config.toml.
+func TestMain(m *testing.M) {
+	dir, err := os.MkdirTemp("", "harness-cmd-test-*")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "create test cwd:", err)
+		os.Exit(1)
+	}
+	if err := os.Chdir(dir); err != nil {
+		fmt.Fprintln(os.Stderr, "enter test cwd:", err)
+		os.Exit(1)
+	}
+
+	code := m.Run()
+	_ = os.RemoveAll(dir)
+	os.Exit(code)
+}
 
 // TestRunWritesSessionAndListsIt exercises the CLI path from prompt execution
 // to local session listing.
@@ -797,6 +822,51 @@ func TestToolBashRunsDirectly(t *testing.T) {
 	}
 }
 
+// TestToolPluginRunsDirectly verifies the direct tool smoke path can execute a
+// configured plugin tool with raw JSON arguments.
+func TestToolPluginRunsDirectly(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	if err := os.Mkdir(filepath.Join(root, ".harness"), 0o755); err != nil {
+		t.Fatalf("make config dir: %v", err)
+	}
+	writeFile(
+		t, filepath.Join(root, ".harness", "config.toml"),
+		fmt.Sprintf(
+			"[[plugins]]\nname = \"helper\"\ncommand = %q\n",
+			cliPluginHelperCommand(),
+		),
+	)
+
+	var stdout, stderr bytes.Buffer
+	code := run(
+		[]string{
+			"tool",
+			"plugin_echo",
+			"--args",
+			`{"text":"hello"}`,
+		},
+		&stdout,
+		&stderr,
+	)
+	if code != 0 {
+		t.Fatalf("plugin tool failed: code=%d stdout=%q stderr=%q",
+			code, stdout.String(), stderr.String())
+	}
+	if strings.TrimSpace(stdout.String()) != "plugin direct" {
+		t.Fatalf("unexpected plugin output: %q", stdout.String())
+	}
+}
+
+// TestCLIPluginHelperProcess runs as a subprocess plugin for CLI smoke tests.
+func TestCLIPluginHelperProcess(t *testing.T) {
+	if os.Getenv(cliPluginHelperEnv) != "1" {
+		return
+	}
+	runCLIPluginHelper()
+	os.Exit(0)
+}
+
 // TestRunChatProcessesMultipleTurns verifies the minimal line-oriented chat
 // loop keeps a session alive across prompts.
 func TestRunChatProcessesMultipleTurns(t *testing.T) {
@@ -1031,6 +1101,81 @@ func messageEvent(t *testing.T, eventType string,
 		Time: time.Now().UTC(),
 		Data: raw,
 	}
+}
+
+// cliPluginHelperCommand returns a shell command that starts this test binary
+// as a minimal plugin process.
+func cliPluginHelperCommand() string {
+	return cliPluginHelperEnv + "=1 " + strconv.Quote(os.Args[0]) +
+		" -test.run=TestCLIPluginHelperProcess --"
+}
+
+// runCLIPluginHelper serves the tiny JSONL protocol needed by CLI tests.
+func runCLIPluginHelper() {
+	scanner := bufio.NewScanner(os.Stdin)
+	for scanner.Scan() {
+		var req struct {
+			ID     string          `json:"id"`
+			Method string          `json:"method"`
+			Params json.RawMessage `json:"params"`
+		}
+		if err := json.Unmarshal(scanner.Bytes(), &req); err != nil {
+			fmt.Fprintf(os.Stderr, "decode request: %v\n", err)
+
+			return
+		}
+		switch req.Method {
+		case "initialize":
+			writeCLIPluginLine(map[string]any{
+				"id": req.ID,
+				"result": map[string]any{
+					"name": "cli-helper",
+					"tools": []map[string]any{{
+						"name":        "plugin_echo",
+						"description": "Echoes text through a plugin.",
+						"parameters": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"text": map[string]any{
+									"type": "string",
+								},
+							},
+						},
+					}},
+				},
+			})
+
+		case "tool.execute":
+			writeCLIPluginLine(map[string]any{
+				"id": req.ID,
+				"result": map[string]any{
+					"content": []map[string]any{{
+						"type": "text",
+						"text": "plugin direct",
+					}},
+				},
+			})
+
+		default:
+			writeCLIPluginLine(map[string]any{
+				"id": req.ID,
+				"error": map[string]any{
+					"message": "unknown method",
+				},
+			})
+		}
+	}
+}
+
+// writeCLIPluginLine writes one JSONL response from the CLI helper plugin.
+func writeCLIPluginLine(value any) {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "encode response: %v\n", err)
+
+		return
+	}
+	fmt.Fprintln(os.Stdout, string(encoded))
 }
 
 // missingOpenAIAuthFile returns a nonexistent auth path for fallback tests.

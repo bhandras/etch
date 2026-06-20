@@ -19,6 +19,7 @@ import (
 	"harness/internal/core"
 	"harness/internal/hooks"
 	"harness/internal/model"
+	"harness/internal/plugins"
 	promptctx "harness/internal/prompt"
 	"harness/internal/provider/openai"
 	"harness/internal/render"
@@ -85,6 +86,7 @@ type cliConfig struct {
 	toolOldText         string
 	toolNewText         string
 	toolQuery           string
+	toolRawArguments    string
 	toolOffset          int
 	toolLimit           int
 	toolTimeout         int
@@ -102,6 +104,7 @@ type cliConfig struct {
 	authClientID        string
 	authCodexBaseURL    string
 	hooks               []harnessconfig.HookConfig
+	plugins             []harnessconfig.PluginConfig
 }
 
 // main runs the command and exits with the returned status code.
@@ -452,6 +455,15 @@ func runPrompt(cfg cliConfig, stdout io.Writer, stderr io.Writer) int {
 
 		return 1
 	}
+	registry, closePlugins, err := configuredToolRegistry(
+		context.Background(), cfg, cwd,
+	)
+	if err != nil {
+		fmt.Fprintln(stderr, "error:", err)
+
+		return 1
+	}
+	defer closePlugins()
 
 	result, err := core.RunTurn(context.Background(), core.TurnRequest{
 		Prompt:        cfg.prompt,
@@ -459,7 +471,7 @@ func runPrompt(cfg cliConfig, stdout io.Writer, stderr io.Writer) int {
 		CWD:           cwd,
 		SystemText:    projectContext.SystemText,
 		Model:         modelClient,
-		Tools:         tool.DefaultRegistry(),
+		Tools:         registry,
 		MaxToolRounds: cfg.maxToolRounds,
 		Hooks:         hookRunner,
 	})
@@ -484,9 +496,42 @@ func runPrompt(cfg cliConfig, stdout io.Writer, stderr io.Writer) int {
 	return 0
 }
 
-// runTool executes one builtin tool directly for local smoke testing.
-func runTool(cfg cliConfig, stdout io.Writer, stderr io.Writer) int {
+// configuredToolRegistry returns builtins plus configured plugin tools.
+func configuredToolRegistry(ctx context.Context, cfg cliConfig, cwd string) (
+	*tool.Registry, func(), error) {
+
 	registry := tool.DefaultRegistry()
+	clients, err := plugins.StartConfigured(ctx, cfg.plugins, cwd, registry)
+	if err != nil {
+		return nil, nil, err
+	}
+	closePlugins := func() {
+		for _, client := range clients {
+			_ = client.Close()
+		}
+	}
+
+	return registry, closePlugins, nil
+}
+
+// runTool executes one registered tool directly for local smoke testing.
+func runTool(cfg cliConfig, stdout io.Writer, stderr io.Writer) int {
+	cwd, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintln(stderr, "error: get working directory:", err)
+
+		return 1
+	}
+	registry, closePlugins, err := configuredToolRegistry(
+		context.Background(), cfg, cwd,
+	)
+	if err != nil {
+		fmt.Fprintln(stderr, "error:", err)
+
+		return 1
+	}
+	defer closePlugins()
+
 	arguments, err := toolArguments(cfg)
 	if err != nil {
 		fmt.Fprintln(stderr, "error:", err)
@@ -600,6 +645,15 @@ func runChat(cfg cliConfig, stdin io.Reader, stdout io.Writer,
 
 		return 1
 	}
+	registry, closePlugins, err := configuredToolRegistry(
+		context.Background(), cfg, cwd,
+	)
+	if err != nil {
+		fmt.Fprintln(stderr, "error:", err)
+
+		return 1
+	}
+	defer closePlugins()
 
 	var sessionPath string
 	if cfg.sessionID != "" {
@@ -626,8 +680,8 @@ func runChat(cfg cliConfig, stdin io.Reader, stdout io.Writer,
 		}
 		if strings.HasPrefix(line, "/") {
 			keepGoing, nextPath := handleChatCommand(
-				cfg, line, sessionPath, modelClient, stdout,
-				stderr, hookRunner,
+				cfg, line, sessionPath, modelClient, registry,
+				stdout, stderr, hookRunner,
 			)
 			sessionPath = nextPath
 			if !keepGoing {
@@ -651,7 +705,7 @@ func runChat(cfg cliConfig, stdin io.Reader, stdout io.Writer,
 				SystemText:    projectContext.SystemText,
 				Model:         modelClient,
 				ModelName:     cfg.model,
-				Tools:         tool.DefaultRegistry(),
+				Tools:         registry,
 				MaxToolRounds: cfg.maxToolRounds,
 				AutoCompactThresholdTokens: autoCompactThreshold(
 					cfg,
@@ -769,8 +823,8 @@ func (o *chatObserver) Finish(elapsed time.Duration) {
 
 // handleChatCommand executes one slash command and returns whether to continue.
 func handleChatCommand(cfg cliConfig, line string, sessionPath string,
-	modelClient model.Client, stdout io.Writer, stderr io.Writer,
-	hookRunner *hooks.Runner) (bool, string) {
+	modelClient model.Client, registry *tool.Registry, stdout io.Writer,
+	stderr io.Writer, hookRunner *hooks.Runner) (bool, string) {
 
 	if line == "/compact" || strings.HasPrefix(line, "/compact ") {
 		if sessionPath == "" {
@@ -857,7 +911,7 @@ func handleChatCommand(cfg cliConfig, line string, sessionPath string,
 		return true, sessionPath
 
 	case "/tools":
-		for _, spec := range tool.DefaultRegistry().Specs() {
+		for _, spec := range registry.Specs() {
 			fmt.Fprintln(stdout, spec.Name)
 		}
 
@@ -1189,9 +1243,14 @@ func parseToolFlags(args []string, stderr io.Writer) (cliConfig, error) {
 	if len(args) == 0 {
 		return cliConfig{}, fmt.Errorf("provide a tool name")
 	}
+	defaults, err := loadConfigDefaults()
+	if err != nil {
+		return cliConfig{}, err
+	}
 	cfg := cliConfig{
 		command:  commandTool,
 		toolName: args[0],
+		plugins:  defaults.Plugins,
 	}
 	fs := flag.NewFlagSet(
 		commandTool+" "+cfg.toolName, flag.ContinueOnError,
@@ -1231,6 +1290,10 @@ func parseToolFlags(args []string, stderr io.Writer) (cliConfig, error) {
 	fs.BoolVar(
 		&cfg.toolDryRun, "dry-run", false,
 		"preview edit changes without modifying files",
+	)
+	fs.StringVar(
+		&cfg.toolRawArguments, "args", "",
+		"raw JSON object arguments for plugin tools",
 	)
 	if err := fs.Parse(args[1:]); err != nil {
 		return cliConfig{}, err
@@ -1298,7 +1361,25 @@ func parseToolFlags(args []string, stderr io.Writer) (cliConfig, error) {
 		cfg.toolCommand = strings.Join(fs.Args(), " ")
 
 	default:
-		return cliConfig{}, fmt.Errorf("unknown tool %q", cfg.toolName)
+		if cfg.toolRawArguments != "" && fs.NArg() != 0 {
+			return cliConfig{}, fmt.Errorf("plugin tool %s "+
+				"accepts --args or one positional JSON "+
+				"argument, not both", cfg.toolName)
+		}
+		switch fs.NArg() {
+		case 0:
+			if cfg.toolRawArguments == "" {
+				cfg.toolRawArguments = "{}"
+			}
+
+		case 1:
+			cfg.toolRawArguments = fs.Arg(0)
+
+		default:
+			return cliConfig{}, fmt.Errorf("plugin tool %s "+
+				"accepts at most one positional JSON argument",
+				cfg.toolName)
+		}
 	}
 
 	return cfg, nil
@@ -1433,8 +1514,28 @@ func toolArguments(cfg cliConfig) (string, error) {
 		return string(encoded), nil
 
 	default:
-		return "", fmt.Errorf("unknown tool %q", cfg.toolName)
+		raw := strings.TrimSpace(cfg.toolRawArguments)
+		if raw == "" {
+			raw = "{}"
+		}
+		if err := validateRawJSONObject(raw); err != nil {
+			return "", fmt.Errorf("plugin tool %s arguments: %w",
+				cfg.toolName, err)
+		}
+
+		return raw, nil
 	}
+}
+
+// validateRawJSONObject ensures direct plugin tool arguments are an object.
+func validateRawJSONObject(raw string) error {
+	var value map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &value); err != nil ||
+		value == nil {
+		return fmt.Errorf("must be a JSON object")
+	}
+
+	return nil
 }
 
 // parseChatFlags converts chat subcommand flags into configuration.
@@ -1463,6 +1564,7 @@ func parseChatFlags(args []string, stderr io.Writer) (cliConfig, error) {
 		keepRecentTokens:  configKeepRecentTokens(defaults),
 		baseURLExplicit:   baseURLExplicit,
 		hooks:             defaults.Hooks,
+		plugins:           defaults.Plugins,
 	}
 	fs := flag.NewFlagSet(commandChat, flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -1553,6 +1655,7 @@ func parseCompactFlags(args []string, stderr io.Writer) (cliConfig, error) {
 		keepRecentTokens:  configKeepRecentTokens(defaults),
 		baseURLExplicit:   baseURLExplicit,
 		hooks:             defaults.Hooks,
+		plugins:           defaults.Plugins,
 	}
 	fs := flag.NewFlagSet(commandCompact, flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -1628,6 +1731,7 @@ func parseRunFlags(args []string, stderr io.Writer) (cliConfig, error) {
 		maxToolRounds:     configMaxToolRounds(defaults),
 		baseURLExplicit:   baseURLExplicit,
 		hooks:             defaults.Hooks,
+		plugins:           defaults.Plugins,
 	}
 	fs := flag.NewFlagSet("harness", flag.ContinueOnError)
 	fs.SetOutput(stderr)

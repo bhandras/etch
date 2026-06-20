@@ -45,6 +45,7 @@ Harness currently has:
   `bash`, including dry-run previews for exact replacement edits
 - external process hooks for session, turn, prompt, context, tool, and
   compaction events
+- explicit config-based stdio plugin tools over a small JSONL protocol
 - human-readable tool call and tool result rendering, including colored live
   diffs for file edits and replacements
 
@@ -158,7 +159,7 @@ OAuth mode defaults to the Codex backend and the Responses API shape. Explicit
 `--base-url`, `--openai-api`, or `.harness/config.toml` settings override those
 OAuth defaults.
 
-## Configuration and Hooks
+## Configuration, Hooks, and Plugins
 
 Configure project defaults:
 
@@ -202,6 +203,31 @@ Supported hook events are `SessionStart`, `UserPromptSubmit`, `TurnStart`,
 `TurnComplete`, `ContextBuild`, `PreToolUse`, `PostToolUse`, `PreCompact`, and
 `PostCompact`. See [sample-config.toml](sample-config.toml) for matchers,
 execution order, payloads, and result shapes.
+
+Plugins are also configured explicitly. Harness does not auto-discover project
+executables. Each enabled plugin is a child process that speaks JSONL over
+stdin/stdout and can register model-callable tools:
+
+```toml
+[[plugins]]
+name = "example"
+command = "go run ./plugins/example/main.go"
+timeout_seconds = 30
+disabled = false
+```
+
+The first plugin protocol supports `initialize` and `tool.execute` requests.
+Plugin tools appear in the same tool list as built-ins, and their results are
+stored as ordinary `message.tool` session events.
+
+The repository includes a dependency-free example plugin at `plugins/example`.
+It exposes `plugin_echo` for smoke testing and `project_files` for a small
+filesystem summary:
+
+```bash
+go run ./cmd/harness tool plugin_echo --args '{"text":"hello"}'
+go run ./cmd/harness tool project_files --args '{"path":".","limit":200}'
+```
 
 ## Sessions and Chat Commands
 

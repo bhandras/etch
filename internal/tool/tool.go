@@ -51,6 +51,12 @@ type Tool interface {
 	Execute(ctx context.Context, arguments string) (Result, error)
 }
 
+// CallExecutor executes a tool with access to the complete model call.
+type CallExecutor interface {
+	// ExecuteCall runs the tool with the provider-assigned call metadata.
+	ExecuteCall(ctx context.Context, call model.ToolCall) (Result, error)
+}
+
 // Registry stores builtin tools by name and dispatches model tool calls.
 type Registry struct {
 	tools map[string]Tool
@@ -82,6 +88,13 @@ func (r *Registry) Register(tool Tool) {
 	r.tools[tool.Spec().Name] = tool
 }
 
+// Has reports whether a model-facing tool name is already registered.
+func (r *Registry) Has(name string) bool {
+	_, ok := r.tools[name]
+
+	return ok
+}
+
 // Specs returns deterministic model-facing tool schemas.
 func (r *Registry) Specs() []model.ToolSpec {
 	specs := make([]model.ToolSpec, 0, len(r.tools))
@@ -102,6 +115,10 @@ func (r *Registry) Execute(ctx context.Context, call model.ToolCall) (Result,
 	tool, ok := r.tools[call.Name]
 	if !ok {
 		return Result{}, fmt.Errorf("unknown tool %q", call.Name)
+	}
+
+	if executor, ok := tool.(CallExecutor); ok {
+		return executor.ExecuteCall(ctx, call)
 	}
 
 	return tool.Execute(ctx, call.Arguments)

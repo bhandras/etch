@@ -40,6 +40,16 @@ event = "PostToolUse"
 matcher = "*"
 command = 'cat'
 disabled = true
+
+[[plugins]]
+name = "git"
+command = ".harness/plugins/git"
+timeout_seconds = 5
+
+[[plugins]]
+name = "disabled"
+command = "exit 1"
+disabled = true
 `)
 	if err != nil {
 		t.Fatalf("parse config: %v", err)
@@ -74,6 +84,18 @@ disabled = true
 	}
 	if cfg.Hooks[1].Event != "PostToolUse" || !cfg.Hooks[1].Disabled {
 		t.Fatalf("unexpected second hook: %#v", cfg.Hooks[1])
+	}
+	if len(cfg.Plugins) != 2 {
+		t.Fatalf("expected two plugins, got %d", len(cfg.Plugins))
+	}
+	if cfg.Plugins[0].Name != "git" ||
+		cfg.Plugins[0].Command != ".harness/plugins/git" ||
+		cfg.Plugins[0].TimeoutSeconds != 5 {
+
+		t.Fatalf("unexpected first plugin: %#v", cfg.Plugins[0])
+	}
+	if cfg.Plugins[1].Name != "disabled" || !cfg.Plugins[1].Disabled {
+		t.Fatalf("unexpected second plugin: %#v", cfg.Plugins[1])
 	}
 }
 

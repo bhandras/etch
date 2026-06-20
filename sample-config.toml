@@ -266,3 +266,54 @@
 # [[hooks.PostCompact]]
 # matcher = "manual"
 # command = ".harness/hooks/after-compact.sh"
+
+# Plugins are explicit child processes. Harness does not auto-discover or run
+# project executables. Each enabled plugin is started through the platform shell
+# from the current project working directory, then speaks JSONL requests and
+# responses over stdin/stdout. Stderr is diagnostic text only.
+#
+# The first plugin protocol version exposes tools. On startup Harness sends:
+#
+# {"id":"1","method":"initialize","params":{"protocolVersion":"0.1.0"}}
+#
+# The plugin responds with its display name and model-facing tool schemas:
+#
+# {
+#   "id": "1",
+#   "result": {
+#     "name": "example",
+#     "tools": [{
+#       "name": "example_echo",
+#       "description": "Echo text from an example plugin.",
+#       "parameters": {
+#         "type": "object",
+#         "properties": {"text": {"type": "string"}}
+#       }
+#     }]
+#   }
+# }
+#
+# When the model calls a plugin tool, Harness sends:
+#
+# {
+#   "id": "2",
+#   "method": "tool.execute",
+#   "params": {
+#     "callID": "call_1",
+#     "name": "example_echo",
+#     "arguments": {"text": "hello"}
+#   }
+# }
+#
+# The plugin returns model-visible text content:
+#
+# {
+#   "id": "2",
+#   "result": {"content": [{"type": "text", "text": "hello"}]}
+# }
+#
+# [[plugins]]
+# name = "example"
+# command = "go run ./plugins/example/main.go"
+# timeout_seconds = 30
+# disabled = false

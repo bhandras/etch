@@ -7,6 +7,7 @@ COMMITMSG_DIR := $(TOOLS_DIR)/commitmsg
 LLFORMAT_DIR := $(TOOLS_DIR)/llformat
 LLFORMAT_PKG := github.com/bhandras/llformat/cmd/llformat
 LLFORMAT_BIN := $(CURDIR)/$(LLFORMAT_DIR)/bin/llformat
+EXAMPLE_PLUGIN_DIR := plugins/example
 BINDIR ?= bin
 HARNESS_BIN ?= $(BINDIR)/harness
 
@@ -27,6 +28,7 @@ build:
 
 test:
 	$(GOCC) test ./...
+	cd $(EXAMPLE_PLUGIN_DIR); $(GOCC) test ./...
 
 $(LLFORMAT_BIN): $(LLFORMAT_DIR)/go.mod $(LLFORMAT_DIR)/tools.go
 	@mkdir -p $(LLFORMAT_DIR)/bin
