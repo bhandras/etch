@@ -4,15 +4,17 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
-	"strconv"
+	"path/filepath"
 	"strings"
 	"text/tabwriter"
 	"time"
 
+	openaiauth "harness/internal/auth/openai"
 	harnessconfig "harness/internal/config"
 	"harness/internal/core"
 	"harness/internal/hooks"
@@ -47,8 +49,14 @@ const (
 	// commandCompact summarizes older session history into a context event.
 	commandCompact = "compact"
 
+	// commandAuth manages local OpenAI OAuth credentials.
+	commandAuth = "auth"
+
 	// providerEcho selects the dependency-free deterministic model client.
 	providerEcho = "echo"
+
+	// harnessUserAgent identifies this CLI on provider HTTP requests.
+	harnessUserAgent = "harness"
 )
 
 // cliConfig stores parsed command-line options for one invocation.
@@ -63,8 +71,10 @@ type cliConfig struct {
 	baseURL             string
 	apiKey              string
 	openaiAPI           string
+	openaiAPIExplicit   bool
 	reasoningEffort     string
 	reasoningSummary    string
+	baseURLExplicit     bool
 	toolName            string
 	toolPath            string
 	toolCommand         string
@@ -83,6 +93,11 @@ type cliConfig struct {
 	keepRecentTokens    int
 	compactInstructions string
 	maxToolRounds       int
+	authAction          string
+	authPath            string
+	authIssuer          string
+	authClientID        string
+	authCodexBaseURL    string
 	hooks               []harnessconfig.HookConfig
 }
 
@@ -119,11 +134,129 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	case commandCompact:
 		return runCompact(cfg, stdout, stderr)
 
+	case commandAuth:
+		return runAuth(cfg, stdout, stderr)
+
 	default:
 		fmt.Fprintf(stderr, "error: unknown command %q\n", cfg.command)
 
 		return 2
 	}
+}
+
+// runAuth executes OpenAI OAuth credential management commands.
+func runAuth(cfg cliConfig, stdout io.Writer, stderr io.Writer) int {
+	path, err := authStorePath(cfg)
+	if err != nil {
+		fmt.Fprintln(stderr, "error:", err)
+
+		return 1
+	}
+	switch cfg.authAction {
+	case "login":
+		creds, err := openaiauth.LoginDevice(
+			context.Background(), authOptions(cfg),
+			func(event openaiauth.LoginProgress) {
+				if event.DeviceCode.UserCode != "" {
+					fmt.Fprintf(
+						stdout, "Open %s\nEnter "+
+							"code %s\n%s\n",
+						event.DeviceCode.VerificationURL,
+						event.DeviceCode.UserCode,
+						"Waiting for authorization...",
+					)
+
+					return
+				}
+				if event.Message != "" {
+					fmt.Fprintln(stdout, event.Message)
+				}
+			},
+		)
+		if err != nil {
+			fmt.Fprintln(stderr, "error:", err)
+
+			return 1
+		}
+		if err := openaiauth.Save(path, creds); err != nil {
+			fmt.Fprintln(stderr, "error:", err)
+
+			return 1
+		}
+		fmt.Fprintf(
+			stdout, "saved OpenAI OAuth credentials to %s\n", path,
+		)
+
+		return 0
+
+	case "status":
+		return runAuthStatus(path, stdout, stderr)
+
+	case "logout":
+		removed, err := openaiauth.Logout(path)
+		if err != nil {
+			fmt.Fprintln(stderr, "error:", err)
+
+			return 1
+		}
+		if removed {
+			fmt.Fprintf(
+				stdout, "removed OpenAI OAuth credentials "+
+					"from %s\n", path,
+			)
+		} else {
+			fmt.Fprintln(
+				stdout, "no OpenAI OAuth credentials found",
+			)
+		}
+
+		return 0
+
+	default:
+		fmt.Fprintf(
+			stderr, "error: unknown auth action %q\n",
+			cfg.authAction,
+		)
+
+		return 2
+	}
+}
+
+// runAuthStatus renders non-secret OpenAI authentication state.
+func runAuthStatus(path string, stdout io.Writer, stderr io.Writer) int {
+	fmt.Fprintln(stdout, "OpenAI Auth")
+	if openaiauth.AccessTokenFromEnv() != "" {
+		fmt.Fprintln(stdout, "- env token: CODEX_ACCESS_TOKEN")
+	} else {
+		fmt.Fprintln(stdout, "- env token: not set")
+	}
+
+	creds, err := openaiauth.Load(path)
+	if err != nil {
+		if errors.Is(err, openaiauth.ErrNotLoggedIn) {
+			fmt.Fprintln(stdout, "- stored login: not found")
+
+			return 0
+		}
+		fmt.Fprintln(stderr, "error:", err)
+
+		return 1
+	}
+	email, accountID := openaiauth.ParseChatGPTClaims(creds.Tokens.IDToken)
+	fmt.Fprintln(stdout, "- stored login: ChatGPT/Codex OAuth")
+	fmt.Fprintf(stdout, "- auth file: %s\n", path)
+	fmt.Fprintf(stdout, "- backend: %s\n", creds.CodexBaseURL)
+	if email != "" {
+		fmt.Fprintf(stdout, "- email: %s\n", email)
+	}
+	if accountID == "" {
+		accountID = creds.Tokens.AccountID
+	}
+	if accountID != "" {
+		fmt.Fprintf(stdout, "- account: %s\n", accountID)
+	}
+
+	return 0
 }
 
 // runPrompt executes the default non-interactive prompt path.
@@ -797,10 +930,87 @@ func parseFlags(args []string, stderr io.Writer) (cliConfig, error) {
 
 		case commandCompact:
 			return parseCompactFlags(args[1:], stderr)
+
+		case commandAuth:
+			return parseAuthFlags(args[1:], stderr)
 		}
 	}
 
 	return parseRunFlags(args, stderr)
+}
+
+// parseAuthFlags converts auth subcommands into credential management config.
+func parseAuthFlags(args []string, stderr io.Writer) (cliConfig, error) {
+	if len(args) == 0 {
+		return cliConfig{}, fmt.Errorf("auth requires login, status, " +
+			"or logout")
+	}
+	cfg := cliConfig{
+		command:           commandAuth,
+		authAction:        args[0],
+		authIssuer:        openaiauth.DefaultIssuer,
+		authClientID:      openaiauth.DefaultClientID,
+		authCodexBaseURL:  openaiauth.DefaultCodexBaseURL,
+		baseURL:           openai.DefaultBaseURL,
+		openaiAPI:         openai.APIResponses,
+		openaiAPIExplicit: true,
+	}
+	fs := flag.NewFlagSet(
+		commandAuth+" "+cfg.authAction, flag.ContinueOnError,
+	)
+	fs.SetOutput(stderr)
+	fs.StringVar(
+		&cfg.authPath, "auth-file", "", "OpenAI OAuth credential file",
+	)
+	fs.StringVar(
+		&cfg.authIssuer, "issuer", cfg.authIssuer,
+		"OpenAI OAuth issuer URL",
+	)
+	fs.StringVar(
+		&cfg.authClientID, "client-id", cfg.authClientID,
+		"OpenAI OAuth client id",
+	)
+	fs.StringVar(
+		&cfg.authCodexBaseURL, "codex-base-url", cfg.authCodexBaseURL,
+		"OpenAI Codex backend URL for OAuth tokens",
+	)
+	if err := fs.Parse(args[1:]); err != nil {
+		return cliConfig{}, err
+	}
+	if fs.NArg() != 0 {
+		return cliConfig{}, fmt.Errorf("auth %s accepts no positional "+
+			"arguments", cfg.authAction)
+	}
+	switch cfg.authAction {
+	case "login", "status", "logout":
+		return cfg, nil
+
+	default:
+		return cliConfig{}, fmt.Errorf("auth requires login, status, " +
+			"or logout")
+	}
+}
+
+// authStorePath returns the active OpenAI OAuth credential file path.
+func authStorePath(cfg cliConfig) (string, error) {
+	if cfg.authPath != "" {
+		return filepath.Abs(cfg.authPath)
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("get working directory: %w", err)
+	}
+
+	return openaiauth.DefaultStorePath(cwd)
+}
+
+// authOptions converts CLI auth flags into provider-specific OAuth options.
+func authOptions(cfg cliConfig) openaiauth.Options {
+	return openaiauth.Options{
+		Issuer:       cfg.authIssuer,
+		ClientID:     cfg.authClientID,
+		CodexBaseURL: cfg.authCodexBaseURL,
+	}
 }
 
 // parseToolFlags converts tool subcommand arguments into configuration.
@@ -1062,45 +1272,26 @@ func parseChatFlags(args []string, stderr io.Writer) (cliConfig, error) {
 	if err != nil {
 		return cliConfig{}, err
 	}
+	baseURLExplicit := defaults.OpenAI.BaseURL != ""
+	openaiAPIExplicit := defaults.OpenAI.API != ""
 	cfg := cliConfig{
-		command:    commandChat,
-		sessionDir: configSessionDir(defaults),
-		provider: envDefault(
-			"HARNESS_PROVIDER", configProvider(defaults),
-		),
-		model: envDefault("OPENAI_MODEL", defaults.Provider.Model),
-		baseURL: envDefault(
-			"OPENAI_BASE_URL", configOpenAIBaseURL(defaults),
-		),
-		apiKey: os.Getenv("OPENAI_API_KEY"),
-		openaiAPI: envDefault(
-			"HARNESS_OPENAI_API", configOpenAIAPI(defaults),
-		),
-		reasoningEffort: envDefault(
-			"OPENAI_REASONING_EFFORT",
-			defaults.OpenAI.ReasoningEffort,
-		),
-		reasoningSummary: envDefault(
-			"OPENAI_REASONING_SUMMARY",
-			defaults.OpenAI.ReasoningSummary,
-		),
-		maxToolRounds: envIntDefault(
-			"HARNESS_MAX_TOOL_ROUNDS",
-			configMaxToolRounds(defaults),
-		),
-		autoCompact: envBoolDefault(
-			"HARNESS_AUTO_COMPACT", defaults.Context.AutoCompact,
-		),
-		autoCompactLimit: envIntDefault(
-			"HARNESS_AUTO_COMPACT_THRESHOLD_TOKENS",
-			configAutoCompactThreshold(defaults),
-		),
-		keepMessages: configKeepMessages(defaults),
-		keepRecentTokens: envIntDefault(
-			"HARNESS_KEEP_RECENT_TOKENS",
-			configKeepRecentTokens(defaults),
-		),
-		hooks: defaults.Hooks,
+		command:           commandChat,
+		sessionDir:        configSessionDir(defaults),
+		provider:          configProvider(defaults),
+		model:             defaults.Provider.Model,
+		baseURL:           configOpenAIBaseURL(defaults),
+		apiKey:            apiKeyFromEnv(),
+		openaiAPI:         configOpenAIAPI(defaults),
+		openaiAPIExplicit: openaiAPIExplicit,
+		reasoningEffort:   defaults.OpenAI.ReasoningEffort,
+		reasoningSummary:  defaults.OpenAI.ReasoningSummary,
+		maxToolRounds:     configMaxToolRounds(defaults),
+		autoCompact:       defaults.Context.AutoCompact,
+		autoCompactLimit:  configAutoCompactThreshold(defaults),
+		keepMessages:      configKeepMessages(defaults),
+		keepRecentTokens:  configKeepRecentTokens(defaults),
+		baseURLExplicit:   baseURLExplicit,
+		hooks:             defaults.Hooks,
 	}
 	fs := flag.NewFlagSet(commandChat, flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -1160,6 +1351,9 @@ func parseChatFlags(args []string, stderr io.Writer) (cliConfig, error) {
 		return cliConfig{}, fmt.Errorf("keep-recent-tokens must be " +
 			"positive")
 	}
+	cfg.baseURLExplicit = cfg.baseURLExplicit || flagWasSet(fs, "base-url")
+	cfg.openaiAPIExplicit = cfg.openaiAPIExplicit ||
+		flagWasSet(fs, "openai-api")
 	applyAPIKeyFlag(&cfg, *apiKeyFlag)
 
 	return cfg, nil
@@ -1171,34 +1365,23 @@ func parseCompactFlags(args []string, stderr io.Writer) (cliConfig, error) {
 	if err != nil {
 		return cliConfig{}, err
 	}
+	baseURLExplicit := defaults.OpenAI.BaseURL != ""
+	openaiAPIExplicit := defaults.OpenAI.API != ""
 	cfg := cliConfig{
-		command:    commandCompact,
-		sessionDir: configSessionDir(defaults),
-		provider: envDefault(
-			"HARNESS_PROVIDER", configProvider(defaults),
-		),
-		model: envDefault("OPENAI_MODEL", defaults.Provider.Model),
-		baseURL: envDefault(
-			"OPENAI_BASE_URL", configOpenAIBaseURL(defaults),
-		),
-		apiKey: os.Getenv("OPENAI_API_KEY"),
-		openaiAPI: envDefault(
-			"HARNESS_OPENAI_API", configOpenAIAPI(defaults),
-		),
-		reasoningEffort: envDefault(
-			"OPENAI_REASONING_EFFORT",
-			defaults.OpenAI.ReasoningEffort,
-		),
-		reasoningSummary: envDefault(
-			"OPENAI_REASONING_SUMMARY",
-			defaults.OpenAI.ReasoningSummary,
-		),
-		keepMessages: configKeepMessages(defaults),
-		keepRecentTokens: envIntDefault(
-			"HARNESS_KEEP_RECENT_TOKENS",
-			configKeepRecentTokens(defaults),
-		),
-		hooks: defaults.Hooks,
+		command:           commandCompact,
+		sessionDir:        configSessionDir(defaults),
+		provider:          configProvider(defaults),
+		model:             defaults.Provider.Model,
+		baseURL:           configOpenAIBaseURL(defaults),
+		apiKey:            apiKeyFromEnv(),
+		openaiAPI:         configOpenAIAPI(defaults),
+		openaiAPIExplicit: openaiAPIExplicit,
+		reasoningEffort:   defaults.OpenAI.ReasoningEffort,
+		reasoningSummary:  defaults.OpenAI.ReasoningSummary,
+		keepMessages:      configKeepMessages(defaults),
+		keepRecentTokens:  configKeepRecentTokens(defaults),
+		baseURLExplicit:   baseURLExplicit,
+		hooks:             defaults.Hooks,
 	}
 	fs := flag.NewFlagSet(commandCompact, flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -1244,6 +1427,9 @@ func parseCompactFlags(args []string, stderr io.Writer) (cliConfig, error) {
 		return cliConfig{}, fmt.Errorf("keep-recent-tokens must be " +
 			"positive")
 	}
+	cfg.baseURLExplicit = cfg.baseURLExplicit || flagWasSet(fs, "base-url")
+	cfg.openaiAPIExplicit = cfg.openaiAPIExplicit ||
+		flagWasSet(fs, "openai-api")
 	applyAPIKeyFlag(&cfg, *apiKeyFlag)
 
 	return cfg, nil
@@ -1255,33 +1441,22 @@ func parseRunFlags(args []string, stderr io.Writer) (cliConfig, error) {
 	if err != nil {
 		return cliConfig{}, err
 	}
+	baseURLExplicit := defaults.OpenAI.BaseURL != ""
+	openaiAPIExplicit := defaults.OpenAI.API != ""
 	cfg := cliConfig{
-		command:    commandRun,
-		sessionDir: configSessionDir(defaults),
-		provider: envDefault(
-			"HARNESS_PROVIDER", configProvider(defaults),
-		),
-		model: envDefault("OPENAI_MODEL", defaults.Provider.Model),
-		baseURL: envDefault(
-			"OPENAI_BASE_URL", configOpenAIBaseURL(defaults),
-		),
-		apiKey: os.Getenv("OPENAI_API_KEY"),
-		openaiAPI: envDefault(
-			"HARNESS_OPENAI_API", configOpenAIAPI(defaults),
-		),
-		reasoningEffort: envDefault(
-			"OPENAI_REASONING_EFFORT",
-			defaults.OpenAI.ReasoningEffort,
-		),
-		reasoningSummary: envDefault(
-			"OPENAI_REASONING_SUMMARY",
-			defaults.OpenAI.ReasoningSummary,
-		),
-		maxToolRounds: envIntDefault(
-			"HARNESS_MAX_TOOL_ROUNDS",
-			configMaxToolRounds(defaults),
-		),
-		hooks: defaults.Hooks,
+		command:           commandRun,
+		sessionDir:        configSessionDir(defaults),
+		provider:          configProvider(defaults),
+		model:             defaults.Provider.Model,
+		baseURL:           configOpenAIBaseURL(defaults),
+		apiKey:            apiKeyFromEnv(),
+		openaiAPI:         configOpenAIAPI(defaults),
+		openaiAPIExplicit: openaiAPIExplicit,
+		reasoningEffort:   defaults.OpenAI.ReasoningEffort,
+		reasoningSummary:  defaults.OpenAI.ReasoningSummary,
+		maxToolRounds:     configMaxToolRounds(defaults),
+		baseURLExplicit:   baseURLExplicit,
+		hooks:             defaults.Hooks,
 	}
 	fs := flag.NewFlagSet("harness", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -1318,6 +1493,9 @@ func parseRunFlags(args []string, stderr io.Writer) (cliConfig, error) {
 	if cfg.prompt == "" {
 		return cliConfig{}, fmt.Errorf("provide a prompt with -p")
 	}
+	cfg.baseURLExplicit = cfg.baseURLExplicit || flagWasSet(fs, "base-url")
+	cfg.openaiAPIExplicit = cfg.openaiAPIExplicit ||
+		flagWasSet(fs, "openai-api")
 	applyAPIKeyFlag(&cfg, *apiKeyFlag)
 
 	return cfg, nil
@@ -1326,13 +1504,25 @@ func parseRunFlags(args []string, stderr io.Writer) (cliConfig, error) {
 // apiKeyFlagValue registers the API key flag without exposing env defaults.
 func apiKeyFlagValue(fs *flag.FlagSet) *string {
 	value := ""
-	fs.StringVar(&value, "api-key", "", "OpenAI API key")
+	fs.StringVar(&value, "api-key", "", "OpenAI-compatible API key")
 
 	return &value
 }
 
+// apiKeyFromEnv returns the configured OpenAI-compatible API key fallback.
+func apiKeyFromEnv() string {
+	if value := os.Getenv("OPENAI_API_KEY"); value != "" {
+		return value
+	}
+
+	return os.Getenv("OPENROUTER_API_KEY")
+}
+
 // addOpenAIFlags registers provider-specific OpenAI controls.
 func addOpenAIFlags(fs *flag.FlagSet, cfg *cliConfig) {
+	fs.StringVar(
+		&cfg.authPath, "auth-file", "", "OpenAI OAuth credential file",
+	)
 	fs.StringVar(
 		&cfg.openaiAPI, "openai-api", cfg.openaiAPI,
 		"OpenAI API shape: chat or responses",
@@ -1356,6 +1546,18 @@ func applyAPIKeyFlag(cfg *cliConfig, apiKey string) {
 	}
 }
 
+// flagWasSet reports whether fs parsed a flag explicitly from the CLI.
+func flagWasSet(fs *flag.FlagSet, name string) bool {
+	wasSet := false
+	fs.Visit(func(flag *flag.Flag) {
+		if flag.Name == name {
+			wasSet = true
+		}
+	})
+
+	return wasSet
+}
+
 // modelClient creates the provider selected by run command configuration.
 func modelClient(cfg cliConfig) (model.Client, error) {
 	switch cfg.provider {
@@ -1365,25 +1567,79 @@ func modelClient(cfg cliConfig) (model.Client, error) {
 	case openai.ProviderName:
 		if cfg.model == "" {
 			return nil, fmt.Errorf("openai provider requires " +
-				"--model or OPENAI_MODEL")
+				"--model or provider.model config")
 		}
-		if cfg.apiKey == "" {
+		var oauthErr error
+		token := ""
+		baseURL := openaiauth.DefaultCodexBaseURL
+		creds, err := loadOpenAIOAuthCredentials(cfg)
+		if err == nil {
+			token = creds.Tokens.AccessToken
+			baseURL = creds.CodexBaseURL
+		} else if errors.Is(err, openaiauth.ErrNotLoggedIn) {
+			token = openaiauth.AccessTokenFromEnv()
+		} else {
+			oauthErr = err
+		}
+
+		if token == "" && cfg.apiKey != "" && oauthErr == nil {
+			return &openai.Client{
+				BaseURL:          cfg.baseURL,
+				APIKey:           cfg.apiKey,
+				Model:            cfg.model,
+				API:              cfg.openaiAPI,
+				ReasoningEffort:  cfg.reasoningEffort,
+				ReasoningSummary: cfg.reasoningSummary,
+				UserAgent:        harnessUserAgent,
+			}, nil
+		}
+		if oauthErr != nil {
+			return nil, oauthErr
+		}
+		if token == "" {
 			return nil, fmt.Errorf("openai provider requires " +
-				"--api-key or OPENAI_API_KEY")
+				"harness auth login, CODEX_ACCESS_TOKEN, " +
+				"--api-key, OPENAI_API_KEY, or " +
+				"OPENROUTER_API_KEY")
+		}
+
+		apiMode := cfg.openaiAPI
+		if !cfg.openaiAPIExplicit {
+			apiMode = openai.APIResponses
+		}
+		if cfg.baseURLExplicit {
+			baseURL = cfg.baseURL
 		}
 
 		return &openai.Client{
-			BaseURL:          cfg.baseURL,
-			APIKey:           cfg.apiKey,
+			BaseURL:          baseURL,
+			APIKey:           token,
 			Model:            cfg.model,
-			API:              cfg.openaiAPI,
+			API:              apiMode,
 			ReasoningEffort:  cfg.reasoningEffort,
 			ReasoningSummary: cfg.reasoningSummary,
+			UserAgent:        harnessUserAgent,
 		}, nil
 
 	default:
 		return nil, fmt.Errorf("unknown provider %q", cfg.provider)
 	}
+}
+
+// loadOpenAIOAuthCredentials loads and refreshes stored OAuth credentials.
+func loadOpenAIOAuthCredentials(cfg cliConfig) (openaiauth.Credentials, error) {
+	path, err := authStorePath(cfg)
+	if err != nil {
+		return openaiauth.Credentials{}, err
+	}
+	creds, err := openaiauth.EnsureAccessToken(
+		context.Background(), path, authOptions(cfg),
+	)
+	if err != nil {
+		return openaiauth.Credentials{}, err
+	}
+
+	return creds, nil
 }
 
 // loadConfigDefaults loads project TOML defaults for commands that honor them.
@@ -1476,43 +1732,6 @@ func autoCompactThreshold(cfg cliConfig) int {
 	}
 
 	return cfg.autoCompactLimit
-}
-
-// envDefault returns an environment value or fallback when the value is unset.
-func envDefault(name string, fallback string) string {
-	if value := os.Getenv(name); value != "" {
-		return value
-	}
-
-	return fallback
-}
-
-// envBoolDefault returns a boolean environment value or fallback.
-func envBoolDefault(name string, fallback bool) bool {
-	value := os.Getenv(name)
-	if value == "" {
-		return fallback
-	}
-	parsed, err := strconv.ParseBool(value)
-	if err != nil {
-		return fallback
-	}
-
-	return parsed
-}
-
-// envIntDefault returns a positive integer environment value or fallback.
-func envIntDefault(name string, fallback int) int {
-	value := os.Getenv(name)
-	if value == "" {
-		return fallback
-	}
-	parsed, err := strconv.Atoi(value)
-	if err != nil || parsed < 1 {
-		return fallback
-	}
-
-	return parsed
 }
 
 // parseSessionsFlags converts sessions subcommand flags into configuration.

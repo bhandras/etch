@@ -31,7 +31,8 @@ Harness currently has:
 
 - a line-oriented CLI chat loop
 - local JSONL session logs under `.harness/sessions/`
-- OpenAI-compatible streaming through the standard library
+- OpenAI-compatible streaming through the standard library, including Platform
+  API keys, `CODEX_ACCESS_TOKEN`, and ChatGPT/Codex OAuth login
 - project-local TOML config from `.harness/config.toml`
 - pinned project context from `SYSTEM.md` and `AGENTS.md`
 - Agent Skills-style discovery from `.harness/skills/*/SKILL.md` and
@@ -67,6 +68,35 @@ OPENAI_API_KEY=... go run ./cmd/harness chat \
   --model gpt-4.1-mini
 ```
 
+Use OpenRouter through the same OpenAI-compatible provider:
+
+```bash
+OPENROUTER_API_KEY=... go run ./cmd/harness chat \
+  --provider openai \
+  --base-url https://openrouter.ai/api/v1 \
+  --model openai/gpt-4.1-mini
+```
+
+Sign in with ChatGPT/Codex OAuth and use subscription-backed access:
+
+```bash
+go run ./cmd/harness auth login
+go run ./cmd/harness chat \
+  --provider openai \
+  --model gpt-5.5
+```
+
+Check or remove local OAuth credentials:
+
+```bash
+go run ./cmd/harness auth status
+go run ./cmd/harness auth logout
+```
+
+When a local OAuth login exists, Harness prefers it over API-key environment
+variables. API keys are used as fallbacks when no stored OAuth login is
+available.
+
 Run chat with OpenAI reasoning summaries when the selected model supports them:
 
 ```bash
@@ -95,8 +125,8 @@ cp sample-config.toml .harness/config.toml
 
 `sample-config.toml` documents every supported key. The CLI reads the nearest
 `.harness/config.toml` from the current directory or an ancestor. Config values
-are defaults only: environment variables override config, and explicit CLI flags
-override both.
+are defaults only: explicit CLI flags override them. Credential environment
+variables are read separately for API keys and access tokens.
 
 Hooks are configured under `[hooks]` in the same TOML file. A hook is an
 external shell command that receives a JSON event envelope on stdin and may

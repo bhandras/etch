@@ -99,8 +99,7 @@ The loop uses a configurable safety bound rather than a tiny fixed ceiling.
 `DefaultMaxToolRounds` is 32 model/tool exchange rounds per user turn. A round
 is one model response followed by zero or more requested tool executions, so it
 is not the same as an individual tool-call count. CLI callers can raise or
-lower the bound with `--max-tool-rounds`, or set `HARNESS_MAX_TOOL_ROUNDS` for
-the process environment.
+lower the bound with `--max-tool-rounds` or `.harness/config.toml`.
 
 Pi appears to treat tool use as part of the broader agent lifecycle: it tracks
 tool calls for session statistics and relies on stop reasons, cancellation,
@@ -223,11 +222,11 @@ OPENAI_API_KEY=unused go run ./cmd/harness \
   -p "say hello"
 ```
 
-The CLI also reads `HARNESS_PROVIDER`, `HARNESS_OPENAI_API`, `OPENAI_MODEL`,
-`OPENAI_BASE_URL`, `OPENAI_API_KEY`, `OPENAI_REASONING_EFFORT`, and
-`OPENAI_REASONING_SUMMARY`. Codex OAuth and token refresh remain separate future
-auth work; this step only proves the provider HTTP stream behind the existing
-model interface.
+The CLI reads credential material from `OPENAI_API_KEY`,
+`OPENROUTER_API_KEY`, and `CODEX_ACCESS_TOKEN`. Non-secret settings such as
+provider, model, base URL, reasoning options, and context limits are configured
+through flags or `.harness/config.toml`. Stored Codex OAuth credentials are
+loaded from `.harness/auth/openai.json` when available.
 
 ## Configuration
 
@@ -242,9 +241,11 @@ The precedence order is:
 ```text
 compiled defaults
 .harness/config.toml
-environment variables
 explicit CLI flags
 ```
+
+Credentials are the exception: API keys and access tokens come from explicit
+flags or credential environment variables instead of TOML.
 
 The current config tables are:
 
@@ -450,26 +451,42 @@ next prompt projection contains.
 OpenAI support is bundled, not a third-party plugin. It is the main dogfooding
 path.
 
-The built-in OpenAI provider should support:
+The built-in OpenAI provider supports:
 
 ```text
 openai-codex-oauth
-  ChatGPT Plus/Pro/Business/Enterprise subscription auth through the Codex-style
-  browser or device flow.
+  ChatGPT Plus/Pro/Business/Enterprise subscription auth through a
+  Codex-style device flow. `harness auth login` stores credentials in
+  `.harness/auth/openai.json`.
 
 openai-api-key
-  Platform API key auth through OPENAI_API_KEY or stored credentials.
+  Platform or OpenAI-compatible API key auth through `OPENAI_API_KEY`,
+  `OPENROUTER_API_KEY`, or `--api-key`.
 
 openai-codex-token
-  CODEX_ACCESS_TOKEN or an explicitly imported Codex-compatible token.
+  Codex-compatible bearer token auth through `CODEX_ACCESS_TOKEN`.
 
 codex-cli-import
-  Explicit import from an existing Codex CLI auth cache when available.
+  Explicit import from an existing Codex CLI auth cache. This remains future
+  work.
 ```
 
 These modes must stay distinct. API-key usage follows Platform billing and
 Platform organization policy. Codex OAuth usage follows the user's ChatGPT or
 workspace Codex entitlement, rate limits, and data controls.
+
+Credential resolution prefers the user's local OAuth login when
+`.harness/auth/openai.json` exists and can be refreshed. If no stored OAuth
+login exists, Harness falls back to `CODEX_ACCESS_TOKEN`, then API-key
+credentials. This makes `harness auth login` the default local identity while
+still allowing OpenAI-compatible providers such as OpenRouter in projects or
+environments without OAuth state.
+
+OAuth mode defaults to the Codex backend at
+`https://chatgpt.com/backend-api/codex` and the Responses API shape. Explicit
+`--base-url` or `.harness/config.toml` settings override that backend for local
+testing and compatible servers. Explicit `--openai-api` or config values
+override the OAuth default API shape.
 
 The UI should always make the active auth mode visible:
 

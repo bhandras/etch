@@ -59,6 +59,9 @@ type Client struct {
 
 	// HTTPClient performs requests; http.DefaultClient is used when nil.
 	HTTPClient *http.Client
+
+	// UserAgent identifies harness to provider backends when non-empty.
+	UserAgent string
 }
 
 // Stream starts a streaming chat completion request and returns model events.
@@ -130,6 +133,7 @@ func (c *Client) newRequest(ctx context.Context, req model.Request) (
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "text/event-stream")
+	c.addCommonHeaders(httpReq)
 	if c.APIKey != "" {
 		httpReq.Header.Set("Authorization", "Bearer "+c.APIKey)
 	}
@@ -144,6 +148,7 @@ func (c *Client) newResponsesRequest(ctx context.Context, req model.Request) (
 	body, err := json.Marshal(responseRequest{
 		Model:        c.Model,
 		Stream:       true,
+		Store:        false,
 		Instructions: responseInstructions(req.Messages),
 		Input:        responseInput(req.Messages),
 		Tools:        responseTools(req.Tools),
@@ -166,6 +171,7 @@ func (c *Client) newResponsesRequest(ctx context.Context, req model.Request) (
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "text/event-stream")
+	c.addCommonHeaders(httpReq)
 	if c.APIKey != "" {
 		httpReq.Header.Set("Authorization", "Bearer "+c.APIKey)
 	}
@@ -206,6 +212,13 @@ func (c *Client) endpoint(path string) string {
 	}
 
 	return baseURL + path
+}
+
+// addCommonHeaders applies optional headers shared by OpenAI request shapes.
+func (c *Client) addCommonHeaders(req *http.Request) {
+	if c.UserAgent != "" {
+		req.Header.Set("User-Agent", c.UserAgent)
+	}
 }
 
 // streamChatCompletions decodes Chat Completions SSE into neutral events.
@@ -686,6 +699,9 @@ type responseRequest struct {
 
 	// Stream enables server-sent event output.
 	Stream bool `json:"stream"`
+
+	// Store disables provider-side response storage when false.
+	Store bool `json:"store"`
 
 	// Instructions stores system-level guidance for the response.
 	Instructions string `json:"instructions,omitempty"`

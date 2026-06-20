@@ -1,8 +1,8 @@
 # Harness sample configuration.
 #
 # Copy this file to .harness/config.toml inside a project and uncomment the
-# values you want to set. Explicit CLI flags override this file. Environment
-# variables override this file before CLI flags are applied.
+# values you want to set. Explicit CLI flags override this file. Credential
+# environment variables are read separately for API keys and access tokens.
 
 [session]
 # Directory for JSONL session logs.

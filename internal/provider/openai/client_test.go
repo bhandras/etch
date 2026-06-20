@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -232,12 +233,18 @@ func TestClientStreamsChatReasoning(t *testing.T) {
 // text, and function calls are converted into neutral events.
 func TestClientStreamsResponsesAPI(t *testing.T) {
 	var gotPath string
+	var gotBody string
 	var gotRequest responseRequest
 	server := httptest.NewServer(
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			gotPath = r.URL.Path
-			if err := json.NewDecoder(r.Body).Decode(
-				&gotRequest,
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			gotBody = string(body)
+			if err := json.Unmarshal(
+				body, &gotRequest,
 			); err != nil {
 
 				t.Fatal(err)
@@ -304,6 +311,12 @@ func TestClientStreamsResponsesAPI(t *testing.T) {
 	}
 	if gotRequest.Instructions != "rules" {
 		t.Fatalf("unexpected instructions: %q", gotRequest.Instructions)
+	}
+	if gotRequest.Store {
+		t.Fatal("expected response storage to be disabled")
+	}
+	if !strings.Contains(gotBody, `"store":false`) {
+		t.Fatalf("request omitted explicit store false: %s", gotBody)
 	}
 	if gotRequest.Reasoning == nil ||
 		gotRequest.Reasoning.Effort != "medium" ||
