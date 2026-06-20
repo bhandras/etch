@@ -53,35 +53,37 @@ const (
 
 // cliConfig stores parsed command-line options for one invocation.
 type cliConfig struct {
-	command          string
-	prompt           string
-	sessionDir       string
-	jsonOutput       bool
-	sessionID        string
-	provider         string
-	model            string
-	baseURL          string
-	apiKey           string
-	openaiAPI        string
-	reasoningEffort  string
-	reasoningSummary string
-	toolName         string
-	toolPath         string
-	toolCommand      string
-	toolContent      string
-	toolOldText      string
-	toolNewText      string
-	toolQuery        string
-	toolOffset       int
-	toolLimit        int
-	toolTimeout      int
-	toolIgnoreCase   bool
-	toolDryRun       bool
-	autoCompact      bool
-	autoCompactLimit int
-	keepMessages     int
-	maxToolRounds    int
-	hooks            []harnessconfig.HookConfig
+	command             string
+	prompt              string
+	sessionDir          string
+	jsonOutput          bool
+	sessionID           string
+	provider            string
+	model               string
+	baseURL             string
+	apiKey              string
+	openaiAPI           string
+	reasoningEffort     string
+	reasoningSummary    string
+	toolName            string
+	toolPath            string
+	toolCommand         string
+	toolContent         string
+	toolOldText         string
+	toolNewText         string
+	toolQuery           string
+	toolOffset          int
+	toolLimit           int
+	toolTimeout         int
+	toolIgnoreCase      bool
+	toolDryRun          bool
+	autoCompact         bool
+	autoCompactLimit    int
+	keepMessages        int
+	keepRecentTokens    int
+	compactInstructions string
+	maxToolRounds       int
+	hooks               []harnessconfig.HookConfig
 }
 
 // main runs the command and exits with the returned status code.
@@ -248,11 +250,13 @@ func runCompact(cfg cliConfig, stdout io.Writer, stderr io.Writer) int {
 
 	result, err := core.CompactSession(context.Background(),
 		core.CompactRequest{
-			SessionPath:  entry.Path,
-			Model:        modelClient,
-			KeepMessages: cfg.keepMessages,
-			ModelName:    cfg.model,
-			Hooks:        hookRunner,
+			SessionPath:      entry.Path,
+			Model:            modelClient,
+			KeepMessages:     cfg.keepMessages,
+			KeepRecentTokens: cfg.keepRecentTokens,
+			ModelName:        cfg.model,
+			Instructions:     cfg.compactInstructions,
+			Hooks:            hookRunner,
 		})
 	if err != nil {
 		fmt.Fprintln(stderr, "error:", err)
@@ -353,9 +357,10 @@ func runChat(cfg cliConfig, stdin io.Reader, stdout io.Writer,
 				AutoCompactThresholdTokens: autoCompactThreshold(
 					cfg,
 				),
-				AutoCompactKeepMessages: cfg.keepMessages,
-				Observer:                observer,
-				Hooks:                   hookRunner,
+				AutoCompactKeepMessages:     cfg.keepMessages,
+				AutoCompactKeepRecentTokens: cfg.keepRecentTokens,
+				Observer:                    observer,
+				Hooks:                       hookRunner,
 			},
 		)
 		if err != nil {
@@ -468,6 +473,37 @@ func handleChatCommand(cfg cliConfig, line string, sessionPath string,
 	modelClient model.Client, stdout io.Writer, stderr io.Writer,
 	hookRunner *hooks.Runner) (bool, string) {
 
+	if line == "/compact" || strings.HasPrefix(line, "/compact ") {
+		if sessionPath == "" {
+			fmt.Fprintln(stdout, "no active session")
+
+			return true, sessionPath
+		}
+		result, err := core.CompactSession(context.Background(),
+			core.CompactRequest{
+				SessionPath:      sessionPath,
+				Model:            modelClient,
+				KeepMessages:     cfg.keepMessages,
+				KeepRecentTokens: cfg.keepRecentTokens,
+				ModelName:        cfg.model,
+				Instructions: strings.TrimSpace(
+					strings.TrimPrefix(line, "/compact"),
+				),
+				Hooks: hookRunner,
+			})
+		if err != nil {
+			fmt.Fprintln(stderr, "error:", err)
+
+			return true, sessionPath
+		}
+		fmt.Fprintf(
+			stdout, "compacted context: %s\n",
+			result.SummaryEventID,
+		)
+
+		return true, sessionPath
+	}
+
 	switch line {
 	case "/exit", "/quit":
 		return false, sessionPath
@@ -518,32 +554,6 @@ func handleChatCommand(cfg cliConfig, line string, sessionPath string,
 		if err := printSessionStatus(sessionPath, stdout); err != nil {
 			fmt.Fprintln(stderr, "error:", err)
 		}
-
-		return true, sessionPath
-
-	case "/compact":
-		if sessionPath == "" {
-			fmt.Fprintln(stdout, "no active session")
-
-			return true, sessionPath
-		}
-		result, err := core.CompactSession(context.Background(),
-			core.CompactRequest{
-				SessionPath:  sessionPath,
-				Model:        modelClient,
-				KeepMessages: cfg.keepMessages,
-				ModelName:    cfg.model,
-				Hooks:        hookRunner,
-			})
-		if err != nil {
-			fmt.Fprintln(stderr, "error:", err)
-
-			return true, sessionPath
-		}
-		fmt.Fprintf(
-			stdout, "compacted context: %s\n",
-			result.SummaryEventID,
-		)
 
 		return true, sessionPath
 
@@ -723,12 +733,17 @@ func formatAutoCompactConfig(cfg cliConfig) string {
 	if keepMessages <= 0 {
 		keepMessages = core.DefaultCompactKeepMessages
 	}
+	keepRecentTokens := cfg.keepRecentTokens
+	if keepRecentTokens <= 0 {
+		keepRecentTokens = core.DefaultCompactKeepRecentTokens
+	}
 
 	return fmt.Sprintf("Auto Compact\n"+
 		"- enabled: %s\n"+
 		"- threshold: ~%d tokens\n"+
-		"- keep messages: %d",
-		enabled, threshold, keepMessages)
+		"- keep recent: ~%d tokens\n"+
+		"- fallback keep messages: %d",
+		enabled, threshold, keepRecentTokens, keepMessages)
 }
 
 // printSessionStatus renders durable activity statistics for a session.
@@ -1081,7 +1096,11 @@ func parseChatFlags(args []string, stderr io.Writer) (cliConfig, error) {
 			configAutoCompactThreshold(defaults),
 		),
 		keepMessages: configKeepMessages(defaults),
-		hooks:        defaults.Hooks,
+		keepRecentTokens: envIntDefault(
+			"HARNESS_KEEP_RECENT_TOKENS",
+			configKeepRecentTokens(defaults),
+		),
+		hooks: defaults.Hooks,
 	}
 	fs := flag.NewFlagSet(commandChat, flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -1110,7 +1129,12 @@ func parseChatFlags(args []string, stderr io.Writer) (cliConfig, error) {
 	)
 	fs.IntVar(
 		&cfg.keepMessages, "keep-messages", cfg.keepMessages,
-		"recent message events kept raw by compaction",
+		"fallback message count when token retention is disabled",
+	)
+	fs.IntVar(
+		&cfg.keepRecentTokens, "keep-recent-tokens",
+		cfg.keepRecentTokens,
+		"approximate recent context tokens kept raw by compaction",
 	)
 	fs.BoolVar(
 		&cfg.autoCompact, "auto-compact", cfg.autoCompact,
@@ -1131,6 +1155,10 @@ func parseChatFlags(args []string, stderr io.Writer) (cliConfig, error) {
 	if cfg.autoCompact && cfg.autoCompactLimit < 1 {
 		return cliConfig{}, fmt.Errorf(
 			"auto-compact-threshold-tokens must be positive")
+	}
+	if cfg.keepRecentTokens < 1 {
+		return cliConfig{}, fmt.Errorf("keep-recent-tokens must be " +
+			"positive")
 	}
 	applyAPIKeyFlag(&cfg, *apiKeyFlag)
 
@@ -1166,7 +1194,11 @@ func parseCompactFlags(args []string, stderr io.Writer) (cliConfig, error) {
 			defaults.OpenAI.ReasoningSummary,
 		),
 		keepMessages: configKeepMessages(defaults),
-		hooks:        defaults.Hooks,
+		keepRecentTokens: envIntDefault(
+			"HARNESS_KEEP_RECENT_TOKENS",
+			configKeepRecentTokens(defaults),
+		),
+		hooks: defaults.Hooks,
 	}
 	fs := flag.NewFlagSet(commandCompact, flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -1191,13 +1223,26 @@ func parseCompactFlags(args []string, stderr io.Writer) (cliConfig, error) {
 	apiKeyFlag := apiKeyFlagValue(fs)
 	fs.IntVar(
 		&cfg.keepMessages, "keep-messages", cfg.keepMessages,
-		"recent message events kept raw",
+		"fallback message count when token retention is disabled",
+	)
+	fs.IntVar(
+		&cfg.keepRecentTokens, "keep-recent-tokens",
+		cfg.keepRecentTokens,
+		"approximate recent context tokens kept raw by compaction",
+	)
+	fs.StringVar(
+		&cfg.compactInstructions, "instructions", "",
+		"optional focus instructions for the compaction summary",
 	)
 	if err := fs.Parse(args); err != nil {
 		return cliConfig{}, err
 	}
 	if cfg.sessionID == "" {
 		return cliConfig{}, fmt.Errorf("compact requires --session")
+	}
+	if cfg.keepRecentTokens < 1 {
+		return cliConfig{}, fmt.Errorf("keep-recent-tokens must be " +
+			"positive")
 	}
 	applyAPIKeyFlag(&cfg, *apiKeyFlag)
 
@@ -1404,6 +1449,15 @@ func configKeepMessages(cfg harnessconfig.Config) int {
 	}
 
 	return core.DefaultCompactKeepMessages
+}
+
+// configKeepRecentTokens returns the configured raw retention token budget.
+func configKeepRecentTokens(cfg harnessconfig.Config) int {
+	if cfg.Context.KeepRecentTokens > 0 {
+		return cfg.Context.KeepRecentTokens
+	}
+
+	return core.DefaultCompactKeepRecentTokens
 }
 
 // configAutoCompactThreshold returns the configured auto-compaction threshold.

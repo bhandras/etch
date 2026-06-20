@@ -60,6 +60,10 @@ type ContextConfig struct {
 	// AutoCompactThresholdTokens is the approximate context size that
 	// triggers automatic compaction when AutoCompact is true.
 	AutoCompactThresholdTokens int
+
+	// KeepRecentTokens is the approximate amount of recent raw context to
+	// retain after compaction.
+	KeepRecentTokens int
 }
 
 // ProviderConfig stores provider defaults shared across provider backends.
@@ -400,6 +404,12 @@ func applyContextAssignment(cfg *ContextConfig, key string,
 	case "auto_compact_threshold_tokens":
 		parsed, err := parsePositiveInt(value)
 		cfg.AutoCompactThresholdTokens = parsed
+
+		return err
+
+	case "keep_recent_tokens":
+		parsed, err := parsePositiveInt(value)
+		cfg.KeepRecentTokens = parsed
 
 		return err
 

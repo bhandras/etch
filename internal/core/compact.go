@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"harness/internal/hooks"
 	"harness/internal/model"
+	"harness/internal/prompt"
 	"harness/internal/session"
 )
 
@@ -17,12 +19,102 @@ var errNotEnoughHistory = errors.New("not enough history to compact")
 
 const (
 	// DefaultCompactKeepMessages is the number of latest message events
-	// kept raw after manual compaction.
+	// kept raw when token-budget compaction is disabled.
 	DefaultCompactKeepMessages = 12
+
+	// DefaultCompactKeepRecentTokens is the approximate recent context
+	// budget retained raw after Pi-style compaction.
+	DefaultCompactKeepRecentTokens = 20000
 
 	// compactToolResultLimit caps serialized tool results in summary
 	// prompts.
 	compactToolResultLimit = 2048
+)
+
+const (
+	// initialSummaryPrompt is the structured checkpoint format used for
+	// the first summary in a session.
+	initialSummaryPrompt = `The messages above are a conversation to summarize.
+Create a structured context checkpoint summary that another LLM will use to continue the work.
+
+Use this EXACT format:
+## Goal
+[What is the user trying to accomplish? Can be multiple items if the session covers different tasks.]
+
+## Constraints & Preferences
+- [Any constraints, preferences, or requirements mentioned by the user]
+- [Or "(none)" if none were mentioned]
+
+## Progress
+### Done
+- [x] [Completed tasks/changes]
+
+### In Progress
+- [ ] [Current work]
+
+### Blocked
+- [Issues preventing progress, if any]
+
+## Key Decisions
+- **[Decision]**: [Brief rationale]
+
+## Next Steps
+1. [Ordered list of what should happen next]
+
+## Critical Context
+- [Any data, examples, exact file paths, function names, error messages, or references needed to continue]
+- [Or "(none)" if not applicable]
+
+Keep each section concise. Preserve exact file paths, function names, and error messages.`
+
+	// updateSummaryPrompt updates an existing checkpoint with newly
+	// summarized conversation history.
+	updateSummaryPrompt = `The messages above are NEW conversation messages to incorporate into the existing summary provided in <previous-summary> tags.
+Update the existing structured summary with new information.
+
+RULES:
+- PRESERVE all existing information from the previous summary.
+- ADD new progress, decisions, and context from the new messages.
+- UPDATE the Progress section: move items from "In Progress" to "Done" when completed.
+- UPDATE "Next Steps" based on what was accomplished.
+- PRESERVE exact file paths, function names, and error messages.
+- If something is no longer relevant, you may remove it.
+
+Use this EXACT format:
+## Goal
+[Preserve existing goals, add new ones if the task expanded]
+
+## Constraints & Preferences
+- [Preserve existing constraints and preferences, add new ones discovered]
+
+## Progress
+### Done
+- [x] [Include previously done items AND newly completed items]
+
+### In Progress
+- [ ] [Current work, updated based on progress]
+
+### Blocked
+- [Current blockers, remove if resolved]
+
+## Key Decisions
+- **[Decision]**: [Brief rationale] (preserve previous decisions, add new ones)
+
+## Next Steps
+1. [Update based on current state]
+
+## Critical Context
+- [Preserve important context, add new context if needed]
+
+Keep each section concise. Preserve exact file paths, function names, and error messages.`
+
+	// summarizationSystemPrompt prevents the model from continuing the
+	// conversation being summarized.
+	summarizationSystemPrompt = `You are a context summarization assistant.
+Your task is to read a conversation between a user and an AI assistant, then produce a structured summary following the exact format specified.
+Do NOT continue the conversation.
+Do NOT respond to any questions in the conversation.
+ONLY output the structured summary.`
 )
 
 // CompactRequest contains everything needed to append a session summary.
@@ -36,11 +128,19 @@ type CompactRequest struct {
 	// KeepMessages is the number of latest message events to keep raw.
 	KeepMessages int
 
+	// KeepRecentTokens is the approximate recent context budget retained
+	// raw. Values less than one fall back to KeepMessages.
+	KeepRecentTokens int
+
 	// ModelName records the summarization model name in the summary event.
 	ModelName string
 
 	// Trigger records why compaction started. Empty means manual.
 	Trigger string
+
+	// Instructions are optional user-provided focus instructions for this
+	// compaction pass.
+	Instructions string
 
 	// Hooks runs external lifecycle transformers around compaction. Nil
 	// means no hooks are configured.
@@ -88,32 +188,34 @@ func CompactSession(ctx context.Context,
 func compactStore(ctx context.Context, req CompactRequest, store *session.Store,
 	events []session.Event) (*CompactResult, *session.Event, error) {
 
-	keep := req.KeepMessages
-	if keep <= 0 {
-		keep = DefaultCompactKeepMessages
-	}
-	cut, firstKeptID, err := compactionCut(events, keep)
+	plan, err := planCompaction(events, req)
 	if err != nil {
 		return nil, nil, err
 	}
-	if cut == 0 {
+	if plan.CutIndex == 0 {
 		return nil, nil, errNotEnoughHistory
 	}
 
-	summary, err := compactSummary(ctx, req, events, cut, firstKeptID)
+	summary, err := compactSummary(ctx, req, plan)
 	if err != nil {
 		return nil, nil, err
 	}
+	summary = appendFileOperations(
+		summary, plan.ReadFiles, plan.ModifiedFiles,
+	)
 	trigger := compactTrigger(req.Trigger)
 	event, err := store.Append(
 		session.EventContextSummary, store.LastID(),
 		session.SummaryData{
 			Summary:          summary,
-			RangeStartID:     events[0].ID,
-			RangeEndID:       events[cut-1].ID,
-			FirstKeptEventID: firstKeptID,
+			RangeStartID:     events[plan.RangeStartIndex].ID,
+			RangeEndID:       events[plan.CutIndex-1].ID,
+			FirstKeptEventID: plan.FirstKeptEventID,
 			Model:            req.ModelName,
 			Trigger:          trigger,
+			TokensBefore:     plan.TokensBefore,
+			ReadFiles:        plan.ReadFiles,
+			ModifiedFiles:    plan.ModifiedFiles,
 		},
 	)
 	if err != nil {
@@ -124,7 +226,7 @@ func compactStore(ctx context.Context, req CompactRequest, store *session.Store,
 			SessionPath:      req.SessionPath,
 			Trigger:          trigger,
 			SummaryEventID:   event.ID,
-			FirstKeptEventID: firstKeptID,
+			FirstKeptEventID: plan.FirstKeptEventID,
 			Summary:          summary,
 		}); err != nil {
 			return nil, nil, err
@@ -134,7 +236,7 @@ func compactStore(ctx context.Context, req CompactRequest, store *session.Store,
 	return &CompactResult{
 		SessionPath:      req.SessionPath,
 		SummaryEventID:   event.ID,
-		FirstKeptEventID: firstKeptID,
+		FirstKeptEventID: plan.FirstKeptEventID,
 		Summary:          summary,
 	}, event, nil
 }
@@ -150,16 +252,16 @@ func compactTrigger(trigger string) string {
 
 // compactSummary returns either a hook-provided or model-written summary.
 func compactSummary(ctx context.Context, req CompactRequest,
-	events []session.Event, cut int, firstKeptID string) (string, error) {
+	plan compactionPlan) (string, error) {
 
 	if req.Hooks != nil {
 		trigger := compactTrigger(req.Trigger)
 		result, err := req.Hooks.PreCompact(ctx, hooks.PreCompactEvent{
 			SessionPath:      req.SessionPath,
 			Trigger:          trigger,
-			RangeStartID:     events[0].ID,
-			RangeEndID:       events[cut-1].ID,
-			FirstKeptEventID: firstKeptID,
+			RangeStartID:     plan.Events[plan.RangeStartIndex].ID,
+			RangeEndID:       plan.Events[plan.CutIndex-1].ID,
+			FirstKeptEventID: plan.FirstKeptEventID,
 		})
 		if err != nil {
 			return "", err
@@ -179,15 +281,194 @@ func compactSummary(ctx context.Context, req CompactRequest,
 		}
 	}
 
-	return summarizeEvents(ctx, req.Model, events[:cut])
+	return summarizeEvents(ctx, req.Model, plan, req.Instructions)
 }
 
-// compactionCut returns the first event index retained after compaction.
-func compactionCut(events []session.Event, keepMessages int) (int, string,
+// compactionPlan stores all derived inputs for one compaction pass.
+type compactionPlan struct {
+	// Events stores the complete session event list being compacted.
+	Events []session.Event
+
+	// RangeStartIndex is the first event included in the summary range.
+	RangeStartIndex int
+
+	// CutIndex is the first event retained raw after compaction.
+	CutIndex int
+
+	// FirstKeptEventID is the event ID where future raw replay resumes.
+	FirstKeptEventID string
+
+	// PreviousSummary is the latest summary that should be updated.
+	PreviousSummary *session.SummaryData
+
+	// TokensBefore is the approximate projected context before compaction.
+	TokensBefore int
+
+	// ReadFiles stores read-only file paths discovered across summaries.
+	ReadFiles []string
+
+	// ModifiedFiles stores mutated file paths discovered across summaries.
+	ModifiedFiles []string
+}
+
+// planCompaction chooses the summary range, retained boundary, and metadata.
+func planCompaction(events []session.Event,
+	req CompactRequest) (compactionPlan, error) {
+
+	if len(events) == 0 {
+		return compactionPlan{}, errNotEnoughHistory
+	}
+	previous, start, err := previousCompaction(events)
+	if err != nil {
+		return compactionPlan{}, err
+	}
+
+	cut, firstKeptID, err := compactionCutByTokens(
+		events, start, req.KeepRecentTokens,
+	)
+	if err != nil {
+		return compactionPlan{}, err
+	}
+	if cut == 0 {
+		keep := req.KeepMessages
+		if keep <= 0 {
+			keep = DefaultCompactKeepMessages
+		}
+		cut, firstKeptID, err = compactionCutByMessages(
+			events, start, keep,
+		)
+		if err != nil {
+			return compactionPlan{}, err
+		}
+	}
+	if cut <= start {
+		return compactionPlan{}, errNotEnoughHistory
+	}
+
+	readFiles, modifiedFiles := compactionFileLists(
+		events[start:cut], previous,
+	)
+
+	return compactionPlan{
+		Events:           events,
+		RangeStartIndex:  start,
+		CutIndex:         cut,
+		FirstKeptEventID: firstKeptID,
+		PreviousSummary:  previous,
+		TokensBefore:     sessionApproxTokens(events),
+		ReadFiles:        readFiles,
+		ModifiedFiles:    modifiedFiles,
+	}, nil
+}
+
+// previousCompaction returns the newest summary and the next summary start.
+func previousCompaction(events []session.Event) (*session.SummaryData, int,
 	error) {
 
-	messageIndexes := make([]int, 0, len(events))
+	for i := len(events) - 1; i >= 0; i-- {
+		if events[i].Type != session.EventContextSummary {
+			continue
+		}
+
+		var summary session.SummaryData
+		if err := json.Unmarshal(events[i].Data, &summary); err != nil {
+			return nil, 0, fmt.Errorf("decode summary %s: %w",
+				events[i].ID, err)
+		}
+		start := eventIndex(events, summary.FirstKeptEventID)
+		if start < 0 {
+			start = i + 1
+		}
+
+		return &summary, start, nil
+	}
+
+	return nil, 0, nil
+}
+
+// eventIndex returns the index of id or -1 when it is absent.
+func eventIndex(events []session.Event, id string) int {
+	if id == "" {
+		return -1
+	}
 	for i, event := range events {
+		if event.ID == id {
+			return i
+		}
+	}
+
+	return -1
+}
+
+// compactionCutByTokens keeps roughly keepRecentTokens of recent raw context.
+func compactionCutByTokens(events []session.Event, start int,
+	keepRecentTokens int) (int, string, error) {
+
+	if keepRecentTokens <= 0 {
+		return 0, "", nil
+	}
+	valid := validCompactionCutPoints(events, start, len(events))
+	if len(valid) == 0 {
+		return 0, "", nil
+	}
+
+	accumulated := 0
+	cut := valid[0]
+	for i := len(events) - 1; i >= start; i-- {
+		if !compactMessageEvent(events[i].Type) {
+			continue
+		}
+		accumulated += eventApproxTokens(events[i])
+		if accumulated >= keepRecentTokens {
+			cut = closestCutAtOrAfter(valid, i)
+			break
+		}
+	}
+	if cut <= start {
+		return 0, "", nil
+	}
+
+	return cut, events[cut].ID, nil
+}
+
+// validCompactionCutPoints returns event indexes where raw replay may resume.
+func validCompactionCutPoints(events []session.Event, start int,
+	end int) []int {
+
+	points := make([]int, 0, end-start)
+	for i := start; i < end; i++ {
+		message, ok := compactMessageData(events[i])
+		if !ok {
+			continue
+		}
+		if message.Role == session.RoleUser ||
+			message.Role == session.RoleAssistant {
+
+			points = append(points, i)
+		}
+	}
+
+	return points
+}
+
+// closestCutAtOrAfter returns the first valid cut point at or after index.
+func closestCutAtOrAfter(points []int, index int) int {
+	for _, point := range points {
+		if point >= index {
+			return point
+		}
+	}
+
+	return points[len(points)-1]
+}
+
+// compactionCutByMessages keeps the latest keepMessages message events raw.
+func compactionCutByMessages(events []session.Event, start int,
+	keepMessages int) (int, string, error) {
+
+	messageIndexes := make([]int, 0, len(events))
+	for i := start; i < len(events); i++ {
+		event := events[i]
 		if compactMessageEvent(event.Type) {
 			messageIndexes = append(messageIndexes, i)
 		}
@@ -197,7 +478,7 @@ func compactionCut(events []session.Event, keepMessages int) (int, string,
 	}
 
 	keepStartMessage := messageIndexes[len(messageIndexes)-keepMessages]
-	if keepStartMessage == 0 {
+	if keepStartMessage <= start {
 		return 0, "", nil
 	}
 
@@ -214,20 +495,17 @@ func compactMessageEvent(eventType string) bool {
 
 // summarizeEvents asks the model to summarize serialized session events.
 func summarizeEvents(ctx context.Context, client model.Client,
-	events []session.Event) (string, error) {
+	plan compactionPlan, instructions string) (string, error) {
 
 	stream, err := client.Stream(ctx, model.Request{
 		Messages: []model.Message{
 			{
-				Role: model.RoleSystem,
-				Content: "Summarize older coding-agent session history " +
-					"as a concise checkpoint. Use sections: Goal, " +
-					"Constraints and Preferences, Progress, Key " +
-					"Decisions, Next Steps, Critical Context.",
+				Role:    model.RoleSystem,
+				Content: summarizationSystemPrompt,
 			},
 			{
 				Role:    model.RoleUser,
-				Content: serializeEventsForSummary(events),
+				Content: summarizationPrompt(plan, instructions),
 			},
 		},
 	})
@@ -245,6 +523,36 @@ func summarizeEvents(ctx context.Context, client model.Client,
 	}
 
 	return summary, nil
+}
+
+// summarizationPrompt builds the model-visible compaction request.
+func summarizationPrompt(plan compactionPlan, instructions string) string {
+	var out strings.Builder
+	fmt.Fprintf(
+		&out, "<conversation>\n%s</conversation>\n\n",
+		serializeEventsForSummary(
+			plan.Events[plan.RangeStartIndex:plan.CutIndex],
+		),
+	)
+	if plan.PreviousSummary != nil {
+		fmt.Fprintf(
+			&out, "<previous-summary>\n%s\n</previous-summary>\n\n",
+			plan.PreviousSummary.Summary,
+		)
+	}
+	if strings.TrimSpace(instructions) != "" {
+		fmt.Fprintf(
+			&out, "Additional focus: %s\n\n",
+			strings.TrimSpace(instructions),
+		)
+	}
+	if plan.PreviousSummary != nil {
+		out.WriteString(updateSummaryPrompt)
+	} else {
+		out.WriteString(initialSummaryPrompt)
+	}
+
+	return out.String()
 }
 
 // serializeEventsForSummary converts session events into a compact transcript.
@@ -291,6 +599,147 @@ func serializeEventsForSummary(events []session.Event) string {
 	}
 
 	return out.String()
+}
+
+// compactMessageData decodes a model-visible message event.
+func compactMessageData(event session.Event) (session.MessageData, bool) {
+	if !compactMessageEvent(event.Type) {
+		return session.MessageData{}, false
+	}
+	var message session.MessageData
+	if err := json.Unmarshal(event.Data, &message); err != nil {
+		return session.MessageData{}, false
+	}
+
+	return message, true
+}
+
+// sessionApproxTokens estimates model-visible message tokens in events.
+func sessionApproxTokens(events []session.Event) int {
+	tokens := 0
+	for _, event := range events {
+		tokens += eventApproxTokens(event)
+	}
+
+	return tokens
+}
+
+// eventApproxTokens estimates model-visible token count for one event.
+func eventApproxTokens(event session.Event) int {
+	message, ok := compactMessageData(event)
+	if !ok {
+		if event.Type == session.EventContextSummary {
+			var summary session.SummaryData
+			if err := json.Unmarshal(
+				event.Data, &summary,
+			); err == nil {
+				return prompt.ApproxTokens(summary.Summary)
+			}
+		}
+
+		return 0
+	}
+	if message.Role == session.RoleAssistant && len(message.ToolCalls) > 0 {
+		text := summaryMessageText(message)
+		for _, call := range message.ToolCalls {
+			text += "\n" + call.Name + " " + call.Arguments
+		}
+
+		return prompt.ApproxTokens(text)
+	}
+
+	return prompt.ApproxTokens(summaryMessageText(message))
+}
+
+// compactionFileLists returns read-only and modified files for the summary.
+func compactionFileLists(events []session.Event,
+	previous *session.SummaryData) ([]string, []string) {
+
+	read := map[string]bool{}
+	modified := map[string]bool{}
+	if previous != nil {
+		for _, path := range previous.ReadFiles {
+			read[path] = true
+		}
+		for _, path := range previous.ModifiedFiles {
+			modified[path] = true
+		}
+	}
+	for _, event := range events {
+		message, ok := compactMessageData(event)
+		if !ok || message.Role != session.RoleAssistant {
+			continue
+		}
+		for _, call := range message.ToolCalls {
+			path := toolCallPath(call.Arguments)
+			if path == "" {
+				continue
+			}
+			switch call.Name {
+			case "read":
+				read[path] = true
+
+			case "write", "edit":
+				modified[path] = true
+			}
+		}
+	}
+	for path := range modified {
+		delete(read, path)
+	}
+
+	return sortedKeys(read), sortedKeys(modified)
+}
+
+// toolCallPath extracts a string path argument from raw tool-call JSON.
+func toolCallPath(arguments string) string {
+	var data struct {
+		Path string `json:"path"`
+	}
+	if err := json.Unmarshal([]byte(arguments), &data); err != nil {
+		return ""
+	}
+
+	return strings.TrimSpace(data.Path)
+}
+
+// sortedKeys returns map keys in deterministic order.
+func sortedKeys(values map[string]bool) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		if strings.TrimSpace(key) != "" {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+
+	return keys
+}
+
+// appendFileOperations appends deterministic file operation metadata.
+func appendFileOperations(summary string, readFiles []string,
+	modifiedFiles []string) string {
+
+	if len(readFiles) == 0 && len(modifiedFiles) == 0 {
+		return summary
+	}
+	var out strings.Builder
+	out.WriteString(strings.TrimSpace(summary))
+	out.WriteString("\n\n## Files\n")
+	if len(readFiles) > 0 {
+		out.WriteString("### Read\n")
+		for _, path := range readFiles {
+			fmt.Fprintf(&out, "- %s\n", path)
+		}
+	}
+	if len(modifiedFiles) > 0 {
+		out.WriteString("### Modified\n")
+		for _, path := range modifiedFiles {
+			fmt.Fprintf(&out, "- %s\n", path)
+		}
+	}
+
+	return strings.TrimSpace(out.String())
 }
 
 // summaryMessageText joins text parts from a session message.

@@ -65,6 +65,10 @@ type TurnRequest struct {
 	// raw by automatic compaction. Values less than one use the default.
 	AutoCompactKeepMessages int
 
+	// AutoCompactKeepRecentTokens is the approximate recent context budget
+	// retained raw by automatic compaction.
+	AutoCompactKeepRecentTokens int
+
 	// Observer receives durable events as they are appended during the
 	// turn.
 	Observer Observer
@@ -568,12 +572,13 @@ func maybeAutoCompact(ctx context.Context, req TurnRequest,
 	}
 
 	result, event, err := compactStore(ctx, CompactRequest{
-		SessionPath:  store.Path(),
-		Model:        req.Model,
-		KeepMessages: req.AutoCompactKeepMessages,
-		ModelName:    req.ModelName,
-		Trigger:      "auto",
-		Hooks:        req.Hooks,
+		SessionPath:      store.Path(),
+		Model:            req.Model,
+		KeepMessages:     req.AutoCompactKeepMessages,
+		KeepRecentTokens: req.AutoCompactKeepRecentTokens,
+		ModelName:        req.ModelName,
+		Trigger:          "auto",
+		Hooks:            req.Hooks,
 	}, store, history)
 	if err != nil {
 		if errors.Is(err, errNotEnoughHistory) {

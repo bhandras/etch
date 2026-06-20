@@ -162,12 +162,16 @@ Automatic compaction can be enabled in `.harness/config.toml`:
 [context]
 auto_compact = true
 auto_compact_threshold_tokens = 120000
+keep_recent_tokens = 20000
 ```
 
 Harness checks the projected context before chat model calls. When the estimate
 reaches the threshold, it appends a `context.summary` event with
-`trigger = "auto"` and keeps the latest `session.keep_messages` message events
-raw. The original JSONL history remains on disk.
+`trigger = "auto"` and keeps roughly `context.keep_recent_tokens` of recent
+raw context. The text-summary backend follows Pi's checkpoint style: repeated
+compactions update the previous summary, preserve exact paths and errors, and
+record read/modified file lists as summary metadata. The original JSONL history
+remains on disk.
 
 Skills follow the Agent Skills `SKILL.md` convention. Harness discovers skill
 metadata from `.harness/skills/*/SKILL.md` and `.agents/skills/*/SKILL.md` in

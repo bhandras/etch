@@ -145,6 +145,17 @@ type SummaryData struct {
 
 	// Trigger records why compaction started, such as manual or auto.
 	Trigger string `json:"trigger,omitempty"`
+
+	// TokensBefore records the approximate projected context size before
+	// compaction.
+	TokensBefore int `json:"tokensBefore,omitempty"`
+
+	// ReadFiles stores files observed through read-only file tools and not
+	// later modified.
+	ReadFiles []string `json:"readFiles,omitempty"`
+
+	// ModifiedFiles stores files observed through mutation tools.
+	ModifiedFiles []string `json:"modifiedFiles,omitempty"`
 }
 
 // UsageData is provider-reported token usage for one model call.

@@ -106,8 +106,8 @@ Pi appears to treat tool use as part of the broader agent lifecycle: it tracks
 tool calls for session statistics and relies on stop reasons, cancellation,
 retries, context overflow handling, and compaction to bound real work. This
 harness keeps one explicit per-turn guard because the current kernel is much
-smaller, has no automatic compaction yet, and should fail predictably if a model
-gets stuck in a tool loop.
+smaller, and context compaction does not protect against a model getting stuck
+in a tool loop.
 
 ## Session Log
 
@@ -253,6 +253,11 @@ The current config tables are:
 dir = ".harness/sessions"
 max_tool_rounds = 32
 keep_messages = 12
+
+[context]
+auto_compact = false
+auto_compact_threshold_tokens = 120000
+keep_recent_tokens = 20000
 
 [provider]
 name = "echo"
@@ -400,10 +405,20 @@ Automatic compaction is opt-in through `[context]` config or chat flags. It runs
 after the current user message is appended and before the model request is
 built. If the projected context reaches the configured approximate token
 threshold, the core summarizes the older prefix, keeps the latest
-`session.keep_messages` message events raw, appends a `context.summary` event
-with `trigger = "auto"`, and then builds the model request from that updated
-projection. Pinned context such as the base prompt, `SYSTEM.md`, `AGENTS.md`,
-and the skill catalog is never compacted away.
+`context.keep_recent_tokens` approximate tokens raw, appends a
+`context.summary` event with `trigger = "auto"`, and then builds the model
+request from that updated projection. If the token budget is disabled,
+`session.keep_messages` remains as a compatibility fallback. Pinned context
+such as the base prompt, `SYSTEM.md`, `AGENTS.md`, and the skill catalog is
+never compacted away.
+
+The text-summary compaction backend follows Pi's shape: it wraps serialized
+conversation history in tags, uses a structured checkpoint format, passes the
+previous summary back in for update-style compactions, preserves exact paths and
+error messages, and stores deterministic read/modified file lists in summary
+metadata. Manual chat compaction accepts optional focus text with
+`/compact <instructions>`, which is appended as an additional soft instruction
+to the summarizer.
 
 Automatic compaction avoids repeated summaries when an already-active summary
 or pinned context dominates the projected size; in that case, another

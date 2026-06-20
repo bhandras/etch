@@ -18,6 +18,7 @@ keep_messages = 20
 [context]
 auto_compact = true
 auto_compact_threshold_tokens = 1000
+keep_recent_tokens = 500
 
 [provider]
 name = "openai"
@@ -50,7 +51,8 @@ disabled = true
 		t.Fatalf("unexpected session config: %#v", cfg.Session)
 	}
 	if !cfg.Context.AutoCompact ||
-		cfg.Context.AutoCompactThresholdTokens != 1000 {
+		cfg.Context.AutoCompactThresholdTokens != 1000 ||
+		cfg.Context.KeepRecentTokens != 500 {
 
 		t.Fatalf("unexpected context config: %#v", cfg.Context)
 	}

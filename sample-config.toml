@@ -11,8 +11,8 @@
 # Maximum model/tool exchange rounds allowed for one user turn.
 # max_tool_rounds = 32
 
-# Recent message events kept raw when /compact or `harness compact` runs.
-# The same value is used by auto compaction when enabled.
+# Compatibility fallback for compaction retention when keep_recent_tokens is
+# disabled by code or not supplied by direct callers.
 # keep_messages = 12
 
 [context]
@@ -24,6 +24,11 @@
 # Approximate projected context size that triggers auto compaction. Harness uses
 # its dependency-free token estimate, not a model-specific tokenizer.
 # auto_compact_threshold_tokens = 120000
+
+# Approximate amount of recent raw context retained after compaction. This is
+# the primary Pi-style retention control for /compact, harness compact, and auto
+# compaction.
+# keep_recent_tokens = 20000
 
 [provider]
 # Model provider name. Supported built-ins are "echo" and "openai".
