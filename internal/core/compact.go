@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"harness/internal/hooks"
 	"harness/internal/model"
 	"harness/internal/session"
 )
@@ -33,6 +34,10 @@ type CompactRequest struct {
 
 	// ModelName records the summarization model name in the summary event.
 	ModelName string
+
+	// Hooks runs external lifecycle transformers around compaction. Nil
+	// means no hooks are configured.
+	Hooks *hooks.Runner
 }
 
 // CompactResult reports the summary event appended by compaction.
@@ -79,7 +84,7 @@ func CompactSession(ctx context.Context,
 		return nil, fmt.Errorf("not enough history to compact")
 	}
 
-	summary, err := summarizeEvents(ctx, req.Model, events[:cut])
+	summary, err := compactSummary(ctx, req, events, cut, firstKeptID)
 	if err != nil {
 		return nil, err
 	}
@@ -96,6 +101,17 @@ func CompactSession(ctx context.Context,
 	if err != nil {
 		return nil, err
 	}
+	if req.Hooks != nil {
+		if err := req.Hooks.PostCompact(ctx, hooks.PostCompactEvent{
+			SessionPath:      req.SessionPath,
+			Trigger:          "manual",
+			SummaryEventID:   event.ID,
+			FirstKeptEventID: firstKeptID,
+			Summary:          summary,
+		}); err != nil {
+			return nil, err
+		}
+	}
 
 	return &CompactResult{
 		SessionPath:      req.SessionPath,
@@ -103,6 +119,39 @@ func CompactSession(ctx context.Context,
 		FirstKeptEventID: firstKeptID,
 		Summary:          summary,
 	}, nil
+}
+
+// compactSummary returns either a hook-provided or model-written summary.
+func compactSummary(ctx context.Context, req CompactRequest,
+	events []session.Event, cut int, firstKeptID string) (string, error) {
+
+	if req.Hooks != nil {
+		result, err := req.Hooks.PreCompact(ctx, hooks.PreCompactEvent{
+			SessionPath:      req.SessionPath,
+			Trigger:          "manual",
+			RangeStartID:     events[0].ID,
+			RangeEndID:       events[cut-1].ID,
+			FirstKeptEventID: firstKeptID,
+		})
+		if err != nil {
+			return "", err
+		}
+		if result.Block {
+			return "", fmt.Errorf("compaction blocked by hook: %s",
+				nonEmptyReason(result.Reason))
+		}
+		if result.Summary != nil {
+			summary := strings.TrimSpace(*result.Summary)
+			if summary == "" {
+				return "", fmt.Errorf("hook compaction " +
+					"summary was empty")
+			}
+
+			return summary, nil
+		}
+	}
+
+	return summarizeEvents(ctx, req.Model, events[:cut])
 }
 
 // compactionCut returns the first event index retained after compaction.

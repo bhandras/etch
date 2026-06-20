@@ -1,0 +1,81 @@
+# Harness sample configuration.
+#
+# Copy this file to .harness/config.toml inside a project and uncomment the
+# values you want to set. Explicit CLI flags override this file. Environment
+# variables override this file before CLI flags are applied.
+
+[session]
+# Directory for JSONL session logs.
+# dir = ".harness/sessions"
+
+# Maximum model/tool exchange rounds allowed for one user turn.
+# max_tool_rounds = 32
+
+# Recent message events kept raw when /compact or `harness compact` runs.
+# keep_messages = 12
+
+[provider]
+# Model provider name. Supported built-ins are "echo" and "openai".
+# name = "echo"
+
+# Provider-specific model identifier.
+# model = "gpt-5.5"
+
+[openai]
+# OpenAI-compatible API base URL.
+# base_url = "https://api.openai.com/v1"
+
+# API shape used by the bundled provider: "chat" or "responses".
+# api = "chat"
+
+# Reasoning effort for models that support it: "none", "minimal", "low",
+# "medium", "high", or "xhigh".
+# reasoning_effort = "minimal"
+
+# Displayable reasoning summaries for models that support them: "auto",
+# "concise", or "detailed".
+# reasoning_summary = "auto"
+
+# Hooks are external shell commands. Harness sends a JSON envelope on stdin and
+# reads an optional JSON patch from stdout. Hooks run in file order, and
+# mutation-capable events pass each hook's output to the next hook.
+#
+# Supported events:
+# - UserPromptSubmit
+# - ContextBuild
+# - PreToolUse
+# - PostToolUse
+# - PreCompact
+# - PostCompact
+#
+# Matcher behavior:
+# - Empty matcher or "*" matches every event instance.
+# - PreToolUse and PostToolUse match against the tool name.
+# - PreCompact and PostCompact match against the trigger, currently "manual".
+# - UserPromptSubmit and ContextBuild ignore matcher.
+
+# [[hooks.UserPromptSubmit]]
+# command = ".harness/hooks/check-prompt.sh"
+# timeout_seconds = 5
+# disabled = false
+
+# [[hooks.ContextBuild]]
+# command = ".harness/hooks/filter-context.sh"
+# timeout_seconds = 10
+
+# [[hooks.PreToolUse]]
+# matcher = "bash|write|edit"
+# command = ".harness/hooks/policy.sh"
+# timeout_seconds = 10
+
+# [[hooks.PostToolUse]]
+# matcher = "*"
+# command = ".harness/hooks/audit-tool-result.sh"
+
+# [[hooks.PreCompact]]
+# matcher = "manual"
+# command = ".harness/hooks/custom-compact.sh"
+
+# [[hooks.PostCompact]]
+# matcher = "manual"
+# command = ".harness/hooks/after-compact.sh"

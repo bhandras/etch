@@ -5,8 +5,11 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"harness/internal/config"
+	"harness/internal/hooks"
 	"harness/internal/model"
 	"harness/internal/session"
 	"harness/internal/tool"
@@ -265,6 +268,101 @@ func TestRunTurnExecutesToolCalls(t *testing.T) {
 	}
 	if events[3].Type != session.EventToolMessage {
 		t.Fatalf("expected tool message event, got %q", events[3].Type)
+	}
+}
+
+// TestRunTurnAppliesPreToolUseHook verifies tool preflight hooks can transform
+// arguments before persistence and execution.
+func TestRunTurnAppliesPreToolUseHook(t *testing.T) {
+	dir := t.TempDir()
+	requested := filepath.Join(dir, "requested.txt")
+	rewrite := filepath.Join(dir, "rewrite.txt")
+	writeFile(t, requested, "requested")
+	writeFile(t, rewrite, "rewritten")
+
+	hookScript := filepath.Join(dir, "hook.sh")
+	hookOutputBytes, err := json.Marshal(struct {
+		Arguments string `json:"arguments"`
+	}{
+		Arguments: `{"path":` + quoteJSON(rewrite) + `}`,
+	})
+	if err != nil {
+		t.Fatalf("marshal hook output: %v", err)
+	}
+	writeFile(
+		t, hookScript, "#!/bin/sh\ncat >/dev/null\ncat <<'JSON'\n"+
+			string(hookOutputBytes)+"\nJSON\n",
+	)
+	if err := os.Chmod(hookScript, 0o755); err != nil {
+		t.Fatalf("chmod hook: %v", err)
+	}
+	runner, err := hooks.New([]config.HookConfig{{
+		Event:   hooks.EventPreToolUse,
+		Matcher: tool.NameRead,
+		Command: hookScript,
+	}}, dir)
+	if err != nil {
+		t.Fatalf("create hooks: %v", err)
+	}
+
+	client := &scriptedToolClient{
+		events: [][]model.Event{
+			{
+				{
+					Type: model.EventToolCall,
+					ToolCall: model.ToolCall{
+						ID:   "call_1",
+						Name: tool.NameRead,
+						Arguments: `{"path":` +
+							quoteJSON(
+								requested,
+							) +
+							`}`,
+					},
+				},
+				{
+					Type: model.EventDone,
+				},
+			},
+			{
+				{
+					Type: model.EventTextDelta,
+					Text: "done",
+				},
+				{
+					Type: model.EventDone,
+				},
+			},
+		},
+	}
+
+	result, err := RunTurn(context.Background(), TurnRequest{
+		Prompt:     "read",
+		SessionDir: filepath.Join(dir, "sessions"),
+		CWD:        dir,
+		Model:      client,
+		Tools:      tool.DefaultRegistry(),
+		Hooks:      runner,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	events, err := session.ReadAll(result.SessionPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var assistant session.MessageData
+	if err := json.Unmarshal(events[2].Data, &assistant); err != nil {
+		t.Fatal(err)
+	}
+	if assistant.ToolCalls[0].Arguments != `{"path":`+quoteJSON(rewrite)+`}` {
+		t.Fatalf("tool call was not rewritten: %#v",
+			assistant.ToolCalls[0])
+	}
+	last := client.requests[1].Messages[len(client.requests[1].Messages)-1]
+	if !strings.Contains(last.Content, "rewritten") {
+		t.Fatalf("rewritten file was not read: %#v", last)
 	}
 }
 

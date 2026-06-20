@@ -13,7 +13,9 @@ import (
 	"text/tabwriter"
 	"time"
 
+	harnessconfig "harness/internal/config"
 	"harness/internal/core"
+	"harness/internal/hooks"
 	"harness/internal/model"
 	promptctx "harness/internal/prompt"
 	"harness/internal/provider/openai"
@@ -76,6 +78,7 @@ type cliConfig struct {
 	toolIgnoreCase   bool
 	keepMessages     int
 	maxToolRounds    int
+	hooks            []harnessconfig.HookConfig
 }
 
 // main runs the command and exits with the returned status code.
@@ -139,6 +142,12 @@ func runPrompt(cfg cliConfig, stdout io.Writer, stderr io.Writer) int {
 
 		return 1
 	}
+	hookRunner, err := hooks.New(cfg.hooks, cwd)
+	if err != nil {
+		fmt.Fprintln(stderr, "error:", err)
+
+		return 1
+	}
 
 	result, err := core.RunTurn(context.Background(), core.TurnRequest{
 		Prompt:        cfg.prompt,
@@ -148,6 +157,7 @@ func runPrompt(cfg cliConfig, stdout io.Writer, stderr io.Writer) int {
 		Model:         modelClient,
 		Tools:         tool.DefaultRegistry(),
 		MaxToolRounds: cfg.maxToolRounds,
+		Hooks:         hookRunner,
 	})
 	if err != nil {
 		fmt.Fprintln(stderr, "error:", err)
@@ -220,6 +230,18 @@ func runCompact(cfg cliConfig, stdout io.Writer, stderr io.Writer) int {
 
 		return 1
 	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintln(stderr, "error: get working directory:", err)
+
+		return 1
+	}
+	hookRunner, err := hooks.New(cfg.hooks, cwd)
+	if err != nil {
+		fmt.Fprintln(stderr, "error:", err)
+
+		return 1
+	}
 
 	result, err := core.CompactSession(context.Background(),
 		core.CompactRequest{
@@ -227,6 +249,7 @@ func runCompact(cfg cliConfig, stdout io.Writer, stderr io.Writer) int {
 			Model:        modelClient,
 			KeepMessages: cfg.keepMessages,
 			ModelName:    cfg.model,
+			Hooks:        hookRunner,
 		})
 	if err != nil {
 		fmt.Fprintln(stderr, "error:", err)
@@ -265,6 +288,12 @@ func runChat(cfg cliConfig, stdin io.Reader, stdout io.Writer,
 
 		return 1
 	}
+	hookRunner, err := hooks.New(cfg.hooks, cwd)
+	if err != nil {
+		fmt.Fprintln(stderr, "error:", err)
+
+		return 1
+	}
 
 	var sessionPath string
 	if cfg.sessionID != "" {
@@ -292,7 +321,7 @@ func runChat(cfg cliConfig, stdin io.Reader, stdout io.Writer,
 		if strings.HasPrefix(line, "/") {
 			keepGoing, nextPath := handleChatCommand(
 				cfg, line, sessionPath, modelClient, stdout,
-				stderr,
+				stderr, hookRunner,
 			)
 			sessionPath = nextPath
 			if !keepGoing {
@@ -318,6 +347,7 @@ func runChat(cfg cliConfig, stdin io.Reader, stdout io.Writer,
 				Tools:         tool.DefaultRegistry(),
 				MaxToolRounds: cfg.maxToolRounds,
 				Observer:      observer,
+				Hooks:         hookRunner,
 			},
 		)
 		if err != nil {
@@ -422,8 +452,8 @@ func (o *chatObserver) Finish(elapsed time.Duration) {
 
 // handleChatCommand executes one slash command and returns whether to continue.
 func handleChatCommand(cfg cliConfig, line string, sessionPath string,
-	modelClient model.Client, stdout io.Writer,
-	stderr io.Writer) (bool, string) {
+	modelClient model.Client, stdout io.Writer, stderr io.Writer,
+	hookRunner *hooks.Runner) (bool, string) {
 
 	switch line {
 	case "/exit", "/quit":
@@ -487,6 +517,7 @@ func handleChatCommand(cfg cliConfig, line string, sessionPath string,
 				Model:        modelClient,
 				KeepMessages: cfg.keepMessages,
 				ModelName:    cfg.model,
+				Hooks:        hookRunner,
 			})
 		if err != nil {
 			fmt.Fprintln(stderr, "error:", err)
@@ -966,26 +997,43 @@ func toolArguments(cfg cliConfig) (string, error) {
 
 // parseChatFlags converts chat subcommand flags into configuration.
 func parseChatFlags(args []string, stderr io.Writer) (cliConfig, error) {
+	defaults, err := loadConfigDefaults()
+	if err != nil {
+		return cliConfig{}, err
+	}
 	cfg := cliConfig{
 		command:    commandChat,
-		sessionDir: defaultSessionDir,
-		provider:   envDefault("HARNESS_PROVIDER", providerEcho),
-		model:      envDefault("OPENAI_MODEL", ""),
-		baseURL:    envDefault("OPENAI_BASE_URL", openai.DefaultBaseURL),
-		apiKey:     os.Getenv("OPENAI_API_KEY"),
+		sessionDir: configSessionDir(defaults),
+		provider: envDefault(
+			"HARNESS_PROVIDER", configProvider(defaults),
+		),
+		model: envDefault("OPENAI_MODEL", defaults.Provider.Model),
+		baseURL: envDefault(
+			"OPENAI_BASE_URL", configOpenAIBaseURL(defaults),
+		),
+		apiKey: os.Getenv("OPENAI_API_KEY"),
 		openaiAPI: envDefault(
-			"HARNESS_OPENAI_API", openai.APIChatCompletions,
+			"HARNESS_OPENAI_API", configOpenAIAPI(defaults),
 		),
-		reasoningEffort:  envDefault("OPENAI_REASONING_EFFORT", ""),
-		reasoningSummary: envDefault("OPENAI_REASONING_SUMMARY", ""),
+		reasoningEffort: envDefault(
+			"OPENAI_REASONING_EFFORT",
+			defaults.OpenAI.ReasoningEffort,
+		),
+		reasoningSummary: envDefault(
+			"OPENAI_REASONING_SUMMARY",
+			defaults.OpenAI.ReasoningSummary,
+		),
 		maxToolRounds: envIntDefault(
-			"HARNESS_MAX_TOOL_ROUNDS", core.DefaultMaxToolRounds,
+			"HARNESS_MAX_TOOL_ROUNDS",
+			configMaxToolRounds(defaults),
 		),
+		keepMessages: configKeepMessages(defaults),
+		hooks:        defaults.Hooks,
 	}
 	fs := flag.NewFlagSet(commandChat, flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.StringVar(
-		&cfg.sessionDir, "session-dir", defaultSessionDir,
+		&cfg.sessionDir, "session-dir", cfg.sessionDir,
 		"session log directory",
 	)
 	fs.StringVar(
@@ -1008,8 +1056,7 @@ func parseChatFlags(args []string, stderr io.Writer) (cliConfig, error) {
 		"maximum model/tool exchange rounds per user turn",
 	)
 	fs.IntVar(
-		&cfg.keepMessages, "keep-messages",
-		core.DefaultCompactKeepMessages,
+		&cfg.keepMessages, "keep-messages", cfg.keepMessages,
 		"recent message events kept raw by /compact",
 	)
 	if err := fs.Parse(args); err != nil {
@@ -1026,26 +1073,39 @@ func parseChatFlags(args []string, stderr io.Writer) (cliConfig, error) {
 
 // parseCompactFlags converts compact subcommand flags into configuration.
 func parseCompactFlags(args []string, stderr io.Writer) (cliConfig, error) {
+	defaults, err := loadConfigDefaults()
+	if err != nil {
+		return cliConfig{}, err
+	}
 	cfg := cliConfig{
 		command:    commandCompact,
-		sessionDir: defaultSessionDir,
-		provider:   envDefault("HARNESS_PROVIDER", providerEcho),
-		model:      envDefault("OPENAI_MODEL", ""),
+		sessionDir: configSessionDir(defaults),
+		provider: envDefault(
+			"HARNESS_PROVIDER", configProvider(defaults),
+		),
+		model: envDefault("OPENAI_MODEL", defaults.Provider.Model),
 		baseURL: envDefault(
-			"OPENAI_BASE_URL", openai.DefaultBaseURL,
+			"OPENAI_BASE_URL", configOpenAIBaseURL(defaults),
 		),
 		apiKey: os.Getenv("OPENAI_API_KEY"),
 		openaiAPI: envDefault(
-			"HARNESS_OPENAI_API", openai.APIChatCompletions,
+			"HARNESS_OPENAI_API", configOpenAIAPI(defaults),
 		),
-		reasoningEffort:  envDefault("OPENAI_REASONING_EFFORT", ""),
-		reasoningSummary: envDefault("OPENAI_REASONING_SUMMARY", ""),
-		keepMessages:     core.DefaultCompactKeepMessages,
+		reasoningEffort: envDefault(
+			"OPENAI_REASONING_EFFORT",
+			defaults.OpenAI.ReasoningEffort,
+		),
+		reasoningSummary: envDefault(
+			"OPENAI_REASONING_SUMMARY",
+			defaults.OpenAI.ReasoningSummary,
+		),
+		keepMessages: configKeepMessages(defaults),
+		hooks:        defaults.Hooks,
 	}
 	fs := flag.NewFlagSet(commandCompact, flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.StringVar(
-		&cfg.sessionDir, "session-dir", defaultSessionDir,
+		&cfg.sessionDir, "session-dir", cfg.sessionDir,
 		"session log directory",
 	)
 	fs.StringVar(
@@ -1080,25 +1140,43 @@ func parseCompactFlags(args []string, stderr io.Writer) (cliConfig, error) {
 
 // parseRunFlags converts default command flags into a run configuration.
 func parseRunFlags(args []string, stderr io.Writer) (cliConfig, error) {
-	var cfg cliConfig
-	cfg.command = commandRun
-	cfg.provider = envDefault("HARNESS_PROVIDER", providerEcho)
-	cfg.model = envDefault("OPENAI_MODEL", "")
-	cfg.baseURL = envDefault("OPENAI_BASE_URL", openai.DefaultBaseURL)
-	cfg.apiKey = os.Getenv("OPENAI_API_KEY")
-	cfg.openaiAPI = envDefault(
-		"HARNESS_OPENAI_API", openai.APIChatCompletions,
-	)
-	cfg.reasoningEffort = envDefault("OPENAI_REASONING_EFFORT", "")
-	cfg.reasoningSummary = envDefault("OPENAI_REASONING_SUMMARY", "")
-	cfg.maxToolRounds = envIntDefault(
-		"HARNESS_MAX_TOOL_ROUNDS", core.DefaultMaxToolRounds,
-	)
+	defaults, err := loadConfigDefaults()
+	if err != nil {
+		return cliConfig{}, err
+	}
+	cfg := cliConfig{
+		command:    commandRun,
+		sessionDir: configSessionDir(defaults),
+		provider: envDefault(
+			"HARNESS_PROVIDER", configProvider(defaults),
+		),
+		model: envDefault("OPENAI_MODEL", defaults.Provider.Model),
+		baseURL: envDefault(
+			"OPENAI_BASE_URL", configOpenAIBaseURL(defaults),
+		),
+		apiKey: os.Getenv("OPENAI_API_KEY"),
+		openaiAPI: envDefault(
+			"HARNESS_OPENAI_API", configOpenAIAPI(defaults),
+		),
+		reasoningEffort: envDefault(
+			"OPENAI_REASONING_EFFORT",
+			defaults.OpenAI.ReasoningEffort,
+		),
+		reasoningSummary: envDefault(
+			"OPENAI_REASONING_SUMMARY",
+			defaults.OpenAI.ReasoningSummary,
+		),
+		maxToolRounds: envIntDefault(
+			"HARNESS_MAX_TOOL_ROUNDS",
+			configMaxToolRounds(defaults),
+		),
+		hooks: defaults.Hooks,
+	}
 	fs := flag.NewFlagSet("harness", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.StringVar(&cfg.prompt, "p", "", "prompt to run non-interactively")
 	fs.StringVar(
-		&cfg.sessionDir, "session-dir", defaultSessionDir,
+		&cfg.sessionDir, "session-dir", cfg.sessionDir,
 		"session log directory",
 	)
 	fs.BoolVar(
@@ -1197,6 +1275,71 @@ func modelClient(cfg cliConfig) (model.Client, error) {
 	}
 }
 
+// loadConfigDefaults loads project TOML defaults for commands that honor them.
+func loadConfigDefaults() (harnessconfig.Config, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return harnessconfig.Config{}, fmt.Errorf("get working "+
+			"directory: %w", err)
+	}
+
+	return harnessconfig.Load(cwd)
+}
+
+// configSessionDir returns the configured session directory or the CLI default.
+func configSessionDir(cfg harnessconfig.Config) string {
+	if cfg.Session.Dir != "" {
+		return cfg.Session.Dir
+	}
+
+	return defaultSessionDir
+}
+
+// configProvider returns the configured provider or the offline default.
+func configProvider(cfg harnessconfig.Config) string {
+	if cfg.Provider.Name != "" {
+		return cfg.Provider.Name
+	}
+
+	return providerEcho
+}
+
+// configOpenAIBaseURL returns the configured OpenAI endpoint or the default.
+func configOpenAIBaseURL(cfg harnessconfig.Config) string {
+	if cfg.OpenAI.BaseURL != "" {
+		return cfg.OpenAI.BaseURL
+	}
+
+	return openai.DefaultBaseURL
+}
+
+// configOpenAIAPI returns the configured OpenAI API shape or the default.
+func configOpenAIAPI(cfg harnessconfig.Config) string {
+	if cfg.OpenAI.API != "" {
+		return cfg.OpenAI.API
+	}
+
+	return openai.APIChatCompletions
+}
+
+// configMaxToolRounds returns the configured tool-loop limit or the default.
+func configMaxToolRounds(cfg harnessconfig.Config) int {
+	if cfg.Session.MaxToolRounds > 0 {
+		return cfg.Session.MaxToolRounds
+	}
+
+	return core.DefaultMaxToolRounds
+}
+
+// configKeepMessages returns the configured compaction retention or default.
+func configKeepMessages(cfg harnessconfig.Config) int {
+	if cfg.Session.KeepMessages > 0 {
+		return cfg.Session.KeepMessages
+	}
+
+	return core.DefaultCompactKeepMessages
+}
+
 // envDefault returns an environment value or fallback when the value is unset.
 func envDefault(name string, fallback string) string {
 	if value := os.Getenv(name); value != "" {
@@ -1222,14 +1365,18 @@ func envIntDefault(name string, fallback int) int {
 
 // parseSessionsFlags converts sessions subcommand flags into configuration.
 func parseSessionsFlags(args []string, stderr io.Writer) (cliConfig, error) {
+	defaults, err := loadConfigDefaults()
+	if err != nil {
+		return cliConfig{}, err
+	}
 	cfg := cliConfig{
 		command:    commandSessions,
-		sessionDir: defaultSessionDir,
+		sessionDir: configSessionDir(defaults),
 	}
 	fs := flag.NewFlagSet(commandSessions, flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.StringVar(
-		&cfg.sessionDir, "session-dir", defaultSessionDir,
+		&cfg.sessionDir, "session-dir", cfg.sessionDir,
 		"session log directory",
 	)
 	fs.BoolVar(
@@ -1246,14 +1393,18 @@ func parseSessionsFlags(args []string, stderr io.Writer) (cliConfig, error) {
 // parseShowFlags converts show subcommand flags and arguments into
 // configuration.
 func parseShowFlags(args []string, stderr io.Writer) (cliConfig, error) {
+	defaults, err := loadConfigDefaults()
+	if err != nil {
+		return cliConfig{}, err
+	}
 	cfg := cliConfig{
 		command:    commandShow,
-		sessionDir: defaultSessionDir,
+		sessionDir: configSessionDir(defaults),
 	}
 	fs := flag.NewFlagSet(commandShow, flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.StringVar(
-		&cfg.sessionDir, "session-dir", defaultSessionDir,
+		&cfg.sessionDir, "session-dir", cfg.sessionDir,
 		"session log directory",
 	)
 	fs.BoolVar(

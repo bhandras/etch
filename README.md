@@ -32,6 +32,7 @@ Harness currently has:
 - a line-oriented CLI chat loop
 - local JSONL session logs under `.harness/sessions/`
 - OpenAI-compatible streaming through the standard library
+- project-local TOML config from `.harness/config.toml`
 - pinned project context from `SYSTEM.md` and `AGENTS.md`
 - Agent Skills-style discovery from `.harness/skills/*/SKILL.md` and
   `.agents/skills/*/SKILL.md`
@@ -41,6 +42,7 @@ Harness currently has:
   streams
 - built-in tools for `ls`, `find`, `grep`, `read`, `write`, `edit`, and
   `bash`
+- external process hooks for prompt, context, tool, and compaction events
 - human-readable tool call and tool result rendering
 
 The default provider is an offline echo model, so the CLI can run without
@@ -81,6 +83,23 @@ OPENAI_API_KEY=unused go run ./cmd/harness chat \
   --base-url http://localhost:11434/v1 \
   --model qwen2.5-coder
 ```
+
+Configure project defaults:
+
+```bash
+mkdir -p .harness
+cp sample-config.toml .harness/config.toml
+```
+
+`sample-config.toml` documents every supported key. The CLI reads the nearest
+`.harness/config.toml` from the current directory or an ancestor. Config values
+are defaults only: environment variables override config, and explicit CLI flags
+override both.
+
+Hooks are configured in the same TOML file. A hook is an external shell command
+that receives a JSON event envelope on stdin and may write a JSON patch to
+stdout. For example, a `PreToolUse` hook can block a tool call or rewrite its
+arguments before the tool runs.
 
 Inspect local sessions:
 

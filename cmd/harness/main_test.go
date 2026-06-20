@@ -53,6 +53,41 @@ func TestRunWritesSessionAndListsIt(t *testing.T) {
 	}
 }
 
+// TestRunUsesProjectConfigDefaults verifies .harness/config.toml supplies CLI
+// defaults before environment variables and flags are applied.
+func TestRunUsesProjectConfigDefaults(t *testing.T) {
+	t.Setenv("HARNESS_PROVIDER", "")
+	t.Setenv("OPENAI_MODEL", "")
+	t.Setenv("OPENAI_BASE_URL", "")
+	t.Setenv("OPENAI_API_KEY", "")
+
+	root := t.TempDir()
+	t.Chdir(root)
+	if err := os.Mkdir(filepath.Join(root, ".harness"), 0o755); err != nil {
+		t.Fatalf("make config dir: %v", err)
+	}
+	writeFile(
+		t, filepath.Join(root, ".harness", "config.toml"),
+		"[session]\ndir = \"configured-sessions\"\nmax_tool_rounds "+
+			"= 9\n",
+	)
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"-p", "hello"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("run failed: code=%d stdout=%q stderr=%q", code,
+			stdout.String(), stderr.String())
+	}
+
+	entries, err := os.ReadDir(filepath.Join(root, "configured-sessions"))
+	if err != nil {
+		t.Fatalf("read configured session dir: %v", err)
+	}
+	if len(entries) == 0 {
+		t.Fatal("expected a session file in configured directory")
+	}
+}
+
 // TestShowRendersTranscript verifies that a listed session can be resolved by
 // short ID and rendered as a readable transcript.
 func TestShowRendersTranscript(t *testing.T) {

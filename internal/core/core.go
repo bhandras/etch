@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"harness/internal/hooks"
 	"harness/internal/model"
 	"harness/internal/prompt"
 	"harness/internal/session"
@@ -51,6 +52,10 @@ type TurnRequest struct {
 	// Observer receives durable events as they are appended during the
 	// turn.
 	Observer Observer
+
+	// Hooks runs external lifecycle transformers around the turn. Nil means
+	// no hooks are configured.
+	Hooks *hooks.Runner
 }
 
 // TurnResult reports the durable and user-visible output from one turn.
@@ -105,12 +110,18 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 	if req.Model == nil {
 		return nil, fmt.Errorf("model client must not be nil")
 	}
+	promptText, err := runUserPromptHooks(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	req.Prompt = promptText
 
 	store, history, err := openTurnStore(req)
 	if err != nil {
 		return nil, err
 	}
 	defer store.Close()
+	req.SessionPath = store.Path()
 
 	user, err := store.Append(
 		session.EventUserMessage, store.LastID(),
@@ -136,8 +147,14 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 	finalReceived := false
 	var text string
 	for round := 0; round < maxToolRounds; round++ {
+		callMessages, err := runContextBuildHooks(
+			ctx, req, messages, round,
+		)
+		if err != nil {
+			return nil, err
+		}
 		response, err := collectModelResponse(
-			ctx, req.Model, messages, req.Tools,
+			ctx, req.Model, callMessages, req.Tools,
 		)
 		if err != nil {
 			return nil, err
@@ -167,11 +184,16 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 			break
 		}
 
+		toolCalls, blockedCalls, err := runPreToolUseHooks(
+			ctx, req, response.ToolCalls,
+		)
+		if err != nil {
+			return nil, err
+		}
 		assistant, err = store.Append(
 			session.EventAssistantMessage, parentID,
 			session.AssistantToolCallMessage(
-				response.Text,
-				sessionToolCalls(response.ToolCalls),
+				response.Text, sessionToolCalls(toolCalls),
 			),
 		)
 		if err != nil {
@@ -190,22 +212,43 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 		messages = append(messages, model.Message{
 			Role:      model.RoleAssistant,
 			Content:   response.Text,
-			ToolCalls: response.ToolCalls,
+			ToolCalls: toolCalls,
 		})
 
 		parentID = assistant.ID
 		if usageEvent != nil {
 			parentID = usageEvent.ID
 		}
-		for _, call := range response.ToolCalls {
+		for _, call := range toolCalls {
 			notifyToolCallStarted(req.Observer, call)
-			result, err := executeTool(ctx, req.Tools, call)
-			if err != nil {
-				if errors.Is(err, context.Canceled) ||
-					errors.Is(err, context.DeadlineExceeded) {
-					return nil, err
+			result := tool.Result{}
+			toolFailed := false
+			if reason, ok := blockedCalls[call.ID]; ok {
+				toolFailed = true
+				result = tool.Result{
+					Text: blockedToolText(reason),
 				}
-				result = tool.Result{Text: toolErrorText(err)}
+			} else {
+				result, err = executeTool(ctx, req.Tools, call)
+				if err != nil {
+					if errors.Is(err, context.Canceled) ||
+						errors.Is(
+							err,
+							context.DeadlineExceeded,
+						) {
+						return nil, err
+					}
+					toolFailed = true
+					result = tool.Result{
+						Text: toolErrorText(err),
+					}
+				}
+			}
+			result, err = runPostToolUseHooks(
+				ctx, req, call, result, toolFailed,
+			)
+			if err != nil {
+				return nil, err
 			}
 			toolEvent, err := store.Append(
 				session.EventToolMessage, parentID,
@@ -250,6 +293,110 @@ func toolRoundLimit(requested int) int {
 	}
 
 	return DefaultMaxToolRounds
+}
+
+// runUserPromptHooks applies configured prompt submission hooks.
+func runUserPromptHooks(ctx context.Context, req TurnRequest) (string, error) {
+	if req.Hooks == nil {
+		return req.Prompt, nil
+	}
+
+	result, err := req.Hooks.UserPromptSubmit(
+		ctx,
+		hooks.UserPromptSubmitEvent{
+			Prompt:      req.Prompt,
+			SessionPath: req.SessionPath,
+		},
+	)
+	if err != nil {
+		return "", err
+	}
+	if result.Block {
+		return "", fmt.Errorf("prompt blocked by hook: %s",
+			nonEmptyReason(result.Reason))
+	}
+	if result.Prompt != nil {
+		return *result.Prompt, nil
+	}
+
+	return req.Prompt, nil
+}
+
+// runContextBuildHooks applies configured model-context hooks.
+func runContextBuildHooks(ctx context.Context, req TurnRequest,
+	messages []model.Message, round int) ([]model.Message, error) {
+
+	if req.Hooks == nil {
+		return messages, nil
+	}
+
+	result, err := req.Hooks.ContextBuild(ctx, hooks.ContextBuildEvent{
+		SessionPath: req.SessionPath,
+		Round:       round,
+		Messages:    hooks.ModelMessages(messages),
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result.Messages != nil {
+		return hooks.NeutralMessages(result.Messages), nil
+	}
+
+	return messages, nil
+}
+
+// runPreToolUseHooks applies configured tool preflight hooks in source order.
+func runPreToolUseHooks(ctx context.Context, req TurnRequest,
+	calls []model.ToolCall) ([]model.ToolCall, map[string]string, error) {
+
+	prepared := append([]model.ToolCall{}, calls...)
+	blocked := make(map[string]string)
+	if req.Hooks == nil {
+		return prepared, blocked, nil
+	}
+
+	for i, call := range prepared {
+		result, err := req.Hooks.PreToolUse(ctx, hooks.PreToolUseEvent{
+			SessionPath: req.SessionPath,
+			Tool:        hooks.ModelToolCall(call),
+		})
+		if err != nil {
+			return nil, nil, err
+		}
+		if result.Arguments != nil {
+			prepared[i].Arguments = *result.Arguments
+		}
+		if result.Block {
+			blocked[call.ID] = nonEmptyReason(result.Reason)
+		}
+	}
+
+	return prepared, blocked, nil
+}
+
+// runPostToolUseHooks applies configured result hooks before persistence.
+func runPostToolUseHooks(ctx context.Context, req TurnRequest,
+	call model.ToolCall, result tool.Result,
+	failed bool) (tool.Result, error) {
+
+	if req.Hooks == nil {
+		return result, nil
+	}
+
+	hookResult, err := req.Hooks.PostToolUse(ctx, hooks.PostToolUseEvent{
+		SessionPath: req.SessionPath,
+		Tool:        hooks.ModelToolCall(call),
+		Output:      result.Text,
+		Error:       failed,
+	})
+	if err != nil {
+		return tool.Result{}, err
+	}
+	if hookResult.Output != nil {
+		result.Text = *hookResult.Output
+	}
+
+	return result, nil
 }
 
 // notifyEvent sends an appended event to the optional turn observer.
@@ -434,6 +581,20 @@ func executeTool(ctx context.Context, registry *tool.Registry,
 // toolErrorText formats a tool failure as model-visible feedback.
 func toolErrorText(err error) string {
 	return "tool error: " + err.Error()
+}
+
+// blockedToolText formats hook policy denial as model-visible feedback.
+func blockedToolText(reason string) string {
+	return "tool blocked by hook: " + nonEmptyReason(reason)
+}
+
+// nonEmptyReason returns a fallback reason for hook decisions.
+func nonEmptyReason(reason string) string {
+	if strings.TrimSpace(reason) == "" {
+		return "no reason provided"
+	}
+
+	return reason
 }
 
 // sessionToolCalls converts model tool calls into durable session payloads.

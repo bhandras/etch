@@ -229,6 +229,117 @@ The CLI also reads `HARNESS_PROVIDER`, `HARNESS_OPENAI_API`, `OPENAI_MODEL`,
 auth work; this step only proves the provider HTTP stream behind the existing
 model interface.
 
+## Configuration
+
+Project-local configuration lives at `.harness/config.toml`. The CLI discovers
+the nearest config file by walking from the current working directory toward the
+filesystem root. The supported TOML surface is intentionally small and parsed by
+`internal/config` with only the Go standard library: scalar assignments, normal
+tables, and hook array tables.
+
+The precedence order is:
+
+```text
+compiled defaults
+.harness/config.toml
+environment variables
+explicit CLI flags
+```
+
+The current config tables are:
+
+```toml
+[session]
+dir = ".harness/sessions"
+max_tool_rounds = 32
+keep_messages = 12
+
+[provider]
+name = "echo"
+model = "gpt-5.5"
+
+[openai]
+base_url = "https://api.openai.com/v1"
+api = "chat"
+reasoning_effort = "minimal"
+reasoning_summary = "auto"
+```
+
+`sample-config.toml` is the canonical human-readable inventory of supported
+keys. It should be updated in the same change that adds or removes config
+surface.
+
+## External Hooks
+
+Hooks are the first executable extension point, separate from long-lived
+plugins. A hook is an external command run through the platform shell. Harness
+sends one JSON envelope on stdin and reads an optional JSON patch from stdout:
+
+```json
+{
+  "version": 1,
+  "event": "PreToolUse",
+  "cwd": "/work/project",
+  "payload": {
+    "sessionPath": ".harness/sessions/example.jsonl",
+    "tool": {
+      "id": "call_1",
+      "name": "bash",
+      "arguments": "{\"command\":\"go test ./...\"}"
+    }
+  }
+}
+```
+
+Hooks are configured as array tables:
+
+```toml
+[[hooks.PreToolUse]]
+matcher = "bash|write|edit"
+command = ".harness/hooks/policy.sh"
+timeout_seconds = 10
+disabled = false
+```
+
+The first supported events are:
+
+```text
+UserPromptSubmit
+ContextBuild
+PreToolUse
+PostToolUse
+PreCompact
+PostCompact
+```
+
+Hooks run sequentially in file order. This is a deliberate transformer-node
+model: if one hook rewrites a prompt, context message list, tool arguments, tool
+output, or compaction summary, the next hook sees that updated value. This is
+simpler and more predictable than concurrent mutation hooks. Long-lived plugins
+may later use JSONL-RPC and concurrent request IDs, but shell hooks should stay
+small, bounded, and easy to reason about.
+
+Matchers are regular expressions. Empty matchers and `*` match everything.
+`PreToolUse` and `PostToolUse` match on tool name. `PreCompact` and
+`PostCompact` match on the trigger, currently `manual`. `UserPromptSubmit` and
+`ContextBuild` ignore matchers.
+
+Hook stdout must be either empty or a JSON object for that event. For example,
+`PreToolUse` can return:
+
+```json
+{"block": true, "reason": "writes to .env are blocked"}
+```
+
+or:
+
+```json
+{"arguments": "{\"path\":\"README.md\",\"offset\":1,\"limit\":40}"}
+```
+
+Hook stderr is diagnostic text. A non-zero exit, invalid JSON result, or timeout
+fails the surrounding operation. The default timeout is 30 seconds.
+
 ## Context Building
 
 Context is the bounded model request assembled from durable state and local
@@ -526,19 +637,26 @@ MCP is how the agent borrows tools.
 
 The permission model should be small but extensible.
 
-The core should expose hooks such as:
+The current hook system can already enforce simple policy at the process
+boundary:
 
 ```text
-before_tool_call
-after_tool_result
-context_build
-session_event
+UserPromptSubmit -> block prompt admission
+PreToolUse       -> block or rewrite tool arguments
+PostToolUse      -> redact or rewrite tool output
+PreCompact       -> cancel compaction or provide a custom summary
 ```
 
-Policy plugins can allow, deny, rewrite, or ask the user before sensitive tool
-calls. The first built-in policy can be simple: warn before writes outside the
-workspace, dangerous shell commands, or project-local executable plugins in an
-untrusted repository.
+This is enough for project-local policy scripts such as protected paths,
+dangerous shell checks, audit logging, and custom compaction. Project hooks are
+powerful because they run arbitrary commands with the user's permissions. A
+future trust store should hash hook definitions and require explicit trust
+before project-local hooks run, following the same basic safety shape as Codex.
+
+Policy plugins can later allow, deny, rewrite, or ask the user before sensitive
+tool calls with richer UI than shell hooks can provide. The first built-in
+policy can stay simple: warn before writes outside the workspace, dangerous
+shell commands, or project-local executable plugins in an untrusted repository.
 
 Plugins are more privileged than MCP servers. A native plugin may see session
 events and shape agent behavior. MCP servers should receive only the calls or
