@@ -407,6 +407,143 @@ func TestAuthStatusDoesNotPrintCodexAccessToken(t *testing.T) {
 	}
 }
 
+// TestTopLevelHelpExitsSuccessfully verifies no-argument and help invocations
+// print command discovery text without reporting an error.
+func TestTopLevelHelpExitsSuccessfully(t *testing.T) {
+	tests := []struct {
+		// name describes the help invocation being exercised.
+		name string
+
+		// args are the CLI arguments passed to run.
+		args []string
+	}{
+		{
+			name: "empty",
+			args: nil,
+		},
+		{
+			name: "long flag",
+			args: []string{
+				"--help",
+			},
+		},
+		{
+			name: "short flag",
+			args: []string{
+				"-h",
+			},
+		},
+		{
+			name: "help command",
+			args: []string{
+				"help",
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			code := run(test.args, &stdout, &stderr)
+			if code != 0 {
+				t.Fatalf("help failed: code=%d stdout=%q "+
+					"stderr=%q", code, stdout.String(),
+					stderr.String())
+			}
+			if stderr.Len() != 0 {
+				t.Fatalf("help wrote stderr: %q",
+					stderr.String())
+			}
+			if !strings.Contains(stdout.String(), "Commands:") ||
+				!strings.Contains(stdout.String(), "chat") ||
+				!strings.Contains(stdout.String(), "auth") {
+
+				t.Fatalf("missing command help: %q",
+					stdout.String())
+			}
+		})
+	}
+}
+
+// TestSubcommandHelpExitsSuccessfully verifies direct and help-command forms
+// render command-specific usage without an error prefix.
+func TestSubcommandHelpExitsSuccessfully(t *testing.T) {
+	tests := []struct {
+		// name describes the help form being exercised.
+		name string
+
+		// args are the CLI arguments passed to run.
+		args []string
+
+		// want is a short usage fragment expected in output.
+		want string
+	}{
+		{name: "chat flag", args: []string{
+			"chat",
+			"--help",
+		},
+			want: "Usage of chat:"},
+		{name: "help chat", args: []string{
+			"help",
+			"chat",
+		},
+			want: "Usage of chat:"},
+		{name: "help auth", args: []string{
+			"help",
+			"auth",
+		},
+			want: "harness auth login"},
+		{name: "help tool", args: []string{
+			"help",
+			"tool",
+		},
+			want: "Tools:"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			code := run(test.args, &stdout, &stderr)
+			if code != 0 {
+				t.Fatalf("help failed: code=%d stdout=%q "+
+					"stderr=%q", code, stdout.String(),
+					stderr.String())
+			}
+			combined := stdout.String() + stderr.String()
+			if strings.Contains(combined, "error:") {
+				t.Fatalf("help printed error: stdout=%q "+
+					"stderr=%q", stdout.String(),
+					stderr.String())
+			}
+			if !strings.Contains(combined, test.want) {
+				t.Fatalf("missing %q in help output: "+
+					"stdout=%q stderr=%q", test.want,
+					stdout.String(), stderr.String())
+			}
+		})
+	}
+}
+
+// TestUnknownCommandReportsCommandError verifies command-like positional input
+// does not fall through to the implicit prompt runner.
+func TestUnknownCommandReportsCommandError(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"hat"}, &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("unexpected code: %d stdout=%q stderr=%q", code,
+			stdout.String(), stderr.String())
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("unknown command wrote stdout: %q", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), `unknown command "hat"`) {
+		t.Fatalf("missing unknown command error: %q", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "harness help") {
+		t.Fatalf("missing help hint: %q", stderr.String())
+	}
+}
+
 // TestHelpDoesNotPrintOpenAIAPIKeyEnv verifies that flag help keeps
 // environment-sourced credentials out of diagnostic output.
 func TestHelpDoesNotPrintOpenAIAPIKeyEnv(t *testing.T) {

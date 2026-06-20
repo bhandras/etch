@@ -52,6 +52,9 @@ const (
 	// commandAuth manages local OpenAI OAuth credentials.
 	commandAuth = "auth"
 
+	// commandHelp prints top-level or command-specific CLI help.
+	commandHelp = "help"
+
 	// providerEcho selects the dependency-free deterministic model client.
 	providerEcho = "echo"
 
@@ -108,8 +111,25 @@ func main() {
 
 // run parses flags, executes one agent turn, and renders the result.
 func run(args []string, stdout io.Writer, stderr io.Writer) int {
+	if len(args) == 0 {
+		printTopLevelHelp(stdout)
+
+		return 0
+	}
+	if isHelpArg(args[0]) {
+		printTopLevelHelp(stdout)
+
+		return 0
+	}
+	if args[0] == commandHelp {
+		return runHelp(args[1:], stdout, stderr)
+	}
+
 	cfg, err := parseFlags(args, stderr)
 	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
 		fmt.Fprintln(stderr, "error:", err)
 
 		return 2
@@ -142,6 +162,152 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 
 		return 2
 	}
+}
+
+// runHelp prints top-level or command-specific help text.
+func runHelp(args []string, stdout io.Writer, stderr io.Writer) int {
+	if len(args) == 0 {
+		printTopLevelHelp(stdout)
+
+		return 0
+	}
+	if len(args) > 2 {
+		fmt.Fprintln(stderr, "error: help accepts at most two words")
+
+		return 2
+	}
+
+	err := printCommandHelp(args, stdout)
+	if err != nil {
+		fmt.Fprintln(stderr, "error:", err)
+
+		return 2
+	}
+
+	return 0
+}
+
+// printTopLevelHelp writes the command overview for the harness binary.
+func printTopLevelHelp(stdout io.Writer) {
+	fmt.Fprintln(stdout, "Harness is a minimal Go coding-agent harness.")
+	fmt.Fprintln(stdout)
+	fmt.Fprintln(stdout, "Usage:")
+	fmt.Fprintln(stdout, `  harness -p "prompt" [flags]`)
+	fmt.Fprintln(stdout, "  harness chat [flags]")
+	fmt.Fprintln(stdout, "  harness auth <login|status|logout> [flags]")
+	fmt.Fprintln(stdout, "  harness tool <name> [flags] [args]")
+	fmt.Fprintln(stdout, "  harness sessions [flags]")
+	fmt.Fprintln(stdout, "  harness show [flags] <session-id-prefix>")
+	fmt.Fprintln(stdout, "  harness compact --session <id> [flags]")
+	fmt.Fprintln(stdout, "  harness help [command]")
+	fmt.Fprintln(stdout)
+	fmt.Fprintln(stdout, "Commands:")
+	fmt.Fprintln(stdout, "  chat      start an interactive chat session")
+	fmt.Fprintln(stdout, "  auth      manage OpenAI OAuth credentials")
+	fmt.Fprintln(stdout, "  tool      run a builtin tool directly")
+	fmt.Fprintln(stdout, "  sessions  list local JSONL sessions")
+	fmt.Fprintln(stdout, "  show      render one local session transcript")
+	fmt.Fprintln(stdout, "  compact   summarize an existing session")
+	fmt.Fprintln(stdout, "  help      show help for a command")
+	fmt.Fprintln(stdout)
+	fmt.Fprintln(
+		stdout, "Use \"harness help <command>\" for command flags.",
+	)
+}
+
+// printCommandHelp writes generated or custom help for one command.
+func printCommandHelp(args []string, stdout io.Writer) error {
+	command := args[0]
+	switch command {
+	case commandRun:
+		_, err := parseRunFlags([]string{"-h"}, stdout)
+
+		return ignoreHelpError(err)
+
+	case commandChat:
+		_, err := parseChatFlags([]string{"-h"}, stdout)
+
+		return ignoreHelpError(err)
+
+	case commandCompact:
+		_, err := parseCompactFlags([]string{"-h"}, stdout)
+
+		return ignoreHelpError(err)
+
+	case commandSessions:
+		_, err := parseSessionsFlags([]string{"-h"}, stdout)
+
+		return ignoreHelpError(err)
+
+	case commandShow:
+		_, err := parseShowFlags([]string{"-h"}, stdout)
+
+		return ignoreHelpError(err)
+
+	case commandAuth:
+		if len(args) == 2 {
+			_, err := parseAuthFlags(
+				[]string{args[1], "-h"}, stdout,
+			)
+
+			return ignoreHelpError(err)
+		}
+		printAuthHelp(stdout)
+
+		return nil
+
+	case commandTool:
+		if len(args) == 2 {
+			_, err := parseToolFlags(
+				[]string{args[1], "-h"}, stdout,
+			)
+
+			return ignoreHelpError(err)
+		}
+		printToolHelp(stdout)
+
+		return nil
+
+	default:
+		return fmt.Errorf("unknown help command %q", command)
+	}
+}
+
+// printAuthHelp writes a compact auth command overview.
+func printAuthHelp(stdout io.Writer) {
+	fmt.Fprintln(stdout, "Usage:")
+	fmt.Fprintln(stdout, "  harness auth login [flags]")
+	fmt.Fprintln(stdout, "  harness auth status [flags]")
+	fmt.Fprintln(stdout, "  harness auth logout [flags]")
+	fmt.Fprintln(stdout)
+	fmt.Fprintln(stdout, "Use \"harness help auth login\" for auth flags.")
+}
+
+// printToolHelp writes a compact direct-tool command overview.
+func printToolHelp(stdout io.Writer) {
+	fmt.Fprintln(stdout, "Usage:")
+	fmt.Fprintln(stdout, "  harness tool <name> [flags] [args]")
+	fmt.Fprintln(stdout)
+	fmt.Fprintln(stdout, "Tools:")
+	for _, spec := range tool.DefaultRegistry().Specs() {
+		fmt.Fprintf(stdout, "  %s\n", spec.Name)
+	}
+	fmt.Fprintln(stdout)
+	fmt.Fprintln(stdout, "Use \"harness help tool <name>\" for tool flags.")
+}
+
+// ignoreHelpError treats flag package help as a successful help rendering.
+func ignoreHelpError(err error) error {
+	if errors.Is(err, flag.ErrHelp) {
+		return nil
+	}
+
+	return err
+}
+
+// isHelpArg reports whether arg requests top-level help.
+func isHelpArg(arg string) bool {
+	return arg == "-h" || arg == "--help"
 }
 
 // runAuth executes OpenAI OAuth credential management commands.
@@ -933,6 +1099,11 @@ func parseFlags(args []string, stderr io.Writer) (cliConfig, error) {
 
 		case commandAuth:
 			return parseAuthFlags(args[1:], stderr)
+		}
+		if !strings.HasPrefix(args[0], "-") {
+			return cliConfig{}, fmt.Errorf("unknown command %q; "+
+				"use \"harness help\" to list commands",
+				args[0])
 		}
 	}
 

@@ -60,6 +60,14 @@ Run one prompt with the echo provider:
 go run ./cmd/harness -p "hello"
 ```
 
+Discover commands and flags:
+
+```bash
+go run ./cmd/harness
+go run ./cmd/harness help chat
+go run ./cmd/harness chat --help
+```
+
 Run chat with an OpenAI-compatible endpoint:
 
 ```bash
