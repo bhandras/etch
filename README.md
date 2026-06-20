@@ -29,7 +29,7 @@ The deeper design record lives in [docs/architecture.md](docs/architecture.md).
 
 Harness currently has:
 
-- a line-oriented CLI chat loop
+- a line-oriented CLI chat loop with command-specific help
 - local JSONL session logs under `.harness/sessions/`
 - OpenAI-compatible streaming through the standard library, including Platform
   API keys, `CODEX_ACCESS_TOKEN`, and ChatGPT/Codex OAuth login
@@ -48,25 +48,42 @@ Harness currently has:
 - human-readable tool call and tool result rendering, including colored live
   diffs for file edits and replacements
 
-The default provider is an offline echo model, so the CLI can run without
-network access. Use the OpenAI-compatible provider explicitly when talking to a
-real model.
+The compiled default provider is an offline echo model, so the CLI can run
+without network access. Project config can change that default. Use the
+OpenAI-compatible provider explicitly when talking to a real model.
 
-## Usage
+## Commands
 
-Run one prompt with the echo provider:
+| Command | Purpose |
+| --- | --- |
+| `harness -p "prompt"` | Run one non-interactive prompt. |
+| `harness chat` | Start an interactive chat session. |
+| `harness auth login/status/logout` | Manage local OpenAI/Codex OAuth credentials. |
+| `harness tool <name>` | Run a built-in tool directly. |
+| `harness sessions` | List local session logs. |
+| `harness show <id-prefix>` | Render a saved transcript. |
+| `harness compact --session <id>` | Append a compaction summary. |
+| `harness help [command]` | Show command-specific help. |
 
-```bash
-go run ./cmd/harness -p "hello"
-```
-
-Discover commands and flags:
+Discover commands and flags from the binary:
 
 ```bash
 go run ./cmd/harness
 go run ./cmd/harness help chat
-go run ./cmd/harness chat --help
+go run ./cmd/harness help tool edit
 ```
+
+## Quick Start
+
+### Offline echo mode
+
+Run one prompt without network access:
+
+```bash
+go run ./cmd/harness -p "hello" --provider echo
+```
+
+### OpenAI-compatible API key mode
 
 Run chat with an OpenAI-compatible endpoint:
 
@@ -76,14 +93,17 @@ OPENAI_API_KEY=... go run ./cmd/harness chat \
   --model gpt-4.1-mini
 ```
 
-Use OpenRouter through the same OpenAI-compatible provider:
+Run chat with OpenAI reasoning summaries when the selected model supports them:
 
 ```bash
-OPENROUTER_API_KEY=... go run ./cmd/harness chat \
+OPENAI_API_KEY=... go run ./cmd/harness chat \
   --provider openai \
-  --base-url https://openrouter.ai/api/v1 \
-  --model openai/gpt-4.1-mini
+  --openai-api responses \
+  --model gpt-5.5 \
+  --reasoning-summary auto
 ```
+
+### ChatGPT/Codex OAuth mode
 
 Sign in with ChatGPT/Codex OAuth and use subscription-backed access:
 
@@ -101,21 +121,18 @@ go run ./cmd/harness auth status
 go run ./cmd/harness auth logout
 ```
 
-When a local OAuth login exists, Harness prefers it over API-key environment
-variables. API keys are used as fallbacks when no stored OAuth login is
-available.
+### OpenRouter and local endpoints
 
-Run chat with OpenAI reasoning summaries when the selected model supports them:
+Use OpenRouter through the same OpenAI-compatible provider:
 
 ```bash
-OPENAI_API_KEY=... go run ./cmd/harness chat \
+OPENROUTER_API_KEY=... go run ./cmd/harness chat \
   --provider openai \
-  --openai-api responses \
-  --model gpt-5.5 \
-  --reasoning-summary auto
+  --base-url https://openrouter.ai/api/v1 \
+  --model openai/gpt-4.1-mini
 ```
 
-Use a custom endpoint:
+Use a local or custom OpenAI-compatible endpoint:
 
 ```bash
 OPENAI_API_KEY=unused go run ./cmd/harness chat \
@@ -123,6 +140,25 @@ OPENAI_API_KEY=unused go run ./cmd/harness chat \
   --base-url http://localhost:11434/v1 \
   --model qwen2.5-coder
 ```
+
+## Authentication
+
+Harness supports three OpenAI-compatible credential paths:
+
+1. A stored ChatGPT/Codex OAuth login from `harness auth login`.
+2. A bearer token from `CODEX_ACCESS_TOKEN`.
+3. API keys from `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, or `--api-key`.
+
+OAuth credentials are stored locally under `.harness/auth/openai.json` by
+default. When a stored OAuth login exists and can be refreshed, Harness uses it
+before environment API keys. API keys remain the fallback for Platform billing,
+OpenRouter, local proxies, and CI.
+
+OAuth mode defaults to the Codex backend and the Responses API shape. Explicit
+`--base-url`, `--openai-api`, or `.harness/config.toml` settings override those
+OAuth defaults.
+
+## Configuration and Hooks
 
 Configure project defaults:
 
@@ -136,13 +172,38 @@ cp sample-config.toml .harness/config.toml
 are defaults only: explicit CLI flags override them. Credential environment
 variables are read separately for API keys and access tokens.
 
-Hooks are configured under `[hooks]` in the same TOML file. A hook is an
-external shell command that receives a JSON event envelope on stdin and may
-write a JSON patch to stdout. For example, a `SessionStart` hook can prepare
-per-session state, while a `PreToolUse` hook can block a tool call or rewrite
-its arguments before the tool runs. See
-[sample-config.toml](sample-config.toml) for the supported hook events,
-matchers, execution order, and payload/result shapes.
+Hooks are external shell commands that inspect or mutate lifecycle events.
+Harness sends a JSON envelope on stdin and expects either empty stdout or an
+event-specific JSON object on stdout. Hooks run sequentially in config file
+order, so later hooks see mutations returned by earlier hooks.
+
+For example, this hook runs a local policy script before write-capable tools:
+
+```toml
+[[hooks.PreToolUse]]
+matcher = "^(bash|write|edit)$"
+command = ".harness/hooks/policy.sh"
+timeout_seconds = 10
+```
+
+A `PreToolUse` hook can block the tool call:
+
+```json
+{"block": true, "reason": "writes to .env are blocked"}
+```
+
+It can also rewrite the raw JSON arguments before the tool runs:
+
+```json
+{"arguments": "{\"command\":\"go test ./...\",\"timeoutSeconds\":60}"}
+```
+
+Supported hook events are `SessionStart`, `UserPromptSubmit`, `TurnStart`,
+`TurnComplete`, `ContextBuild`, `PreToolUse`, `PostToolUse`, `PreCompact`, and
+`PostCompact`. See [sample-config.toml](sample-config.toml) for matchers,
+execution order, payloads, and result shapes.
+
+## Sessions and Chat Commands
 
 Inspect local sessions:
 
@@ -165,6 +226,17 @@ Inside chat, use slash commands for local session and context operations:
 /exit      Leave chat.
 ```
 
+`/context` estimates the next model request. It reports pinned instruction
+layers, active summaries, raw replay size, and approximate token counts.
+
+`/status` reports what has already happened in the session: age, turns, model
+calls, tool calls, compactions, message bytes, and provider-reported token usage.
+When providers report usage, Harness appends `model.usage` events to the JSONL
+log and sums them for `/status`, including input, cached input, output,
+reasoning output, and total tokens when available.
+
+## Built-In Tools
+
 Run a built-in tool directly:
 
 ```bash
@@ -174,6 +246,19 @@ go run ./cmd/harness tool grep Harness README.md
 go run ./cmd/harness tool read README.md
 go run ./cmd/harness tool bash -- pwd
 ```
+
+Preview an exact replacement edit without modifying the file:
+
+```bash
+go run ./cmd/harness tool edit \
+  --old "old text" \
+  --new "new text" \
+  --dry-run \
+  README.md
+```
+
+`write` and `edit` return human-readable diffs. In chat mode, Harness renders
+mutation previews live so the user can see exactly what changed.
 
 ## Project Context
 
@@ -205,18 +290,52 @@ keep_recent_tokens = 20000
 
 Harness checks the projected context before chat model calls. When the estimate
 reaches the threshold, it appends a `context.summary` event with
-`trigger = "auto"` and keeps roughly `context.keep_recent_tokens` of recent
-raw context. The text-summary backend follows Pi's checkpoint style: repeated
+`trigger = "auto"` and keeps roughly `context.keep_recent_tokens` of recent raw
+context. The text-summary backend follows Pi's checkpoint style: repeated
 compactions update the previous summary, preserve exact paths and errors, and
 record read/modified file lists as summary metadata. The original JSONL history
 remains on disk.
+
+Inside chat, `/compact <instructions>` passes optional focus text to the
+summarizer:
+
+```text
+/compact focus on files changed and test failures
+```
+
+The non-interactive compact command accepts the same focus as a flag:
+
+```bash
+go run ./cmd/harness compact --session <id-prefix> \
+  --instructions "focus on modified files and failing tests"
+```
 
 Skills follow the Agent Skills `SKILL.md` convention. Harness discovers skill
 metadata from `.harness/skills/*/SKILL.md` and `.agents/skills/*/SKILL.md` in
 the current directory and its ancestors. The default prompt includes only the
 skill catalog: name, description, and path. Full skill bodies and reference
-files remain outside the prompt until a later on-demand loading path reads
-them.
+files remain outside the prompt until a later on-demand loading path reads them.
+
+## Development
+
+Build the binary:
+
+```bash
+make build
+```
+
+Run tests:
+
+```bash
+make test
+```
+
+Format Go code with the project-pinned formatter:
+
+```bash
+make fmt
+make fmt-check
+```
 
 ## Status
 
@@ -224,5 +343,6 @@ Harness is not a finished agent product. It is a small harness for learning the
 shape of a good coding-agent core: explicit loops, durable logs, narrow tools,
 and a plugin boundary that keeps the binary small.
 
-The near-term direction is to improve context management, make plugin execution
-real, and keep the core boring while the edges become more capable.
+The near-term direction is to keep hardening the local kernel: better provider
+coverage, sharper tool safety, richer plugin/process boundaries, and context
+management that stays inspectable rather than magical.
