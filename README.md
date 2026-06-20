@@ -44,7 +44,8 @@ Harness currently has:
   `bash`
 - external process hooks for session, turn, prompt, context, tool, and
   compaction events
-- human-readable tool call and tool result rendering
+- human-readable tool call and tool result rendering, including colored live
+  diffs for file edits and replacements
 
 The default provider is an offline echo model, so the CLI can run without
 network access. Use the OpenAI-compatible provider explicitly when talking to a

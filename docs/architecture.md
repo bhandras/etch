@@ -492,9 +492,11 @@ slice.
 The third operation is `write`, a whole-file create or overwrite tool. It
 creates parent directories, writes through a temporary file in the same
 directory, preserves existing file permissions when replacing a file, and
-returns a compact byte-count success message instead of echoing content back
-into the model context. Mutation tools are anchored to the current working
-directory and refuse to modify internal `.git` or `.harness` paths.
+returns a compact byte-count success message instead of echoing full content
+back into the model context. When replacing an existing file, it also returns a
+bounded unified-style diff so the model and user can inspect what changed.
+Mutation tools are anchored to the current working directory and refuse to
+modify internal `.git` or `.harness` paths.
 
 The fourth operation is `edit`, an exact-replacement mutation tool for existing
 text files. Each `oldText` must match exactly one region in the original file;
@@ -508,6 +510,8 @@ avoids fuzzy matching; that can be considered later after the sharp
 exact-replacement contract is proven. Adding a line is still an exact
 replacement: the model should replace a unique neighboring block with that same
 block plus the inserted line. Empty files and full rewrites should use `write`.
+Live chat renders mutation diffs with conventional red deletion lines and green
+insertion lines while keeping diff headers and context muted.
 
 The fifth operation is `bash`, a bounded command execution tool for
 verification and local diagnostics. It runs `bash -lc` in the current working

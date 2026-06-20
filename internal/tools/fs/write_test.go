@@ -34,16 +34,42 @@ func TestWriteCreatesFile(t *testing.T) {
 func TestWriteOverwritesFile(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
-	writeFile(t, filepath.Join(dir, "note.txt"), "old")
+	writeFile(t, filepath.Join(dir, "note.txt"), "old\n")
 
-	_, err := Write(context.Background(), WriteRequest{
+	result, err := Write(context.Background(), WriteRequest{
 		Path:    "note.txt",
-		Content: "new",
+		Content: "new\n",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertFileContent(t, filepath.Join(dir, "note.txt"), "new")
+	assertFileContent(t, filepath.Join(dir, "note.txt"), "new\n")
+	if !strings.Contains(result, "--- "+filepath.Join(dir, "note.txt")) ||
+		!strings.Contains(result, "-old") ||
+		!strings.Contains(result, "+new") {
+
+		t.Fatalf("missing replacement diff: %q", result)
+	}
+}
+
+// TestWriteCreateDoesNotShowDiff verifies new files keep write output compact.
+func TestWriteCreateDoesNotShowDiff(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	result, err := Write(context.Background(), WriteRequest{
+		Path:    "new.txt",
+		Content: "hello\n",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(result, "--- ") ||
+		strings.Contains(result, "+++ ") {
+
+		t.Fatalf("new file should not include replacement diff: %q",
+			result)
+	}
 }
 
 // TestWriteRejectsDirectory verifies that write does not replace directories.

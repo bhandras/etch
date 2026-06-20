@@ -16,6 +16,9 @@ const (
 	// liveToolOutputLimit caps live terminal tool output blocks.
 	liveToolOutputLimit = 6
 
+	// liveDiffOutputLimit caps live terminal diff output blocks.
+	liveDiffOutputLimit = 12
+
 	// ansiReset clears all terminal styling.
 	ansiReset = "\x1b[0m"
 
@@ -27,6 +30,12 @@ const (
 
 	// ansiItalic starts italic terminal styling.
 	ansiItalic = "\x1b[3m"
+
+	// ansiRed starts red terminal styling for removed diff lines.
+	ansiRed = "\x1b[31m"
+
+	// ansiGreen starts green terminal styling for added diff lines.
+	ansiGreen = "\x1b[32m"
 )
 
 // liveChatRenderer owns transient terminal presentation for chat mode.
@@ -112,7 +121,9 @@ func (r *liveChatRenderer) renderToolCall(call model.ToolCall) {
 func (r *liveChatRenderer) renderToolResult(message session.MessageData) {
 	r.printSeparator()
 	for _, line := range cappedToolResultLines(message) {
-		fmt.Fprintln(r.stdout, r.style.muted(line))
+		fmt.Fprintln(
+			r.stdout, r.style.toolResultLine(message.Name, line),
+		)
 	}
 }
 
@@ -155,12 +166,16 @@ func (r *liveChatRenderer) renderDotBlock(lines []string, tone terminalTone) {
 func cappedToolResultLines(message session.MessageData) []string {
 	text := render.MessageText(message)
 	lines := render.ToolResultLines(message.Name, text)
-	if len(lines) <= liveToolOutputLimit {
+	limit := liveToolOutputLimit
+	if message.Name == "edit" || message.Name == "write" {
+		limit = liveDiffOutputLimit
+	}
+	if len(lines) <= limit {
 		return lines
 	}
 
-	remaining := len(lines) - liveToolOutputLimit
-	out := append([]string{}, lines[:liveToolOutputLimit]...)
+	remaining := len(lines) - limit
+	out := append([]string{}, lines[:limit]...)
 	out = append(out, fmt.Sprintf("   ... %d more lines", remaining))
 
 	return out
@@ -306,6 +321,43 @@ func (s terminalStyle) muted(text string) string {
 	}
 
 	return ansiDim + text + ansiReset
+}
+
+// toolResultLine styles one live tool result line.
+func (s terminalStyle) toolResultLine(toolName string, line string) string {
+	if toolName == "edit" || toolName == "write" {
+		return s.diffLine(line)
+	}
+
+	return s.muted(line)
+}
+
+// diffLine styles unified diff output using familiar red/green accents.
+func (s terminalStyle) diffLine(line string) string {
+	trimmed := strings.TrimLeft(line, " ")
+	if strings.HasPrefix(trimmed, "+++") ||
+		strings.HasPrefix(trimmed, "---") ||
+		strings.HasPrefix(trimmed, "@@") ||
+		strings.HasPrefix(trimmed, "[diff ") {
+		return s.muted(line)
+	}
+	if strings.HasPrefix(trimmed, "+") {
+		return s.colored(line, ansiGreen)
+	}
+	if strings.HasPrefix(trimmed, "-") {
+		return s.colored(line, ansiRed)
+	}
+
+	return s.muted(line)
+}
+
+// colored applies an ANSI color when terminal styling is enabled.
+func (s terminalStyle) colored(text string, color string) string {
+	if !s.enabled {
+		return text
+	}
+
+	return color + text + ansiReset
 }
 
 // openTone returns the ANSI prefix for a block tone.

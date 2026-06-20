@@ -27,12 +27,39 @@ func Write(ctx context.Context, req WriteRequest) (string, error) {
 	} else if err != nil && !os.IsNotExist(err) {
 		return "", fmt.Errorf("stat file: %w", err)
 	}
+	before, existed, err := existingFileContent(path)
+	if err != nil {
+		return "", err
+	}
 
 	content := []byte(req.Content)
 	if err := atomicWriteFile(ctx, path, content); err != nil {
 		return "", err
 	}
 
-	return fmt.Sprintf("Successfully wrote %d bytes to %s.",
-		len(content), path), nil
+	result := fmt.Sprintf("Successfully wrote %d bytes to %s.",
+		len(content), path)
+	if existed {
+		if diff := unifiedDiff(
+			path, before, req.Content, defaultEditDiffMaxBytes,
+		); diff != "" {
+
+			result += "\n\n" + diff
+		}
+	}
+
+	return result, nil
+}
+
+// existingFileContent reads existing file content for replacement diffs.
+func existingFileContent(path string) (string, bool, error) {
+	content, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("read existing file: %w", err)
+	}
+
+	return string(content), true, nil
 }

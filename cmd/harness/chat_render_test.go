@@ -120,6 +120,53 @@ func TestRenderToolCallKeepsHeaderActive(t *testing.T) {
 	}
 }
 
+// TestRenderToolResultColorsDiffLines verifies live edit and write output uses
+// conventional red and green coloring for unified diff changes.
+func TestRenderToolResultColorsDiffLines(t *testing.T) {
+	var stdout bytes.Buffer
+	renderer := &liveChatRenderer{
+		stdout: &stdout,
+		style: terminalStyle{
+			enabled: true,
+		},
+	}
+	renderer.renderToolResult(
+		session.ToolMessage(
+			"call_1", "edit", "Updated.\n\n--- hello.md\n+++ "+
+				"hello.md\n@@\n-old\n+new\n",
+		),
+	)
+
+	got := stdout.String()
+	if !strings.Contains(got, ansiRed+"   -old"+ansiReset) {
+		t.Fatalf("missing red deletion: %q", got)
+	}
+	if !strings.Contains(got, ansiGreen+"   +new"+ansiReset) {
+		t.Fatalf("missing green insertion: %q", got)
+	}
+	if !strings.Contains(got, ansiDim+"   --- hello.md"+ansiReset) {
+		t.Fatalf("missing muted diff header: %q", got)
+	}
+}
+
+// TestRenderToolResultMutesNonDiffOutput verifies ordinary tool result output
+// stays visually subordinate in live chat.
+func TestRenderToolResultMutesNonDiffOutput(t *testing.T) {
+	var stdout bytes.Buffer
+	renderer := &liveChatRenderer{
+		stdout: &stdout,
+		style: terminalStyle{
+			enabled: true,
+		},
+	}
+	renderer.renderToolResult(session.ToolMessage("call_1", "bash", "ok\n"))
+
+	got := stdout.String()
+	if !strings.Contains(got, ansiDim+"   ok"+ansiReset) {
+		t.Fatalf("missing muted non-diff output: %q", got)
+	}
+}
+
 // TestFormatTurnStatsSummarizesToolCounts verifies the footer keeps per-turn
 // counters compact and grammatical.
 func TestFormatTurnStatsSummarizesToolCounts(t *testing.T) {
