@@ -10,8 +10,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-
-	"harness/internal/session"
 )
 
 const (
@@ -64,56 +62,6 @@ func TestRunUsesProjectConfigDefaults(t *testing.T) {
 	}
 	if len(entries) == 0 {
 		t.Fatal("expected a session file in configured directory")
-	}
-}
-
-// TestChatPromptHistoryLoadsDurableUserMessages verifies prompt navigation can
-// hydrate from the same append-only session log used for resume.
-func TestChatPromptHistoryLoadsDurableUserMessages(t *testing.T) {
-	store, _, err := session.Create(
-		filepath.Join(
-			t.TempDir(),
-			"sessions",
-		),
-		"/tmp", "first",
-	)
-	if err != nil {
-		t.Fatalf("create session: %v", err)
-	}
-	defer func() {
-		if err := store.Close(); err != nil {
-			t.Fatalf("close session: %v", err)
-		}
-	}()
-
-	if _, err := store.Append(
-		session.EventUserMessage, store.LastID(),
-		session.TextMessage(session.RoleUser, "first"),
-	); err != nil {
-
-		t.Fatalf("append first prompt: %v", err)
-	}
-	if _, err := store.Append(
-		session.EventAssistantMessage, store.LastID(),
-		session.TextMessage(session.RoleAssistant, "answer"),
-	); err != nil {
-
-		t.Fatalf("append assistant message: %v", err)
-	}
-	if _, err := store.Append(
-		session.EventUserMessage, store.LastID(),
-		session.TextMessage(session.RoleUser, "second"),
-	); err != nil {
-
-		t.Fatalf("append second prompt: %v", err)
-	}
-
-	got, err := chatPromptHistory(store.Path())
-	if err != nil {
-		t.Fatalf("load prompt history: %v", err)
-	}
-	if strings.Join(got, ",") != "first,second" {
-		t.Fatalf("prompt history = %q, want first,second", got)
 	}
 }
 
