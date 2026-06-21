@@ -77,10 +77,13 @@ func (r *liveChatRenderer) renderMutationToolResult(
 			},
 		)
 	}
-	width := liveDiffNumberWidth(lines)
+	numberWidth := liveDiffNumberWidth(lines)
+	width := terminalWidth(r.stdout)
 	for _, line := range lines {
-		line.NumberWidth = width
-		fmt.Fprintln(r.stdout, r.style.liveDiffLine(line))
+		line.NumberWidth = numberWidth
+		fmt.Fprintln(
+			r.stdout, r.style.liveDiffLine(line, width),
+		)
 	}
 
 	return true
@@ -265,7 +268,7 @@ func (s terminalStyle) diffHeader(text string) string {
 }
 
 // liveDiffLine formats a line-numbered mutation diff row.
-func (s terminalStyle) liveDiffLine(line liveDiffRenderLine) string {
+func (s terminalStyle) liveDiffLine(line liveDiffRenderLine, width int) string {
 	number := ""
 	if line.Number > 0 {
 		number = strconv.Itoa(line.Number)
@@ -284,14 +287,12 @@ func (s terminalStyle) liveDiffLine(line liveDiffRenderLine) string {
 	}
 	switch line.Marker {
 	case '-':
-		return ansiDiffDeleteBackground + ansiRed + row +
-			ansiClearToEndOfLine +
-			ansiReset
+		return ansiDiffDeleteBackground + ansiRed +
+			padPromptRow(row, width) + ansiReset
 
 	case '+':
-		return ansiDiffAddBackground + ansiGreen + row +
-			ansiClearToEndOfLine +
-			ansiReset
+		return ansiDiffAddBackground + ansiGreen +
+			padPromptRow(row, width) + ansiReset
 
 	default:
 		return ansiDim + row + ansiReset

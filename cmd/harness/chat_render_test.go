@@ -311,6 +311,8 @@ func TestRenderToolCallKeepsHeaderActive(t *testing.T) {
 // TestRenderToolResultFormatsDiffWithLineNumbers verifies live edit and write
 // output uses a compact line-numbered diff view.
 func TestRenderToolResultFormatsDiffWithLineNumbers(t *testing.T) {
+	t.Setenv("COLUMNS", "20")
+
 	var stdout bytes.Buffer
 	renderer := &liveChatRenderer{
 		stdout: &stdout,
@@ -329,17 +331,25 @@ func TestRenderToolResultFormatsDiffWithLineNumbers(t *testing.T) {
 	if !strings.Contains(got, ansiBold+"• Edited hello.md (+1 -1)") {
 		t.Fatalf("missing edited diff header: %q", got)
 	}
+	wantDelete := ansiDiffDeleteBackground + ansiRed +
+		padPromptRow("  1 - old", 20) + ansiReset
 	if !strings.Contains(
-		got, ansiDiffDeleteBackground+ansiRed+"  1 - old",
+		got, wantDelete,
 	) {
 
-		t.Fatalf("missing red deletion: %q", got)
+		t.Fatalf("missing padded red deletion: %q", got)
 	}
+	wantAdd := ansiDiffAddBackground + ansiGreen +
+		padPromptRow("  1 + new", 20) + ansiReset
 	if !strings.Contains(
-		got, ansiDiffAddBackground+ansiGreen+"  1 + new",
+		got, wantAdd,
 	) {
 
-		t.Fatalf("missing green insertion: %q", got)
+		t.Fatalf("missing padded green insertion: %q", got)
+	}
+	if strings.Contains(got, ansiClearToEndOfLine) {
+		t.Fatalf("diff rows should be padded, not clear-to-end: %q",
+			got)
 	}
 }
 

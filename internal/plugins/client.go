@@ -97,6 +97,7 @@ func Start(ctx context.Context, cfg config.PluginConfig,
 	name, args := platform.ShellCommand(cfg.Command)
 	cmd := exec.Command(name, args...)
 	cmd.Dir = cwd
+	preparePluginCommand(cmd)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, fmt.Errorf("open plugin stdin: %w", err)
@@ -159,11 +160,11 @@ func (c *Client) closeProcess() error {
 	}
 	killed := false
 	if c.cmd.Process != nil {
-		if err := c.cmd.Process.Kill(); err == nil {
-			killed = true
-		} else if !errors.Is(err, os.ErrProcessDone) {
+		processKilled, err := killPluginProcess(c.cmd)
+		if err != nil && !errors.Is(err, os.ErrProcessDone) {
 			return fmt.Errorf("kill plugin %s: %w", c.name, err)
 		}
+		killed = processKilled
 	}
 	err := c.cmd.Wait()
 	if err != nil && strings.Contains(err.Error(), "waitid: no child") {

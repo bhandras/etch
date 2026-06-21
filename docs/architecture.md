@@ -725,8 +725,11 @@ disabled = false
 The command runs through the platform shell from the current project working
 directory. The plugin is a child process with its own dependencies, so it can be
 written as a separate Go module or in any language that can read stdin and write
-stdout. The default timeout is 30 seconds and applies to initialization and tool
-calls when `timeout_seconds` is omitted.
+stdout. On Unix systems, Harness starts each plugin shell in its own process
+group and terminates that group during shutdown so shell-launched plugin
+children cannot keep stdio pipes open after cancellation. The default timeout is
+30 seconds and applies to initialization and tool calls when `timeout_seconds`
+is omitted.
 
 The first transport is:
 
