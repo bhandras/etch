@@ -2,13 +2,17 @@ package session
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -227,7 +231,9 @@ type IndexEntry struct {
 }
 
 // Store appends events to one session file and tracks the current leaf event.
+// It is safe for concurrent Append, LastID, and Close calls.
 type Store struct {
+	mu     sync.Mutex
 	dir    string
 	id     string
 	path   string
@@ -341,12 +347,22 @@ func (s *Store) Path() string {
 
 // LastID returns the most recently appended event ID.
 func (s *Store) LastID() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	return s.lastID
 }
 
 // Append writes one event to the log and advances the store's current leaf.
 func (s *Store) Append(eventType string, parentID string, data any) (*Event,
 	error) {
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.file == nil {
+		return nil, fmt.Errorf("append session event: store is closed")
+	}
 
 	id, err := NewID()
 	if err != nil {
@@ -368,6 +384,9 @@ func (s *Store) Append(eventType string, parentID string, data any) (*Event,
 	if err := writeEvent(s.file, event); err != nil {
 		return nil, err
 	}
+	if err := s.file.Sync(); err != nil {
+		return nil, fmt.Errorf("sync session file: %w", err)
+	}
 
 	s.lastID = event.ID
 
@@ -376,8 +395,14 @@ func (s *Store) Append(eventType string, parentID string, data any) (*Event,
 
 // Close flushes and closes the underlying session file.
 func (s *Store) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	if s.file == nil {
 		return nil
+	}
+	if err := s.file.Sync(); err != nil {
+		return fmt.Errorf("sync session file: %w", err)
 	}
 	if err := s.file.Close(); err != nil {
 		return fmt.Errorf("close session file: %w", err)
@@ -395,20 +420,50 @@ func ReadAll(path string) ([]Event, error) {
 	}
 	defer file.Close()
 
+	reader := bufio.NewReader(file)
 	var events []Event
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		var event Event
-		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
-			return nil, fmt.Errorf("decode session event: %w", err)
+	for {
+		line, err := reader.ReadBytes('\n')
+		if len(line) > 0 {
+			event, ok, decodeErr := decodeSessionEventLine(
+				line, errors.Is(err, io.EOF),
+			)
+			if decodeErr != nil {
+				return nil, decodeErr
+			}
+			if ok {
+				events = append(events, event)
+			}
 		}
-		events = append(events, event)
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("read session log: %w", err)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("read session log: %w", err)
+		}
 	}
 
 	return events, nil
+}
+
+// decodeSessionEventLine decodes one JSONL row and tolerates a torn final row.
+func decodeSessionEventLine(line []byte, final bool) (Event, bool, error) {
+	line = bytes.TrimSpace(line)
+	if len(line) == 0 {
+		return Event{}, false, nil
+	}
+
+	var event Event
+	if err := json.Unmarshal(line, &event); err != nil {
+		if final {
+			return Event{}, false, nil
+		}
+
+		return Event{}, false, fmt.Errorf("decode session event: %w",
+			err)
+	}
+
+	return event, true, nil
 }
 
 // List reads the session index from dir and returns every known session entry.

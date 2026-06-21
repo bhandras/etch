@@ -2,7 +2,9 @@ package session
 
 import (
 	"encoding/json"
+	"os"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -84,6 +86,46 @@ func TestAppendChainsMessageParents(t *testing.T) {
 	}
 }
 
+// TestAppendSerializesConcurrentWriters verifies Store protects its JSONL file
+// when future callers append from more than one goroutine.
+func TestAppendSerializesConcurrentWriters(t *testing.T) {
+	store, started, err := Create(t.TempDir(), "/work/project", "hello")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	const appends = 16
+	var wg sync.WaitGroup
+	errs := make(chan error, appends)
+	for i := 0; i < appends; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := store.Append(
+				EventUserMessage, started.ID,
+				TextMessage(RoleUser, "hello"),
+			)
+			errs <- err
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	events, err := ReadAll(store.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != appends+1 {
+		t.Fatalf("expected %d events, got %d", appends+1, len(events))
+	}
+}
+
 // TestOpenAppendsToExistingSession verifies that continuation reuses the
 // existing log and parent chain.
 func TestOpenAppendsToExistingSession(t *testing.T) {
@@ -125,6 +167,38 @@ func TestOpenAppendsToExistingSession(t *testing.T) {
 	if assistant.ParentID != user.ID {
 		t.Fatalf("assistant parent mismatch: want %q got %q", user.ID,
 			assistant.ParentID)
+	}
+}
+
+// TestReadAllSkipsTornTrailingLine verifies a crash-truncated final JSONL row
+// does not make the entire session unreadable.
+func TestReadAllSkipsTornTrailingLine(t *testing.T) {
+	store, _, err := Create(t.TempDir(), "/work/project", "hello")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := store.Path()
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, filePermissions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.WriteString(`{"type":"message.user"`); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	events, err := ReadAll(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected only intact event, got %d", len(events))
 	}
 }
 
