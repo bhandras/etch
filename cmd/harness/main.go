@@ -690,7 +690,7 @@ func runChat(cfg cliConfig, stdin io.Reader, stdout io.Writer,
 	for result := range readChatLines(input) {
 		if result.Err != nil {
 			if errors.Is(result.Err, errChatInputInterrupted) {
-				return 130
+				return 0
 			}
 			fmt.Fprintln(
 				stderr, "error: read chat input:", result.Err,

@@ -61,7 +61,7 @@ func setTerminalState(file *os.File, state syscall.Termios) error {
 
 // rawTerminalState returns a mode suitable for byte-at-a-time prompt input.
 func rawTerminalState(state syscall.Termios) syscall.Termios {
-	state.Lflag &^= syscall.ECHO | syscall.ICANON
+	state.Lflag &^= syscall.ECHO | syscall.ICANON | syscall.ISIG
 	state.Cc[syscall.VMIN] = 1
 	state.Cc[syscall.VTIME] = 0
 

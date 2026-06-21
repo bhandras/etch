@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -259,5 +260,46 @@ func TestTerminalChatInputSubmitSkipsBlankPrompt(t *testing.T) {
 			t.Fatalf("input was not cleared: %q",
 				string(input.input))
 		}
+	}
+}
+
+// TestTerminalChatInputCancelDiscardsPrompt verifies interrupts clear the live
+// composer without preserving partially typed input in scrollback.
+func TestTerminalChatInputCancelDiscardsPrompt(t *testing.T) {
+	t.Setenv("COLUMNS", "16")
+	var stdout bytes.Buffer
+	input := &terminalChatInput{
+		stdout: &stdout,
+		input:  []rune("partial"),
+	}
+	if err := input.renderLocked(); err != nil {
+		t.Fatalf("initial render failed: %v", err)
+	}
+	stdout.Reset()
+
+	input.cancelLocked()
+
+	got := stdout.String()
+	if strings.Contains(got, "> partial") {
+		t.Fatalf("interrupted prompt was committed: %q", got)
+	}
+	if input.rendered {
+		t.Fatalf("composer stayed rendered after cancel")
+	}
+	if len(input.input) != 0 {
+		t.Fatalf("input was not cleared: %q", string(input.input))
+	}
+}
+
+// TestRawTerminalStateDisablesInterruptSignal verifies Ctrl+C reaches the
+// prompt editor as input instead of terminating the process through SIGINT.
+func TestRawTerminalStateDisablesInterruptSignal(t *testing.T) {
+	state := syscall.Termios{
+		Lflag: syscall.ECHO | syscall.ICANON | syscall.ISIG,
+	}
+
+	got := rawTerminalState(state)
+	if got.Lflag&syscall.ISIG != 0 {
+		t.Fatalf("raw mode kept ISIG enabled: %#v", got.Lflag)
 	}
 }

@@ -195,7 +195,7 @@ func (i *terminalChatInput) ReadLine() (string, bool, error) {
 
 		case '\x03':
 			i.mu.Lock()
-			i.finishLocked()
+			i.cancelLocked()
 			i.mu.Unlock()
 
 			return "", false, errChatInputInterrupted
@@ -467,6 +467,11 @@ func reflowedRowsForLine(oldWidth int, newWidth int) int {
 	}
 
 	return (oldWidth + newWidth - 1) / newWidth
+}
+
+// cancelLocked erases the active prompt after an explicit interrupt.
+func (i *terminalChatInput) cancelLocked() {
+	i.discardLocked()
 }
 
 // submitLocked accepts current input and commits only non-blank prompts.
