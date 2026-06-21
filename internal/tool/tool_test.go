@@ -34,14 +34,15 @@ func TestDefaultRegistryExecutesLS(t *testing.T) {
 // TestDefaultRegistryExecutesRead verifies that the registry exposes and
 // dispatches the pure-Go text file reading tool.
 func TestDefaultRegistryExecutesRead(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "note.txt")
-	writeFile(t, path, "alpha\nbeta")
+	dir := t.TempDir()
+	t.Chdir(dir)
+	writeFile(t, filepath.Join(dir, "note.txt"), "alpha\nbeta")
 
 	registry := DefaultRegistry()
 	result, err := registry.Execute(context.Background(), model.ToolCall{
 		ID:        "call_1",
 		Name:      NameRead,
-		Arguments: `{"path":` + quoteJSON(path) + `,"limit":1}`,
+		Arguments: `{"path":"note.txt","limit":1}`,
 	})
 	if err != nil {
 		t.Fatal(err)
