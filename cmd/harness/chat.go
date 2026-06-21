@@ -5,13 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"strings"
-
-	"harness/internal/hooks"
-	"harness/internal/model"
-	promptctx "harness/internal/prompt"
-	"harness/internal/session"
 )
 
 // runChat starts a line-oriented interactive chat session.
@@ -20,59 +14,18 @@ func runChat(cfg cliConfig, stdin io.Reader, stdout io.Writer,
 
 	defer showTerminalCursor(stdout)
 
-	cwd, err := os.Getwd()
-	if err != nil {
-		fmt.Fprintln(stderr, "error: get working directory:", err)
-
-		return 1
-	}
-
-	modelClient, err := modelClient(cfg)
+	runtime, err := openChatRuntime(cfg)
 	if err != nil {
 		fmt.Fprintln(stderr, "error:", err)
 
 		return 1
 	}
-	projectContext, err := promptctx.LoadProjectContext(cwd)
-	if err != nil {
-		fmt.Fprintln(stderr, "error:", err)
-
-		return 1
-	}
-	hookRunner, err := hooks.New(cfg.hooks, cwd)
-	if err != nil {
-		fmt.Fprintln(stderr, "error:", err)
-
-		return 1
-	}
-	registry, closePlugins, err := configuredToolRegistry(
-		context.Background(), cfg, cwd,
-	)
-	if err != nil {
-		fmt.Fprintln(stderr, "error:", err)
-
-		return 1
-	}
-	defer closePlugins()
-
-	var sessionPath string
-	initialUsage := model.Usage{}
-	if cfg.sessionID != "" {
-		entry, err := session.Resolve(cfg.sessionDir, cfg.sessionID)
-		if err != nil {
-			fmt.Fprintln(stderr, "error:", err)
-
-			return 1
-		}
-		sessionPath = entry.Path
-		initialUsage, err = chatSessionUsage(sessionPath)
-		if err != nil {
-			fmt.Fprintln(stderr, "error:", err)
-
-			return 1
-		}
+	defer runtime.Close()
+	sessionPath := runtime.sessionPath
+	if runtime.resumeID != "" {
 		fmt.Fprintf(
-			stdout, "continuing session %s\n", shortID(entry.ID),
+			stdout, "continuing session %s\n",
+			shortID(runtime.resumeID),
 		)
 	}
 
@@ -81,7 +34,7 @@ func runChat(cfg cliConfig, stdin io.Reader, stdout io.Writer,
 		_ = input.Close()
 	}()
 	composer := terminalComposer(input)
-	chrome := newChatChrome(cfg, cwd, initialUsage)
+	chrome := newChatChrome(cfg, runtime.cwd, runtime.initialUsage)
 	if composer != nil {
 		composer.SetFooter(chrome.Footer())
 		if sessionPath != "" {
@@ -126,8 +79,8 @@ func runChat(cfg cliConfig, stdin io.Reader, stdout io.Writer,
 		if strings.HasPrefix(commandLine, "/") {
 			keepGoing, nextPath := runChatCommandWithOutput(
 				composer, cfg, commandLine, sessionPath,
-				modelClient, registry, stdout, stderr,
-				hookRunner,
+				runtime.modelClient, runtime.registry, stdout,
+				stderr, runtime.hookRunner,
 			)
 			sessionPath = nextPath
 			if composer != nil && commandLine == "/new" {
@@ -141,9 +94,10 @@ func runChat(cfg cliConfig, stdin io.Reader, stdout io.Writer,
 		}
 
 		turn, err := runChatTurnWithSteering(
-			cfg, line, sessionPath, cwd, projectContext.SystemText,
-			modelClient, registry, hookRunner, chrome, composer,
-			results, &inputDone, &pendingResults, stdout,
+			cfg, line, sessionPath, runtime.cwd, runtime.systemText,
+			runtime.modelClient, runtime.registry,
+			runtime.hookRunner, chrome, composer, results,
+			&inputDone, &pendingResults, stdout,
 		)
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
