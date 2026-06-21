@@ -8,6 +8,12 @@ import (
 	"harness/internal/session"
 )
 
+const (
+	// SummaryContextPrefix marks compacted history when projected into the
+	// model-visible system context.
+	SummaryContextPrefix = "Conversation summary for earlier history:\n"
+)
+
 // HistoryRequest contains durable events to project into model messages.
 type HistoryRequest struct {
 	// Events stores session events in model-visible order.
@@ -33,9 +39,8 @@ func BuildHistoryMessages(req HistoryRequest) ([]model.Message, error) {
 	}
 	if summary != nil {
 		messages = append(messages, model.Message{
-			Role: model.RoleSystem,
-			Content: "Conversation summary for earlier history:\n" +
-				summary.Summary,
+			Role:    model.RoleSystem,
+			Content: SummaryContextPrefix + summary.Summary,
 		})
 	}
 

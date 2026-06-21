@@ -76,20 +76,20 @@ func BuildStats(events []session.Event, systemText string) (Stats, error) {
 	if err != nil {
 		return Stats{}, err
 	}
-	summarySeen := false
+	summaryContextIndex := -1
+	if summary != nil {
+		summaryContextIndex = 0
+		if systemText != "" {
+			summaryContextIndex = 1
+		}
+	}
 	for i, message := range messages {
 		stats.ApproxContextBytes += len(message.Content)
 		stats.ApproxContextTokens += ApproxTokens(message.Content)
-		if i == 0 {
+		if systemText != "" && i == 0 {
 			continue
 		}
-		if summary != nil && !summarySeen &&
-			strings.HasPrefix(
-				message.Content,
-				"Conversation summary for earlier history:\n",
-			) {
-
-			summarySeen = true
+		if i == summaryContextIndex {
 			continue
 		}
 		stats.RawReplayBytes += len(message.Content)
@@ -189,7 +189,10 @@ func ApproxTokensForFiles(files []InstructionFile) int {
 	return tokens
 }
 
-// ApproxTokens estimates model token usage without a provider tokenizer.
+// ApproxTokens estimates context size without a provider tokenizer.
+//
+// It is intentionally approximate and should only drive coarse context-budget
+// decisions such as layer stats and automatic compaction thresholds.
 func ApproxTokens(text string) int {
 	if text == "" {
 		return 0

@@ -53,6 +53,31 @@ func TestBuildStatsReportsActiveSummary(t *testing.T) {
 	if stats.RawReplayTokens == 0 {
 		t.Fatal("expected raw replay token estimate")
 	}
+	if stats.RawReplayTokens >= stats.ApproxContextTokens {
+		t.Fatalf("summary should not be counted as raw replay: %#v",
+			stats)
+	}
+}
+
+// TestBuildStatsCountsRawReplayWithoutSystem verifies empty system prompts do
+// not cause the first user message to be skipped from raw replay stats.
+func TestBuildStatsCountsRawReplayWithoutSystem(t *testing.T) {
+	user := messageEvent(
+		t, "1", session.EventUserMessage,
+		session.TextMessage(session.RoleUser, "hello"),
+	)
+
+	stats, err := BuildStats([]session.Event{user}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.RawReplayEventCount != 1 {
+		t.Fatalf("unexpected raw replay count: %d",
+			stats.RawReplayEventCount)
+	}
+	if stats.RawReplayTokens == 0 {
+		t.Fatal("expected user message in raw replay tokens")
+	}
 }
 
 // TestFormatProjectContextReportsPinnedInputs verifies context stats include

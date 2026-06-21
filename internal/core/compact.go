@@ -313,6 +313,10 @@ type compactionPlan struct {
 }
 
 // planCompaction chooses the summary range, retained boundary, and metadata.
+//
+// Token retention is the primary policy because it tracks context pressure more
+// directly. Message-count retention is only the compatibility fallback when no
+// positive token budget is configured or a token cut cannot be found.
 func planCompaction(events []session.Event,
 	req CompactRequest) (compactionPlan, error) {
 
