@@ -323,21 +323,10 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 				return nil, err
 			}
 			notifyEvent(req.Observer, assistant)
-			metadataParentID := assistant.ID
-			if usageEvent, err := appendModelUsage(
-				store, metadataParentID, response.Usage,
+			if _, err := appendModelMetadata(
+				store, assistant.ID, response, req.Observer,
 			); err != nil {
 				return nil, err
-			} else if usageEvent != nil {
-				notifyEvent(req.Observer, usageEvent)
-				metadataParentID = usageEvent.ID
-			}
-			if responseEvent, err := appendModelResponse(
-				store, metadataParentID, response.ResponseInfo,
-			); err != nil {
-				return nil, err
-			} else if responseEvent != nil {
-				notifyEvent(req.Observer, responseEvent)
 			}
 			text = response.Text
 			finalReceived = true
@@ -368,25 +357,11 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 			return nil, err
 		}
 		notifyEvent(req.Observer, assistant)
-		metadataParentID := assistant.ID
-		usageEvent, err := appendModelUsage(
-			store, metadataParentID, response.Usage,
+		parentID, err = appendModelMetadata(
+			store, assistant.ID, response, req.Observer,
 		)
 		if err != nil {
 			return nil, err
-		}
-		if usageEvent != nil {
-			notifyEvent(req.Observer, usageEvent)
-			metadataParentID = usageEvent.ID
-		}
-		responseEvent, err := appendModelResponse(
-			store, metadataParentID, response.ResponseInfo,
-		)
-		if err != nil {
-			return nil, err
-		}
-		if responseEvent != nil {
-			notifyEvent(req.Observer, responseEvent)
 		}
 		messages = append(messages, model.Message{
 			Role:      model.RoleAssistant,
@@ -402,13 +377,6 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 				response.ResponseInfo.ProviderResponseID
 		}
 
-		parentID = assistant.ID
-		if usageEvent != nil {
-			parentID = usageEvent.ID
-		}
-		if responseEvent != nil {
-			parentID = responseEvent.ID
-		}
 		for _, call := range toolCalls {
 			toolCallCount++
 			notifyToolCallStarted(req.Observer, call)
@@ -1068,6 +1036,32 @@ func collectStream(ctx context.Context, stream <-chan model.Event,
 			}
 		}
 	}
+}
+
+// appendModelMetadata persists usage and response identity after a model pass.
+func appendModelMetadata(store *session.Store, parentID string,
+	response modelResponse, observer Observer) (string, error) {
+
+	usageEvent, err := appendModelUsage(store, parentID, response.Usage)
+	if err != nil {
+		return "", err
+	}
+	if usageEvent != nil {
+		notifyEvent(observer, usageEvent)
+		parentID = usageEvent.ID
+	}
+	responseEvent, err := appendModelResponse(
+		store, parentID, response.ResponseInfo,
+	)
+	if err != nil {
+		return "", err
+	}
+	if responseEvent != nil {
+		notifyEvent(observer, responseEvent)
+		parentID = responseEvent.ID
+	}
+
+	return parentID, nil
 }
 
 // appendModelUsage persists provider usage when a model call reports it.
