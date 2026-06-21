@@ -4,11 +4,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"reflect"
 	"sort"
 	"strings"
 	"testing"
-	"unicode"
 )
 
 // TestParseReadsProviderSessionAndHooks verifies the supported TOML subset maps
@@ -131,6 +129,46 @@ command = "second"
 	}
 }
 
+// TestParseArrayTableAssignmentsNeedArrayScope verifies repeatable config
+// sections can use normal tables as namespaces but not as scalar targets.
+func TestParseArrayTableAssignmentsNeedArrayScope(t *testing.T) {
+	tests := []struct {
+		// name identifies the invalid namespace assignment.
+		name string
+
+		// text is the config fragment expected to fail.
+		text string
+
+		// want is the stable diagnostic fragment expected from schema.
+		want string
+	}{
+		{
+			name: "plugins",
+			text: "[plugins]\nname = \"bad\"\n",
+			want: "plugins setting \"name\" must be inside " +
+				"[[plugins]]",
+		},
+		{
+			name: "hooks",
+			text: "[hooks]\ncommand = \"bad\"\n",
+			want: "hooks setting \"command\" must be inside " +
+				"[[hooks.*]]",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := Parse(test.text)
+			if err == nil {
+				t.Fatal("expected parse error")
+			}
+			if !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("expected %q in error %q", test.want,
+					err.Error())
+			}
+		})
+	}
+}
+
 // TestFindWalksAncestors verifies project config discovery works from nested
 // working directories.
 func TestFindWalksAncestors(t *testing.T) {
@@ -165,6 +203,11 @@ func TestParseRejectsUnknownKeys(t *testing.T) {
 	_, err := Parse("[provider]\nunknown = \"x\"\n")
 	if err == nil {
 		t.Fatal("expected unknown key error")
+	}
+	if !strings.Contains(err.Error(), "unknown key provider.unknown") ||
+		!strings.Contains(err.Error(), "known keys:") {
+
+		t.Fatalf("unexpected unknown key error: %v", err)
 	}
 }
 
@@ -216,64 +259,14 @@ func (k sampleConfigKey) String() string {
 // in sample-config.toml.
 func supportedSampleConfigKeys() map[sampleConfigKey]bool {
 	keys := make(map[sampleConfigKey]bool)
-	addConfigStructKeys(keys, "session", SessionConfig{})
-	addConfigStructKeys(keys, "context", ContextConfig{})
-	addConfigStructKeys(keys, "provider", ProviderConfig{})
-	addConfigStructKeys(keys, "openai", OpenAIConfig{})
-	addConfigStructKeys(keys, "hooks", HookConfig{})
-	addConfigStructKeys(keys, "plugins", PluginConfig{})
-
-	return keys
-}
-
-// addConfigStructKeys adds exported fields from cfg as snake-case config keys.
-func addConfigStructKeys(keys map[sampleConfigKey]bool, table string, cfg any) {
-	typ := reflect.TypeOf(cfg)
-	for i := 0; i < typ.NumField(); i++ {
-		field := typ.Field(i)
-		if !field.IsExported() {
-			continue
-		}
+	for _, field := range Fields() {
 		keys[sampleConfigKey{
-			Table: table,
-			Key:   configFieldKey(field.Name),
+			Table: field.Table,
+			Key:   field.Key,
 		}] = true
 	}
-}
 
-// configFieldKey converts a Go config field name into its TOML key spelling.
-func configFieldKey(name string) string {
-	var words []string
-	var current []rune
-	runes := []rune(name)
-	for i, r := range runes {
-		if shouldStartConfigWord(runes, i) {
-			words = append(words, string(current))
-			current = nil
-		}
-		current = append(current, unicode.ToLower(r))
-	}
-	if len(current) > 0 {
-		words = append(words, string(current))
-	}
-
-	return strings.Join(words, "_")
-}
-
-// shouldStartConfigWord reports whether name[index] begins a new key word.
-func shouldStartConfigWord(name []rune, index int) bool {
-	if index == 0 || !unicode.IsUpper(name[index]) {
-		return false
-	}
-	previous := name[index-1]
-	if unicode.IsLower(previous) || unicode.IsDigit(previous) {
-		return true
-	}
-	if index+1 < len(name) && unicode.IsLower(name[index+1]) {
-		return true
-	}
-
-	return false
+	return keys
 }
 
 // documentedSampleConfigKeys scans the sample file for commented or active TOML

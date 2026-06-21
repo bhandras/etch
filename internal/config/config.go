@@ -203,9 +203,7 @@ func ParseFile(path string) (Config, error) {
 // Parse parses the dependency-free TOML subset used by harness config files.
 func Parse(text string) (Config, error) {
 	var cfg Config
-	var table string
-	var activeHook *HookConfig
-	var activePlugin *PluginConfig
+	scope := configScope{cfg: &cfg}
 
 	lines := strings.Split(text, "\n")
 	for i, raw := range lines {
@@ -220,35 +218,10 @@ func Parse(text string) (Config, error) {
 			if err != nil {
 				return Config{}, lineError(lineNumber, err)
 			}
-			activeHook = nil
-			activePlugin = nil
-			switch {
-			case name == "plugins":
-				cfg.Plugins = append(
-					cfg.Plugins, PluginConfig{},
-				)
-				activePlugin = &cfg.Plugins[len(cfg.Plugins)-1]
-
-			case name == "hooks" ||
-				strings.HasPrefix(name, "hooks."):
-
-				hook, err := hookForArrayTable(name)
-				if err != nil {
-					return Config{}, lineError(
-						lineNumber, err,
-					)
-				}
-				cfg.Hooks = append(cfg.Hooks, hook)
-				activeHook = &cfg.Hooks[len(cfg.Hooks)-1]
-
-			default:
-				return Config{}, lineError(
-					lineNumber,
-					fmt.Errorf("unknown array table %q",
-						name),
-				)
+			scope, err = beginArrayConfigTable(&cfg, name)
+			if err != nil {
+				return Config{}, lineError(lineNumber, err)
 			}
-			table = name
 
 			continue
 		}
@@ -258,15 +231,10 @@ func Parse(text string) (Config, error) {
 			if err != nil {
 				return Config{}, lineError(lineNumber, err)
 			}
-			if !knownTable(name) {
-				return Config{}, lineError(
-					lineNumber,
-					fmt.Errorf("unknown table %q", name),
-				)
+			scope, err = beginNormalConfigTable(&cfg, name)
+			if err != nil {
+				return Config{}, lineError(lineNumber, err)
 			}
-			table = name
-			activeHook = nil
-			activePlugin = nil
 
 			continue
 		}
@@ -275,9 +243,7 @@ func Parse(text string) (Config, error) {
 		if err != nil {
 			return Config{}, lineError(lineNumber, err)
 		}
-		if err := applyAssignment(
-			&cfg, activeHook, activePlugin, table, key, value,
-		); err != nil {
+		if err := applySchemaAssignment(scope, key, value); err != nil {
 			return Config{}, lineError(lineNumber, err)
 		}
 	}
@@ -321,35 +287,6 @@ func parseTable(line string) (string, error) {
 	return name, nil
 }
 
-// hookForArrayTable creates the hook entry represented by an array table.
-func hookForArrayTable(name string) (HookConfig, error) {
-	if name == "hooks" {
-		return HookConfig{}, nil
-	}
-	if !strings.HasPrefix(name, "hooks.") {
-		return HookConfig{}, fmt.Errorf("unknown array table %q", name)
-	}
-	event := strings.TrimPrefix(name, "hooks.")
-	if event == "" || strings.Contains(event, ".") {
-		return HookConfig{}, fmt.Errorf("invalid hook event table %q",
-			name)
-	}
-
-	return HookConfig{Event: event}, nil
-}
-
-// knownTable reports whether name is a supported normal table.
-func knownTable(name string) bool {
-	switch name {
-	case "session", "provider", "openai", "context", "hooks",
-		"plugins":
-		return true
-
-	default:
-		return false
-	}
-}
-
 // parseAssignment splits a TOML scalar assignment into key and value text.
 func parseAssignment(line string) (string, string, error) {
 	index := strings.Index(line, "=")
@@ -366,225 +303,6 @@ func parseAssignment(line string) (string, string, error) {
 	}
 
 	return key, value, nil
-}
-
-// applyAssignment stores one parsed key/value pair into cfg.
-func applyAssignment(cfg *Config, hook *HookConfig, plugin *PluginConfig,
-	table string, key string, value string) error {
-
-	switch {
-	case table == "plugins" && plugin != nil:
-		return applyPluginAssignment(plugin, key, value)
-
-	case strings.HasPrefix(table, "hooks.") ||
-		(table == "hooks" && hook != nil):
-
-		if hook == nil {
-			return fmt.Errorf("hook setting %q must be inside "+
-				"[[hooks.*]]", key)
-		}
-
-		return applyHookAssignment(hook, key, value)
-
-	case table == "session":
-		return applySessionAssignment(&cfg.Session, key, value)
-
-	case table == "provider":
-		return applyProviderAssignment(&cfg.Provider, key, value)
-
-	case table == "openai":
-		return applyOpenAIAssignment(&cfg.OpenAI, key, value)
-
-	case table == "context":
-		return applyContextAssignment(&cfg.Context, key, value)
-
-	case table == "hooks":
-		return fmt.Errorf("unknown hooks key %q", key)
-
-	case table == "plugins":
-		return fmt.Errorf("plugin setting %q must be inside "+
-			"[[plugins]]", key)
-
-	case table == "":
-		return fmt.Errorf("top-level key %q is not supported", key)
-
-	default:
-		return fmt.Errorf("unknown table %q", table)
-	}
-}
-
-// applySessionAssignment stores one session table setting.
-func applySessionAssignment(cfg *SessionConfig, key string,
-	value string) error {
-
-	switch key {
-	case "dir":
-		text, err := parseString(value)
-		cfg.Dir = text
-
-		return err
-
-	case "max_tool_rounds":
-		parsed, err := parsePositiveInt(value)
-		cfg.MaxToolRounds = parsed
-
-		return err
-
-	case "keep_messages":
-		parsed, err := parsePositiveInt(value)
-		cfg.KeepMessages = parsed
-
-		return err
-
-	default:
-		return fmt.Errorf("unknown session key %q", key)
-	}
-}
-
-// applyContextAssignment stores one context table setting.
-func applyContextAssignment(cfg *ContextConfig, key string,
-	value string) error {
-
-	switch key {
-	case "auto_compact":
-		parsed, err := parseBool(value)
-		cfg.AutoCompact = parsed
-
-		return err
-
-	case "auto_compact_threshold_tokens":
-		parsed, err := parsePositiveInt(value)
-		cfg.AutoCompactThresholdTokens = parsed
-
-		return err
-
-	case "keep_recent_tokens":
-		parsed, err := parsePositiveInt(value)
-		cfg.KeepRecentTokens = parsed
-
-		return err
-
-	default:
-		return fmt.Errorf("unknown context key %q", key)
-	}
-}
-
-// applyProviderAssignment stores one provider table setting.
-func applyProviderAssignment(cfg *ProviderConfig, key string,
-	value string) error {
-
-	text, err := parseString(value)
-	if err != nil {
-		return err
-	}
-	switch key {
-	case "name":
-		cfg.Name = text
-
-	case "model":
-		cfg.Model = text
-
-	default:
-		return fmt.Errorf("unknown provider key %q", key)
-	}
-
-	return nil
-}
-
-// applyOpenAIAssignment stores one OpenAI provider table setting.
-func applyOpenAIAssignment(cfg *OpenAIConfig, key string, value string) error {
-	text, err := parseString(value)
-	if err != nil {
-		return err
-	}
-	switch key {
-	case "base_url":
-		cfg.BaseURL = text
-
-	case "api":
-		cfg.API = text
-
-	case "reasoning_effort":
-		cfg.ReasoningEffort = text
-
-	case "reasoning_summary":
-		cfg.ReasoningSummary = text
-
-	default:
-		return fmt.Errorf("unknown openai key %q", key)
-	}
-
-	return nil
-}
-
-// applyPluginAssignment stores one plugin table setting.
-func applyPluginAssignment(cfg *PluginConfig, key string, value string) error {
-	switch key {
-	case "name":
-		text, err := parseString(value)
-		cfg.Name = text
-
-		return err
-
-	case "command":
-		text, err := parseString(value)
-		cfg.Command = text
-
-		return err
-
-	case "timeout_seconds":
-		parsed, err := parsePositiveInt(value)
-		cfg.TimeoutSeconds = parsed
-
-		return err
-
-	case "disabled":
-		parsed, err := parseBool(value)
-		cfg.Disabled = parsed
-
-		return err
-
-	default:
-		return fmt.Errorf("unknown plugin key %q", key)
-	}
-}
-
-// applyHookAssignment stores one hook table setting.
-func applyHookAssignment(cfg *HookConfig, key string, value string) error {
-	switch key {
-	case "event":
-		text, err := parseString(value)
-		cfg.Event = text
-
-		return err
-
-	case "matcher":
-		text, err := parseString(value)
-		cfg.Matcher = text
-
-		return err
-
-	case "command":
-		text, err := parseString(value)
-		cfg.Command = text
-
-		return err
-
-	case "timeout_seconds":
-		parsed, err := parsePositiveInt(value)
-		cfg.TimeoutSeconds = parsed
-
-		return err
-
-	case "disabled":
-		parsed, err := parseBool(value)
-		cfg.Disabled = parsed
-
-		return err
-
-	default:
-		return fmt.Errorf("unknown hook key %q", key)
-	}
 }
 
 // parseString parses a quoted TOML string value.
