@@ -145,7 +145,9 @@ Use OpenRouter through the same OpenAI-compatible provider:
 OPENROUTER_API_KEY=... go run ./cmd/harness chat \
   --provider openai \
   --base-url https://openrouter.ai/api/v1 \
-  --model openai/gpt-4.1-mini
+  --openai-api chat \
+  --model z-ai/glm-5.2 \
+  --api-key "$OPENROUTER_API_KEY"
 ```
 
 Use a local or custom OpenAI-compatible endpoint:
