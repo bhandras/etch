@@ -33,6 +33,8 @@ Harness currently has:
 - local JSONL session logs under `.harness/sessions/`
 - OpenAI-compatible streaming through the standard library, including Platform
   API keys, `CODEX_ACCESS_TOKEN`, and ChatGPT/Codex OAuth login
+- frame-oriented OpenAI SSE parsing that reads response chunks, joins multiline
+  `data:` fields, and reports raw request/response byte metrics
 - project-local TOML config from `.harness/config.toml`
 - pinned project context from `SYSTEM.md` and `AGENTS.md`
 - Agent Skills-style discovery from `.harness/skills/*/SKILL.md` and
@@ -57,6 +59,10 @@ Harness currently has:
 - streaming terminal feedback with an animated working line, grouped tool-call
   batches, compact tool output, and line-numbered colored live diffs for file
   edits and replacements
+- provider-aware working labels: OpenAI Responses reasoning summaries can name
+  the active work, while OpenAI-compatible endpoints use neutral canned labels
+- a chat CLI split into small pieces for runtime setup, command handling,
+  terminal input, rendering, turn orchestration, and footer/status formatting
 
 The compiled default provider is an offline echo model, so the CLI can run
 without network access. Project config can change that default. Use the
@@ -153,16 +159,19 @@ OPENAI_API_KEY=unused go run ./cmd/harness chat \
 
 ## Authentication
 
-Harness supports three OpenAI-compatible credential paths:
+Harness supports four OpenAI-compatible credential paths:
 
-1. A stored ChatGPT/Codex OAuth login from `harness auth login`.
-2. A bearer token from `CODEX_ACCESS_TOKEN`.
-3. API keys from `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, or `--api-key`.
+1. An invocation-scoped API key from `--api-key`.
+2. A stored ChatGPT/Codex OAuth login from `harness auth login`.
+3. A bearer token from `CODEX_ACCESS_TOKEN`.
+4. API keys from `OPENAI_API_KEY` or `OPENROUTER_API_KEY`.
 
 OAuth credentials are stored locally under `.harness/auth/openai.json` by
-default. When a stored OAuth login exists and can be refreshed, Harness uses it
-before environment API keys. API keys remain the fallback for Platform billing,
-OpenRouter, local proxies, and CI.
+default. An explicit `--api-key` always wins for that invocation, which is
+useful for OpenRouter, local proxies, and one-off provider tests. When no
+explicit API key is passed and a stored OAuth login exists and can be refreshed,
+Harness uses OAuth before environment API keys. Environment API keys remain the
+fallback for Platform billing, OpenRouter, local proxies, and CI.
 
 OAuth mode defaults to the Codex backend and the Responses API shape. Explicit
 `--base-url`, `--openai-api`, or `.harness/config.toml` settings override those

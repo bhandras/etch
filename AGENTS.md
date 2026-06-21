@@ -76,7 +76,15 @@ changed and why without reconstructing the whole diff. Use separate paragraphs
 when a message needs to distinguish motivation, implementation details,
 tradeoffs, migration notes, or verification. Format bodies as normal paragraphs
 with real newlines, not literal `\n` sequences, and run them through the commit
-message formatter when needed.
+message formatter before linting.
+
+Format commit messages with the repository formatter instead of manually
+wrapping body text:
+
+```bash
+make commitmsg-fmt file=/tmp/commit-msg inplace=1
+make commitmsg-fmt commit=HEAD
+```
 
 Run the commit-message linter before publishing changes:
 

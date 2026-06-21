@@ -65,7 +65,7 @@ calls, and session events.
 The first package layout can be simple:
 
 ```text
-cmd/agent/                  CLI entrypoint
+cmd/harness/                CLI entrypoint and terminal chat UI
 internal/core/              agent loop and turn state machine
 internal/session/           JSONL append log, branches, replay
 internal/model/             provider-neutral request and event types
@@ -213,9 +213,25 @@ event parsing, not an SDK. Chat Completions remains the default API shape for
 compatibility with local OpenAI-compatible endpoints. The same provider can use
 the Responses API when callers want OpenAI reasoning summaries or richer output
 items. It should measure the existing HTTP/SSE path before we consider a
-WebSocket transport: request body bytes, approximate streamed response bytes,
-time to response headers, and time to the first meaningful stream event are
-reported as provider-neutral `metrics` events and folded into turn timing.
+WebSocket transport: request body bytes, raw streamed response bytes, time to
+response headers, and time to the first meaningful stream event are reported as
+provider-neutral `metrics` events and folded into turn timing.
+
+The OpenAI stream parser is frame-oriented instead of `bufio.Scanner`-based. It
+reads response-body chunks, splits complete server-sent-event frames on blank
+lines, joins multiline `data:` fields, ignores comments and empty frames, and
+surfaces unterminated trailing frames at EOF. This keeps the stdlib-only client
+close to Pi's hand-written SSE fallback shape while avoiding Scanner token
+limits and making byte metrics reflect the real stream body.
+
+Pi's OpenAI Platform path generally consumes the OpenAI SDK's typed async stream
+events, while Pi's Codex path prefers a WebSocket transport with cached session
+state and falls back to HTTP/SSE. Harness intentionally starts without a
+WebSocket dependency: the Responses `previous_response_id` path and prompt cache
+affinity give most of the measured latency benefit while keeping transport code
+small and inspectable. If WebSocket support becomes necessary later, it should
+arrive as a minimal provider transport swap behind the same model event stream,
+not as a new core concept.
 Responses API requests include the durable local session ID as
 `prompt_cache_key`, clamped to OpenAI's documented 64-character limit, so Codex
 and Platform Responses calls can get stable cache affinity across turns. Chat
@@ -532,12 +548,14 @@ These modes must stay distinct. API-key usage follows Platform billing and
 Platform organization policy. Codex OAuth usage follows the user's ChatGPT or
 workspace Codex entitlement, rate limits, and data controls.
 
-Credential resolution prefers the user's local OAuth login when
-`.harness/auth/openai.json` exists and can be refreshed. If no stored OAuth
-login exists, Harness falls back to `CODEX_ACCESS_TOKEN`, then API-key
-credentials. This makes `harness auth login` the default local identity while
-still allowing OpenAI-compatible providers such as OpenRouter in projects or
-environments without OAuth state.
+Credential resolution honors an explicit `--api-key` first because a command
+line credential is an invocation-scoped provider choice. Without an explicit API
+key, Harness prefers the user's local OAuth login when `.harness/auth/openai.json`
+exists and can be refreshed. If no stored OAuth login exists, Harness falls back
+to `CODEX_ACCESS_TOKEN`, then environment API-key credentials. This makes
+`harness auth login` the default local identity while still allowing
+OpenAI-compatible providers such as OpenRouter in projects or environments
+without OAuth state.
 
 OAuth mode defaults to the Codex backend at
 `https://chatgpt.com/backend-api/codex` and the Responses API shape. Explicit
@@ -820,13 +838,14 @@ resources routed to them.
 The first interface should be a CLI with a minimal interactive mode:
 
 ```text
-agent
-agent -p "question"
-agent --json -p "question"
-agent sessions
-agent sessions --json
-agent show <session-id-prefix>
-agent show --json <session-id-prefix>
+harness
+harness -p "question"
+harness --json -p "question"
+harness chat
+harness sessions
+harness sessions --json
+harness show <session-id-prefix>
+harness show --json <session-id-prefix>
 ```
 
 The terminal should show dot-led assistant, tool, and reasoning blocks
@@ -845,6 +864,22 @@ cancellation and raw terminal input instead of being hidden in the renderer.
 The same prompt island handles Up/Down history navigation, preserving the
 current draft and drawing history from the active session transcript.
 
+Transient working labels are provider-aware. Native OpenAI Responses reasoning
+summaries can supply concise labels for the animated status line when reasoning
+summaries are configured, but OpenAI-compatible providers and custom base URLs
+use neutral canned labels such as `Working`, `Thinking`, `Responding`, and
+`Running tools`. This keeps the UI useful for OpenRouter and local gateway
+models whose reasoning streams may not follow OpenAI's summary shape.
+
+The `cmd/harness` package should stay sliced by responsibility as it grows.
+`main.go` owns process entry and top-level dispatch, `flags.go` owns CLI flag
+projection, chat runtime setup owns non-terminal dependencies, slash-command
+files own local command execution, input files own raw terminal state, rendering
+files own display, and turn files own the bridge between interactive input and
+`internal/core`. This is intentionally still one command package, but behavior
+that can be tested without terminal scaffolding should keep moving away from
+the renderer.
+
 A local HTTP server can come later. If we add one, it should expose the same
 session log, model stream, and tool registry as the terminal uses. The server
 must be a client boundary, not a new source of truth.
@@ -862,12 +897,13 @@ go run ./cmd/harness sessions
 go run ./cmd/harness show <session-id-prefix>
 ```
 
-The model is an echo client. That is deliberate. The echo client lets the
-project test prompt admission, streaming response collection, parent-linked
-session events, JSONL persistence, and CLI rendering without network access,
-OpenAI auth, tools, plugins, or MCP. The first OpenAI-compatible provider now
-attaches to this loop through the same model interface instead of shaping the
-kernel.
+The first model was an echo client. That remains deliberate as a test fixture:
+the echo client lets the project test prompt admission, streaming response
+collection, parent-linked session events, JSONL persistence, and CLI rendering
+without network access, OpenAI auth, tools, plugins, or MCP. The current
+OpenAI-compatible provider, tools, hooks, plugins, context projection,
+compaction, steering, and terminal renderer all attach to this loop through the
+same model and session interfaces instead of shaping the kernel.
 
 ## What Not To Put In The Kernel Yet
 

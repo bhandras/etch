@@ -1,6 +1,8 @@
 // Package main provides the harness command-line entrypoint.
 //
-// The command currently supports a non-interactive print mode backed by the
-// dependency-free echo model. It is the smallest runnable path through the
-// session, model, and core packages.
+// The command exposes non-interactive turns, interactive chat, session
+// inspection and resume, built-in tools, plugin tools, OpenAI-compatible auth,
+// project context, hooks, compaction, and terminal rendering. It keeps CLI
+// wiring separate from the core turn engine so provider, tool, and session
+// behavior can remain testable without a terminal.
 package main
