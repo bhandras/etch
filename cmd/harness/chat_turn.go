@@ -66,7 +66,9 @@ func runChatTurnWithSteering(cfg cliConfig, line string, sessionPath string,
 	stdout io.Writer) (*core.TurnResult, error) {
 
 	observer := &chatObserver{
-		renderer:               newLiveChatRenderer(stdout, true),
+		renderer: newLiveChatRenderer(
+			stdout, !shouldStyle(stdout),
+		),
 		chrome:                 chrome,
 		dynamicReasoningStatus: chatDynamicReasoningStatus(cfg),
 	}

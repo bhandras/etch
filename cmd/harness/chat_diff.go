@@ -273,10 +273,11 @@ func (s terminalStyle) liveDiffLine(line liveDiffRenderLine) string {
 	if line.NumberWidth <= 0 {
 		line.NumberWidth = len(number)
 	}
+	text := expandDiffTabs(line.Text)
 	row := fmt.Sprintf("  %*s %c %s", line.NumberWidth, number, line.Marker,
-		line.Text)
+		text)
 	if line.Number == 0 {
-		row = "  " + strings.TrimSpace(line.Text)
+		row = "  " + strings.TrimSpace(text)
 	}
 	if !s.enabled {
 		return row
@@ -295,4 +296,9 @@ func (s terminalStyle) liveDiffLine(line liveDiffRenderLine) string {
 	default:
 		return ansiDim + row + ansiReset
 	}
+}
+
+// expandDiffTabs avoids terminal tab cells that do not inherit row background.
+func expandDiffTabs(text string) string {
+	return strings.ReplaceAll(text, "\t", "    ")
 }

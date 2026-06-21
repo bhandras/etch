@@ -343,6 +343,35 @@ func TestRenderToolResultFormatsDiffWithLineNumbers(t *testing.T) {
 	}
 }
 
+// TestRenderToolResultExpandsDiffTabs verifies tab indentation does not leave
+// uncolored terminal cells inside added or deleted diff rows.
+func TestRenderToolResultExpandsDiffTabs(t *testing.T) {
+	var stdout bytes.Buffer
+	renderer := &liveChatRenderer{
+		stdout: &stdout,
+		style: terminalStyle{
+			enabled: true,
+		},
+	}
+	renderer.renderToolResult(
+		session.ToolMessage(
+			"call_1", "edit", "Updated.\n\n--- hello.go\n+++ "+
+				"hello.go\n@@ -1 +1 @@\n-	old\n+	new\n",
+		),
+	)
+
+	got := stdout.String()
+	if strings.Contains(got, "\t") {
+		t.Fatalf("diff renderer kept terminal tab cells: %q", got)
+	}
+	if !strings.Contains(got, "-     old") ||
+		!strings.Contains(got, "+     new") {
+
+		t.Fatalf("diff renderer did not expand tab indentation: %q",
+			got)
+	}
+}
+
 // TestRenderToolResultMutesNonDiffOutput verifies ordinary tool result output
 // stays visually subordinate in live chat.
 func TestRenderToolResultMutesNonDiffOutput(t *testing.T) {

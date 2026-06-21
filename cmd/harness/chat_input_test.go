@@ -153,6 +153,39 @@ func TestTerminalChatInputPadsStatusAbovePrompt(t *testing.T) {
 		t.Fatalf("status line missing after padding: %q",
 			stdout.String())
 	}
+	if strings.Contains(lines[2], promptIslandStyle()) {
+		t.Fatalf("status composer missed the gap before prompt: %q",
+			stdout.String())
+	}
+	if !strings.Contains(lines[3], promptIslandStyle()) {
+		t.Fatalf("prompt island should follow status without extra "+
+			"gaps: %q", stdout.String())
+	}
+}
+
+// TestTerminalChatInputSubmitPadsOnce verifies committed prompt islands leave
+// exactly one newline before subsequent transcript output.
+func TestTerminalChatInputSubmitPadsOnce(t *testing.T) {
+	t.Setenv("COLUMNS", "64")
+	var stdout bytes.Buffer
+	input := &terminalChatInput{
+		stdout: &stdout,
+		input:  []rune("hello"),
+	}
+
+	if err := input.renderLocked(); err != nil {
+		t.Fatalf("render failed: %v", err)
+	}
+	stdout.Reset()
+	input.finishLocked()
+
+	if strings.HasSuffix(stdout.String(), "\n\n") {
+		t.Fatalf("submit left an extra blank line: %q", stdout.String())
+	}
+	if !strings.HasSuffix(stdout.String(), "\n") {
+		t.Fatalf("submit did not leave one trailing newline: %q",
+			stdout.String())
+	}
 }
 
 // TestTerminalChatInputRendersFooterBelowPrompt verifies the prompt owns one
@@ -247,8 +280,11 @@ func TestTerminalChatInputFinishCommitsPromptOnly(t *testing.T) {
 	if input.rendered {
 		t.Fatalf("composer stayed rendered after submit")
 	}
-	if !strings.HasSuffix(got, ansiReset+"\n\n") {
-		t.Fatalf("submitted prompt did not leave a spacer row: %q", got)
+	if strings.HasSuffix(got, ansiReset+"\n\n") {
+		t.Fatalf("submitted prompt left an extra spacer row: %q", got)
+	}
+	if !strings.HasSuffix(got, ansiReset+"\n") {
+		t.Fatalf("submitted prompt did not end cleanly: %q", got)
 	}
 }
 
