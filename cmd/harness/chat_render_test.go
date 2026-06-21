@@ -388,12 +388,16 @@ func TestPromptIslandRowsMatchWrappedInput(t *testing.T) {
 	if len(inputRows) != 2 {
 		t.Fatalf("prompt input wrapped into %d rows", len(inputRows))
 	}
-	if len(row) != 16 {
-		t.Fatalf("terminal prompt row used wrong width: %d", len(row))
+	if !strings.Contains(row, ansiClearToEndOfLine) {
+		t.Fatalf("terminal prompt row did not clear to end: %q", row)
 	}
 	wantRows := len(inputRows) + 2
 	if strings.Count(island, promptIslandStyle()) != wantRows {
 		t.Fatalf("terminal prompt island used wrong row count: %q",
+			island)
+	}
+	if strings.Count(island, ansiClearToEndOfLine) != wantRows {
+		t.Fatalf("terminal prompt island did not clear each row: %q",
 			island)
 	}
 	if strings.Count(island, "\n") != wantRows-1 {

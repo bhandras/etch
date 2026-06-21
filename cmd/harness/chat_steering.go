@@ -1,6 +1,9 @@
 package main
 
-import "sync"
+import (
+	"strings"
+	"sync"
+)
 
 // chatBusyInput stores input submitted while a model turn is running.
 type chatBusyInput struct {
@@ -73,12 +76,30 @@ func (b *chatBusyInput) Pending() []chatLineResult {
 	defer b.mu.Unlock()
 
 	var results []chatLineResult
+	var steering []string
+	flushSteering := func() {
+		if len(steering) == 0 {
+			return
+		}
+		results = append(results, chatLineResult{
+			Line: strings.Join(steering, "\n\n"),
+			OK:   true,
+		})
+		steering = steering[:0]
+	}
 	for _, entry := range b.entries {
 		if entry.consumed {
 			continue
 		}
+		if entry.steering {
+			steering = append(steering, entry.result.Line)
+
+			continue
+		}
+		flushSteering()
 		results = append(results, entry.result)
 	}
+	flushSteering()
 
 	return results
 }

@@ -89,7 +89,7 @@ func TestTerminalChatInputRedrawsAfterWidthChange(t *testing.T) {
 		t.Fatalf("resize clear did not account for wrapped old "+
 			"rows: %q", got)
 	}
-	if !strings.Contains(got, "> hello wo") ||
+	if !strings.Contains(got, "> hello w") ||
 		!strings.Contains(got, "rld") {
 
 		t.Fatalf("composer did not wrap at the narrower width: %q", got)
@@ -102,10 +102,33 @@ func TestTerminalChatInputRedrawsAfterWidthChange(t *testing.T) {
 	}
 }
 
+// TestTerminalChatInputAvoidsPromptAutowrapColumn verifies exact-width input
+// leaves the cursor in the reserved final column instead of wrapping down.
+func TestTerminalChatInputAvoidsPromptAutowrapColumn(t *testing.T) {
+	t.Setenv("COLUMNS", "10")
+	var stdout bytes.Buffer
+	input := &terminalChatInput{
+		stdout: &stdout,
+		input:  []rune("1234567"),
+	}
+
+	if err := input.renderLocked(); err != nil {
+		t.Fatalf("render failed: %v", err)
+	}
+
+	if input.cursorRow != 2 {
+		t.Fatalf("cursor row = %d, want 2", input.cursorRow)
+	}
+	if !strings.Contains(stdout.String(), ansiClearToEndOfLine) {
+		t.Fatalf("prompt rows did not clear to line end: %q",
+			stdout.String())
+	}
+}
+
 // TestTerminalChatInputPadsStatusAbovePrompt verifies the working indicator
 // has a blank row above it while the prompt keeps its own padding below.
 func TestTerminalChatInputPadsStatusAbovePrompt(t *testing.T) {
-	t.Setenv("COLUMNS", "16")
+	t.Setenv("COLUMNS", "64")
 	var stdout bytes.Buffer
 	input := &terminalChatInput{
 		stdout: &stdout,
@@ -215,9 +238,6 @@ func TestTerminalChatInputFinishCommitsPromptOnly(t *testing.T) {
 	input.finishLocked()
 
 	got := stdout.String()
-	if strings.Contains(got, ansiClearLine) {
-		t.Fatalf("finish unexpectedly used line clearing: %q", got)
-	}
 	if !strings.Contains(got, "> hello") {
 		t.Fatalf("submitted prompt was not committed: %q", got)
 	}
@@ -226,6 +246,9 @@ func TestTerminalChatInputFinishCommitsPromptOnly(t *testing.T) {
 	}
 	if input.rendered {
 		t.Fatalf("composer stayed rendered after submit")
+	}
+	if !strings.HasSuffix(got, ansiReset+"\n\n") {
+		t.Fatalf("submitted prompt did not leave a spacer row: %q", got)
 	}
 }
 
@@ -298,8 +321,9 @@ func TestTerminalChatInputConsumesEscapeSequences(t *testing.T) {
 	reader := bufio.NewReader(strings.NewReader("[A"))
 	input := &terminalChatInput{}
 
-	if !input.consumeEscapeSequence(reader) {
-		t.Fatalf("escape sequence was not consumed")
+	action := input.escapeSequenceAction(reader)
+	if action != escapeSequenceHistoryPrevious {
+		t.Fatalf("escape action = %d, want history previous", action)
 	}
 	if reader.Buffered() != 0 {
 		t.Fatalf("escape sequence left %d buffered bytes",
@@ -313,11 +337,55 @@ func TestTerminalChatInputIgnoresStandaloneEscapeConsumption(t *testing.T) {
 	reader := bufio.NewReader(strings.NewReader("x"))
 	input := &terminalChatInput{}
 
-	if input.consumeEscapeSequence(reader) {
-		t.Fatalf("standalone escape was consumed as a sequence")
+	action := input.escapeSequenceAction(reader)
+	if action != escapeSequenceNone {
+		t.Fatalf("escape action = %d, want none", action)
 	}
 	if reader.Buffered() != 1 {
 		t.Fatalf("standalone escape consumed buffered input")
+	}
+}
+
+// TestTerminalChatInputHistoryNavigationRestoresDraft verifies Up and Down
+// move through prompts while preserving the draft typed before navigation.
+func TestTerminalChatInputHistoryNavigationRestoresDraft(t *testing.T) {
+	input := &terminalChatInput{}
+	input.SetHistory([]string{"first", "second"})
+	input.input = []rune("draft")
+
+	input.navigateHistoryLocked(escapeSequenceHistoryPrevious)
+	if got := string(input.input); got != "second" {
+		t.Fatalf("first previous = %q, want second", got)
+	}
+	input.navigateHistoryLocked(escapeSequenceHistoryPrevious)
+	if got := string(input.input); got != "first" {
+		t.Fatalf("second previous = %q, want first", got)
+	}
+	input.navigateHistoryLocked(escapeSequenceHistoryNext)
+	if got := string(input.input); got != "second" {
+		t.Fatalf("first next = %q, want second", got)
+	}
+	input.navigateHistoryLocked(escapeSequenceHistoryNext)
+	if got := string(input.input); got != "draft" {
+		t.Fatalf("second next = %q, want draft", got)
+	}
+	if input.historyActive {
+		t.Fatalf("history navigation stayed active after draft restore")
+	}
+}
+
+// TestTerminalChatInputHistorySkipsBlankAndDuplicatePrompts verifies prompt
+// history only records useful submissions.
+func TestTerminalChatInputHistorySkipsBlankAndDuplicatePrompts(t *testing.T) {
+	input := &terminalChatInput{}
+
+	input.addHistoryLocked("hello")
+	input.addHistoryLocked("hello")
+	input.addHistoryLocked("   ")
+	input.addHistoryLocked("world")
+
+	if got := strings.Join(input.history, ","); got != "hello,world" {
+		t.Fatalf("history = %q, want hello,world", got)
 	}
 }
 

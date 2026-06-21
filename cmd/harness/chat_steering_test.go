@@ -33,6 +33,45 @@ func TestChatBusyInputStopsSteeringAtPendingInput(t *testing.T) {
 	}
 }
 
+// TestChatBusyInputCoalescesPendingSteering verifies late steering prompts
+// fall through as one follow-up turn when no model boundary can admit them.
+func TestChatBusyInputCoalescesPendingSteering(t *testing.T) {
+	busy := &chatBusyInput{}
+	busy.AddSteering("first")
+	busy.AddSteering("second")
+
+	pending := busy.Pending()
+	if len(pending) != 1 {
+		t.Fatalf("pending count = %d", len(pending))
+	}
+	if pending[0].Line != "first\n\nsecond" {
+		t.Fatalf("pending prompt = %q", pending[0].Line)
+	}
+}
+
+// TestDrainReadyBusyChatInputClassifiesBufferedPrompts verifies submitted
+// input already waiting locally is not replayed as independent turns.
+func TestDrainReadyBusyChatInputClassifiesBufferedPrompts(t *testing.T) {
+	results := make(chan chatLineResult, 2)
+	results <- chatLineResult{Line: "first", OK: true}
+	results <- chatLineResult{Line: "second", OK: true}
+
+	busy := &chatBusyInput{}
+	inputDone := false
+	canceled := drainReadyBusyChatInput(results, &inputDone, busy)
+
+	if canceled {
+		t.Fatalf("ready prompt drain reported cancellation")
+	}
+	if inputDone {
+		t.Fatalf("ready prompt drain marked input complete")
+	}
+	pending := busy.Pending()
+	if len(pending) != 1 || pending[0].Line != "first\n\nsecond" {
+		t.Fatalf("ready prompts were not coalesced: %#v", pending)
+	}
+}
+
 // TestCollectBusyChatInputCancelsOnlyOnEscape verifies active turn collection
 // keeps Ctrl+C as a pending chat interruption while ESC cancels active work.
 func TestCollectBusyChatInputCancelsOnlyOnEscape(t *testing.T) {

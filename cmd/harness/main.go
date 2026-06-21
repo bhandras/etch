@@ -686,6 +686,15 @@ func runChat(cfg cliConfig, stdin io.Reader, stdout io.Writer,
 	chrome := newChatChrome(cfg, cwd, initialUsage)
 	if composer != nil {
 		composer.SetFooter(chrome.Footer())
+		if sessionPath != "" {
+			history, err := chatPromptHistory(sessionPath)
+			if err != nil {
+				fmt.Fprintln(stderr, "error:", err)
+
+				return 1
+			}
+			composer.SetHistory(history)
+		}
 	}
 	results := readChatLines(input)
 	pendingResults := []chatLineResult{}
@@ -723,6 +732,9 @@ func runChat(cfg cliConfig, stdin io.Reader, stdout io.Writer,
 				hookRunner,
 			)
 			sessionPath = nextPath
+			if composer != nil && commandLine == "/new" {
+				composer.SetHistory(nil)
+			}
 			if !keepGoing {
 				return 0
 			}
@@ -844,6 +856,14 @@ func runChatTurnWithSteering(cfg cliConfig, line string, sessionPath string,
 	for {
 		select {
 		case outcome := <-outcomes:
+			if drainReadyBusyChatInput(
+				liveResults, inputDone, busyInput,
+			) {
+
+				observer.renderer.stopStatus()
+
+				return nil, context.Canceled
+			}
 			if outcome.Err != nil {
 				observer.renderer.stopStatus()
 				*pendingResults = append(
@@ -871,6 +891,30 @@ func runChatTurnWithSteering(cfg cliConfig, line string, sessionPath string,
 			}
 		}
 	}
+}
+
+// drainReadyBusyChatInput classifies submitted input already waiting locally.
+func drainReadyBusyChatInput(liveResults <-chan chatLineResult, inputDone *bool,
+	busyInput *chatBusyInput) bool {
+
+	for liveResults != nil {
+		select {
+		case result, ok := <-liveResults:
+			if !ok {
+				*inputDone = true
+
+				return false
+			}
+			if collectBusyChatInput(result, busyInput) {
+				return true
+			}
+
+		default:
+			return false
+		}
+	}
+
+	return false
 }
 
 // chatTurnOutcome carries the asynchronous result of one core turn.
@@ -1054,6 +1098,34 @@ func chatSessionUsage(path string) (model.Usage, error) {
 		ReasoningOutputTokens: status.Usage.ReasoningOutputTokens,
 		TotalTokens:           status.Usage.TotalTokens,
 	}, nil
+}
+
+// chatPromptHistory loads durable user prompts for interactive history.
+func chatPromptHistory(path string) ([]string, error) {
+	events, err := session.ReadAll(path)
+	if err != nil {
+		return nil, fmt.Errorf("read prompt history: %w", err)
+	}
+	prompts := []string{}
+	for _, event := range events {
+		if event.Type != session.EventUserMessage {
+			continue
+		}
+		message, err := decodeMessage(event)
+		if err != nil {
+			return nil, err
+		}
+		if message.Role != session.RoleUser {
+			continue
+		}
+		text := render.MessageText(message)
+		if strings.TrimSpace(text) == "" {
+			continue
+		}
+		prompts = append(prompts, text)
+	}
+
+	return prompts, nil
 }
 
 // chatObserver renders appended assistant and tool messages during a turn.

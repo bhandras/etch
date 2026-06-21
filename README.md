@@ -43,6 +43,7 @@ Harness currently has:
   streams
 - chat steering that lets prompts typed while a turn is running influence the
   next safe model-call boundary
+- session-backed prompt history for Up/Down navigation in interactive chat
 - built-in tools for `ls`, `find`, `grep`, `read`, `write`, `edit`, and
   `bash`, including dry-run previews for exact replacement edits
 - external process hooks for session, turn, prompt, context, tool, and
@@ -265,6 +266,11 @@ from JSONL event gaps, and provider-reported token usage. When providers report
 usage, Harness appends `model.usage` events to the JSONL log and sums them for
 `/status`, including input, cached input, output, reasoning output, and total
 tokens when available.
+
+Interactive chat uses the active session log for prompt history. Up and Down
+cycle through prior user prompts from the current session, including prompts
+loaded through `--session`, while the draft being edited is restored when moving
+past the newest history entry.
 
 ## Built-In Tools
 

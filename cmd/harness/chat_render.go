@@ -59,6 +59,9 @@ const (
 	// ansiClearLine clears the current terminal line.
 	ansiClearLine = "\x1b[2K"
 
+	// ansiClearToEndOfLine clears from the cursor to the end of the line.
+	ansiClearToEndOfLine = "\x1b[K"
+
 	// ansiCursorHide hides the terminal cursor during non-prompt work.
 	ansiCursorHide = "\x1b[?25l"
 
@@ -636,19 +639,20 @@ func promptIslandRows(stdout io.Writer, inputRows []string) string {
 	return strings.Join(rows, "\n")
 }
 
-// promptIslandRow returns a full-width row for shaded prompt backgrounds.
+// promptIslandRow returns an empty shaded row for prompt backgrounds.
 func promptIslandRow(stdout io.Writer) string {
-	return strings.Repeat(" ", terminalWidth(stdout))
+	return promptIslandRowWithText(stdout, "")
 }
 
-// promptIslandRowWithText returns a shaded row padded to the terminal width.
+// promptIslandRowWithText returns a shaded row cleared to terminal width.
 func promptIslandRowWithText(stdout io.Writer, text string) string {
 	return promptIslandRowWithTextWidth(text, terminalWidth(stdout))
 }
 
-// promptIslandRowWithTextWidth returns a shaded row padded to width.
+// promptIslandRowWithTextWidth returns a shaded row cleared to width.
 func promptIslandRowWithTextWidth(text string, width int) string {
-	return promptIslandStyle() + padPromptRow(text, width)
+	return promptIslandStyle() + clipTerminalRow(text, width) +
+		ansiClearToEndOfLine
 }
 
 // ansiMoveUp returns a relative cursor-up movement for the requested rows.

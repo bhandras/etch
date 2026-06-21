@@ -85,6 +85,18 @@ type terminalChatInput struct {
 
 	// statusStartedAt stores when the status line began.
 	statusStartedAt time.Time
+
+	// history stores submitted prompts available through Up/Down.
+	history []string
+
+	// historyActive reports whether input is currently showing history.
+	historyActive bool
+
+	// historyIndex stores the selected history entry when historyActive.
+	historyIndex int
+
+	// historyDraft stores the in-progress input before history navigation.
+	historyDraft []rune
 }
 
 // errChatInputInterrupted reports a request to leave interactive chat.
@@ -92,6 +104,25 @@ var errChatInputInterrupted = errors.New("chat input interrupted")
 
 // errChatInputCanceled reports an escape-key request to cancel active work.
 var errChatInputCanceled = errors.New("chat input canceled")
+
+// escapeSequenceAction describes one interpreted terminal escape sequence.
+type escapeSequenceAction int
+
+const (
+	// escapeSequenceNone means ESC was not followed by a recognized
+	// sequence.
+	escapeSequenceNone escapeSequenceAction = iota
+
+	// escapeSequenceConsumed means a sequence was handled without editor
+	// action.
+	escapeSequenceConsumed
+
+	// escapeSequenceHistoryPrevious selects the previous prompt in history.
+	escapeSequenceHistoryPrevious
+
+	// escapeSequenceHistoryNext selects the next prompt in history.
+	escapeSequenceHistoryNext
+)
 
 // newChatInput selects the richest prompt reader supported by the streams.
 func newChatInput(stdin io.Reader, stdout io.Writer) chatInput {
@@ -179,6 +210,7 @@ func (i *terminalChatInput) ReadLine() (string, bool, error) {
 	reader := bufio.NewReader(i.stdin)
 	i.mu.Lock()
 	i.input = i.input[:0]
+	i.resetHistoryNavigationLocked()
 	err = i.renderLocked()
 	i.mu.Unlock()
 	if err != nil {
@@ -220,13 +252,25 @@ func (i *terminalChatInput) ReadLine() (string, bool, error) {
 		case '\x7f', '\b':
 			i.mu.Lock()
 			if len(i.input) > 0 {
+				i.resetHistoryNavigationLocked()
 				i.input = i.input[:len(i.input)-1]
 			}
 			err = i.renderLocked()
 			i.mu.Unlock()
 
 		case '\x1b':
-			if i.consumeEscapeSequence(reader) {
+			action := i.escapeSequenceAction(reader)
+			if action == escapeSequenceHistoryPrevious ||
+				action == escapeSequenceHistoryNext {
+
+				i.mu.Lock()
+				i.navigateHistoryLocked(action)
+				err = i.renderLocked()
+				i.mu.Unlock()
+
+				break
+			}
+			if action == escapeSequenceConsumed {
 				continue
 			}
 			i.mu.Lock()
@@ -238,6 +282,7 @@ func (i *terminalChatInput) ReadLine() (string, bool, error) {
 		default:
 			if isPromptRune(r) {
 				i.mu.Lock()
+				i.resetHistoryNavigationLocked()
 				i.input = append(i.input, r)
 				err = i.renderLocked()
 				i.mu.Unlock()
@@ -249,8 +294,10 @@ func (i *terminalChatInput) ReadLine() (string, bool, error) {
 	}
 }
 
-// consumeEscapeSequence consumes terminal escape sequences after ESC.
-func (i *terminalChatInput) consumeEscapeSequence(reader *bufio.Reader) bool {
+// escapeSequenceAction interprets terminal escape sequences after ESC.
+func (i *terminalChatInput) escapeSequenceAction(
+	reader *bufio.Reader) escapeSequenceAction {
+
 	deadlineSet := false
 	if i.stdin != nil {
 		err := i.stdin.SetReadDeadline(
@@ -259,38 +306,106 @@ func (i *terminalChatInput) consumeEscapeSequence(reader *bufio.Reader) bool {
 		deadlineSet = err == nil
 	}
 	if i.stdin != nil && !deadlineSet && reader.Buffered() == 0 {
-		return false
+		return escapeSequenceNone
 	}
 	peeked, err := reader.Peek(1)
 	if deadlineSet {
 		_ = i.stdin.SetReadDeadline(time.Time{})
 	}
 	if err != nil {
-		return false
+		return escapeSequenceNone
 	}
 	switch peeked[0] {
 	case '[', 'O':
 		_, _ = reader.ReadByte()
-		i.consumeEscapeSequenceBody(reader)
+		switch i.consumeEscapeSequenceBody(reader) {
+		case 'A':
+			return escapeSequenceHistoryPrevious
 
-		return true
+		case 'B':
+			return escapeSequenceHistoryNext
+
+		default:
+			return escapeSequenceConsumed
+		}
 
 	default:
-		return false
+		return escapeSequenceNone
 	}
 }
 
-// consumeEscapeSequenceBody skips a CSI or SS3 sequence after its introducer.
-func (i *terminalChatInput) consumeEscapeSequenceBody(reader *bufio.Reader) {
+// consumeEscapeSequenceBody skips a CSI or SS3 sequence and returns its final.
+func (i *terminalChatInput) consumeEscapeSequenceBody(
+	reader *bufio.Reader) byte {
+
 	for {
 		next, err := reader.ReadByte()
 		if err != nil {
-			return
+			return 0
 		}
 		if next >= '@' && next <= '~' {
-			return
+			return next
 		}
 	}
+}
+
+// SetHistory replaces the prompt history used by interactive navigation.
+func (i *terminalChatInput) SetHistory(prompts []string) {
+	i.mu.Lock()
+	i.history = i.history[:0]
+	for _, prompt := range prompts {
+		i.addHistoryLocked(prompt)
+	}
+	i.resetHistoryNavigationLocked()
+	i.mu.Unlock()
+}
+
+// addHistoryLocked appends one non-blank prompt unless it duplicates the tail.
+func (i *terminalChatInput) addHistoryLocked(prompt string) {
+	if strings.TrimSpace(prompt) == "" {
+		return
+	}
+	if len(i.history) > 0 && i.history[len(i.history)-1] == prompt {
+		return
+	}
+	i.history = append(i.history, prompt)
+}
+
+// navigateHistoryLocked applies one prompt-history movement.
+func (i *terminalChatInput) navigateHistoryLocked(action escapeSequenceAction) {
+	if len(i.history) == 0 {
+		return
+	}
+	if !i.historyActive {
+		i.historyDraft = append(i.historyDraft[:0], i.input...)
+		i.historyIndex = len(i.history) - 1
+		i.historyActive = true
+	} else {
+		switch action {
+		case escapeSequenceHistoryPrevious:
+			if i.historyIndex > 0 {
+				i.historyIndex--
+			}
+
+		case escapeSequenceHistoryNext:
+			if i.historyIndex < len(i.history)-1 {
+				i.historyIndex++
+			} else {
+				i.input = append(i.input[:0], i.historyDraft...)
+				i.resetHistoryNavigationLocked()
+
+				return
+			}
+		}
+	}
+	i.input = append(i.input[:0], []rune(i.history[i.historyIndex])...)
+}
+
+// resetHistoryNavigationLocked leaves history navigation mode.
+func (i *terminalChatInput) resetHistoryNavigationLocked() {
+	i.historyActive = false
+	i.historyIndex = 0
+	i.historyDraft = i.historyDraft[:0]
 }
 
 // Close restores any terminal state owned by the input reader.
@@ -484,10 +599,9 @@ func (i *terminalChatInput) clearLocked(width int) {
 
 	rows := reflowedComposerRows(i.lastRows, i.lastWidth, width)
 	cursorRow := i.reflowedCursorRow(width)
-	blank := strings.Repeat(" ", width)
 	fmt.Fprintf(i.stdout, "\r%s", ansiMoveUp(cursorRow-1))
 	for row := 0; row < rows; row++ {
-		fmt.Fprintf(i.stdout, "\r%s%s", ansiReset, blank)
+		fmt.Fprintf(i.stdout, "\r%s%s", ansiReset, ansiClearLine)
 		if row < rows-1 {
 			fmt.Fprint(i.stdout, "\n")
 		}
@@ -539,6 +653,7 @@ func (i *terminalChatInput) submitLocked() string {
 
 		return line
 	}
+	i.addHistoryLocked(line)
 	i.finishLocked()
 
 	return line
@@ -554,7 +669,7 @@ func (i *terminalChatInput) finishLocked() {
 	i.clearLocked(width)
 	fmt.Fprint(
 		i.stdout, promptIslandRows(i.stdout, inputRows), ansiReset,
-		"\n",
+		"\n\n",
 	)
 	i.clearRenderStateLocked()
 	i.input = i.input[:0]
@@ -580,9 +695,7 @@ func isPromptRune(r rune) bool {
 
 // wrappedPromptRows wraps the prompt marker and input at terminal width.
 func wrappedPromptRows(input []rune, width int) []string {
-	if width < 1 {
-		width = 1
-	}
+	width = promptContentWidth(width)
 	content := append([]rune("> "), input...)
 	rows := make([]string, 0, len(content)/width+1)
 	for len(content) > width {
@@ -596,11 +709,14 @@ func wrappedPromptRows(input []rune, width int) []string {
 
 // promptCursorColumn returns the cursor column after the current input text.
 func promptCursorColumn(input []rune, width int) int {
-	if width < 1 {
-		return 0
+	width = promptContentWidth(width)
+	content := len(input) + len("> ")
+	column := content % width
+	if column == 0 && content > 0 {
+		return width
 	}
 
-	return (len(input) + len("> ")) % width
+	return column
 }
 
 // composerPrefixRows returns rows rendered before the prompt island itself.
@@ -645,15 +761,33 @@ func footerComposerLine(text string, width int) string {
 
 // padPromptRow pads one display row to the full terminal width.
 func padPromptRow(row string, width int) string {
-	if width <= 0 {
-		return row
+	width = promptContentWidth(width)
+	runes := []rune(row)
+	if len(runes) >= width {
+		return string(runes[:width])
 	}
-	size := len([]rune(row))
-	if size >= width {
+
+	return row + strings.Repeat(" ", width-len(runes))
+}
+
+// promptContentWidth reserves the final terminal column to avoid autowrap.
+func promptContentWidth(width int) int {
+	if width <= 1 {
+		return 1
+	}
+
+	return width - 1
+}
+
+// clipTerminalRow truncates text before the terminal autowrap column.
+func clipTerminalRow(row string, width int) string {
+	limit := promptContentWidth(width)
+	runes := []rune(row)
+	if len(runes) <= limit {
 		return row
 	}
 
-	return row + strings.Repeat(" ", width-size)
+	return string(runes[:limit])
 }
 
 // isTerminalFile reports whether file is connected to a terminal device.

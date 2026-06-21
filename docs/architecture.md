@@ -105,8 +105,8 @@ tool-call protocol order valid: an assistant tool-call message is still followed
 by its tool results before any new user message appears. Slash commands, EOF,
 and input errors act as ordering barriers, so later typed text is not steered
 past an earlier pending command. If a turn finishes without another model-call
-boundary, unconsumed steering remains queued as the next normal prompt in the
-chat loop.
+boundary, consecutive unconsumed steering prompts are queued as one combined
+follow-up prompt in the chat loop rather than as separate independent turns.
 
 The loop uses a configurable safety bound rather than a tiny fixed ceiling.
 `DefaultMaxToolRounds` is 32 model/tool exchange rounds per user turn. A round
@@ -161,6 +161,13 @@ Each new session appends an index row with the session ID, path, creation time,
 working directory, and a short title derived from the first prompt. The index is
 for local listing and prefix resolution only. The session file remains the
 durable transcript.
+
+Interactive prompt history should also be a projection over the session log.
+The terminal editor hydrates Up/Down history from `message.user` events when a
+session is continued, and live accepted prompts are added to the same in-memory
+navigation list. Slash commands are local control input rather than model
+context, so they do not need to become durable prompt-history records unless a
+future command explicitly changes session state.
 
 ## Model Stream
 
@@ -806,6 +813,8 @@ terminal tone, small markdown styling, capped tool output, grouped tool-call
 batches, colored diffs, and turn footers, while `show` remains a plain durable
 transcript view. Interactive ESC cancellation is implemented with context
 cancellation and raw terminal input instead of being hidden in the renderer.
+The same prompt island handles Up/Down history navigation, preserving the
+current draft and drawing history from the active session transcript.
 
 A local HTTP server can come later. If we add one, it should expose the same
 session log, model stream, and tool registry as the terminal uses. The server
