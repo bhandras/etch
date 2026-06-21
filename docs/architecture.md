@@ -170,6 +170,13 @@ navigation list. Slash commands are local control input rather than model
 context, so they do not need to become durable prompt-history records unless a
 future command explicitly changes session state.
 
+Session resume is a CLI projection over the same append-only log. `harness
+resume <session-id-prefix>` resolves the local session index, opens the matched
+JSONL file for append, seeds prompt history and usage counters from existing
+events, and then enters the ordinary chat loop. Clean chat exits print the full
+session id and a copyable resume command so users do not need to inspect the
+index before continuing work later.
+
 ## Model Stream
 
 Providers should adapt to one internal request and event stream. The agent loop
@@ -849,6 +856,7 @@ harness
 harness -p "question"
 harness --json -p "question"
 harness chat
+harness resume <session-id-prefix>
 harness sessions
 harness sessions --json
 harness show <session-id-prefix>

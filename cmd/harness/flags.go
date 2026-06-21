@@ -22,6 +22,9 @@ func parseFlags(args []string, stderr io.Writer) (cliConfig, error) {
 		case commandShow:
 			return parseShowFlags(args[1:], stderr)
 
+		case commandResume:
+			return parseResumeFlags(args[1:], stderr)
+
 		case commandTool:
 			return parseToolFlags(args[1:], stderr)
 
@@ -257,13 +260,50 @@ func parseToolFlags(args []string, stderr io.Writer) (cliConfig, error) {
 
 // parseChatFlags converts chat subcommand flags into configuration.
 func parseChatFlags(args []string, stderr io.Writer) (cliConfig, error) {
-	defaults, err := loadConfigDefaults()
+	cfg, fs, err := parseChatLikeFlags(commandChat, args, stderr)
 	if err != nil {
 		return cliConfig{}, err
 	}
+	if fs.NArg() != 0 {
+		return cliConfig{}, fmt.Errorf("chat accepts no positional " +
+			"arguments")
+	}
+
+	return cfg, nil
+}
+
+// parseResumeFlags converts resume subcommand flags into chat configuration.
+func parseResumeFlags(args []string, stderr io.Writer) (cliConfig, error) {
+	cfg, fs, err := parseChatLikeFlags(commandResume, args, stderr)
+	if err != nil {
+		return cliConfig{}, err
+	}
+	if cfg.sessionID != "" && fs.NArg() != 0 {
+		return cliConfig{}, fmt.Errorf("resume accepts either " +
+			"--session or a positional session id, not both")
+	}
+	if cfg.sessionID == "" {
+		if fs.NArg() != 1 {
+			return cliConfig{}, fmt.Errorf("resume requires " +
+				"exactly one session id")
+		}
+		cfg.sessionID = fs.Arg(0)
+	}
+
+	return cfg, nil
+}
+
+// parseChatLikeFlags converts chat-style flags shared by chat and resume.
+func parseChatLikeFlags(name string, args []string, stderr io.Writer) (
+	cliConfig, *flag.FlagSet, error) {
+
+	defaults, err := loadConfigDefaults()
+	if err != nil {
+		return cliConfig{}, nil, err
+	}
 	cfg := configCLIConfigDefaults(defaults)
 	cfg.command = commandChat
-	fs := flag.NewFlagSet(commandChat, flag.ContinueOnError)
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.StringVar(
 		&cfg.sessionDir, "session-dir", cfg.sessionDir,
@@ -297,23 +337,23 @@ func parseChatFlags(args []string, stderr io.Writer) (cliConfig, error) {
 		"approximate token threshold for automatic compaction",
 	)
 	if err := fs.Parse(args); err != nil {
-		return cliConfig{}, err
+		return cliConfig{}, nil, err
 	}
 	if cfg.maxToolRounds < 1 {
-		return cliConfig{}, fmt.Errorf("max-tool-rounds must be " +
+		return cliConfig{}, nil, fmt.Errorf("max-tool-rounds must be " +
 			"positive")
 	}
 	if cfg.autoCompact && cfg.autoCompactLimit < 1 {
-		return cliConfig{}, fmt.Errorf(
+		return cliConfig{}, nil, fmt.Errorf(
 			"auto-compact-threshold-tokens must be positive")
 	}
 	if cfg.keepRecentTokens < 1 {
-		return cliConfig{}, fmt.Errorf("keep-recent-tokens must be " +
-			"positive")
+		return cliConfig{}, nil, fmt.Errorf("keep-recent-tokens must " +
+			"be positive")
 	}
 	mergeExplicitProviderFlags(fs, &cfg, providerFlags)
 
-	return cfg, nil
+	return cfg, fs, nil
 }
 
 // parseCompactFlags converts compact subcommand flags into configuration.

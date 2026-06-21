@@ -76,6 +76,7 @@ and fixtures.
 | --- | --- |
 | `harness -p "prompt"` | Run one non-interactive prompt. |
 | `harness chat` | Start an interactive chat session. |
+| `harness resume <id-prefix>` | Continue an existing chat session. |
 | `harness auth login/status/logout` | Manage local OpenAI/Codex OAuth credentials. |
 | `harness tool <name>` | Run a built-in tool directly. |
 | `harness sessions` | List local session logs. |
@@ -259,7 +260,14 @@ Inspect local sessions:
 ```bash
 go run ./cmd/harness sessions
 go run ./cmd/harness show <session-id-prefix>
+go run ./cmd/harness resume <session-id-prefix>
 ```
+
+On clean exit, chat prints the session id and a copyable `harness resume`
+command. `harness resume <id-prefix>` is equivalent to starting chat with the
+matching session preloaded, including prompt history, usage counters, compacted
+summaries, and prior model response continuation metadata when the provider can
+use it.
 
 Inside chat, use slash commands for local session and context operations:
 

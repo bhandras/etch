@@ -25,6 +25,9 @@ const (
 	// commandShow renders one local session transcript.
 	commandShow = "show"
 
+	// commandResume continues a local session through the chat loop.
+	commandResume = "resume"
+
 	// commandTool executes a builtin tool directly for smoke testing.
 	commandTool = "tool"
 
@@ -186,6 +189,7 @@ func printTopLevelHelp(stdout io.Writer) {
 	fmt.Fprintln(stdout, "Usage:")
 	fmt.Fprintln(stdout, `  harness -p "prompt" [flags]`)
 	fmt.Fprintln(stdout, "  harness chat [flags]")
+	fmt.Fprintln(stdout, "  harness resume [flags] <session-id-prefix>")
 	fmt.Fprintln(stdout, "  harness auth <login|status|logout> [flags]")
 	fmt.Fprintln(stdout, "  harness tool <name> [flags] [args]")
 	fmt.Fprintln(stdout, "  harness sessions [flags]")
@@ -195,6 +199,7 @@ func printTopLevelHelp(stdout io.Writer) {
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Commands:")
 	fmt.Fprintln(stdout, "  chat      start an interactive chat session")
+	fmt.Fprintln(stdout, "  resume    continue an existing chat session")
 	fmt.Fprintln(stdout, "  auth      manage OpenAI OAuth credentials")
 	fmt.Fprintln(stdout, "  tool      run a builtin tool directly")
 	fmt.Fprintln(stdout, "  sessions  list local JSONL sessions")
@@ -218,6 +223,11 @@ func printCommandHelp(args []string, stdout io.Writer) error {
 
 	case commandChat:
 		_, err := parseChatFlags([]string{"-h"}, stdout)
+
+		return ignoreHelpError(err)
+
+	case commandResume:
+		_, err := parseResumeFlags([]string{"-h"}, stdout)
 
 		return ignoreHelpError(err)
 

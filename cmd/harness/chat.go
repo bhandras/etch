@@ -23,6 +23,13 @@ func runChat(cfg cliConfig, stdin io.Reader, stdout io.Writer,
 	}
 	defer runtime.Close()
 	sessionPath := runtime.sessionPath
+	activeSessionID := runtime.resumeID
+	code := 0
+	defer func() {
+		if code == 0 {
+			printChatResumeHint(cfg, activeSessionID, stdout)
+		}
+	}()
 	if runtime.resumeID != "" {
 		fmt.Fprintf(
 			stdout, "continuing session %s\n",
@@ -43,6 +50,8 @@ func runChat(cfg cliConfig, stdin io.Reader, stdout io.Writer,
 			if err != nil {
 				fmt.Fprintln(stderr, "error:", err)
 
+				code = 1
+
 				return 1
 			}
 			composer.SetHistory(history)
@@ -61,11 +70,15 @@ func runChat(cfg cliConfig, stdin io.Reader, stdout io.Writer,
 				continue
 			}
 			if errors.Is(result.Err, errChatInputInterrupted) {
+				code = 0
+
 				return 0
 			}
 			fmt.Fprintln(
 				stderr, "error: read chat input:", result.Err,
 			)
+
+			code = 1
 
 			return 1
 		}
@@ -87,7 +100,12 @@ func runChat(cfg cliConfig, stdin io.Reader, stdout io.Writer,
 			if composer != nil && commandLine == "/new" {
 				composer.SetHistory(nil)
 			}
+			if nextPath == "" {
+				activeSessionID = ""
+			}
 			if !keepGoing {
+				code = 0
+
 				return 0
 			}
 
@@ -108,10 +126,46 @@ func runChat(cfg cliConfig, stdin io.Reader, stdout io.Writer,
 			}
 			fmt.Fprintln(stderr, "error:", err)
 
+			code = 1
+
 			return 1
 		}
 		sessionPath = turn.SessionPath
+		activeSessionID = turn.SessionID
 	}
 
+	code = 0
+
 	return 0
+}
+
+// printChatResumeHint writes the command that continues an active session.
+func printChatResumeHint(cfg cliConfig, sessionID string, stdout io.Writer) {
+	if sessionID == "" {
+		return
+	}
+	fmt.Fprintf(stdout, "\nsession: %s\n", sessionID)
+	fmt.Fprintf(stdout, "resume: %s\n", chatResumeCommand(cfg, sessionID))
+}
+
+// chatResumeCommand returns a copyable command for continuing sessionID.
+func chatResumeCommand(cfg cliConfig, sessionID string) string {
+	if cfg.sessionDir == "" || cfg.sessionDir == defaultSessionDir {
+		return "harness resume " + sessionID
+	}
+
+	return "harness resume --session-dir " + shellQuote(cfg.sessionDir) +
+		" " + sessionID
+}
+
+// shellQuote returns a conservative shell token for a display command.
+func shellQuote(text string) string {
+	if text == "" {
+		return "''"
+	}
+	if strings.ContainsAny(text, " \t\n'\"\\$`!*?[]{}();&|<>") {
+		return "'" + strings.ReplaceAll(text, "'", "'\"'\"'") + "'"
+	}
+
+	return text
 }
