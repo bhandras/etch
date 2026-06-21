@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	"harness/internal/model"
 )
@@ -85,10 +86,12 @@ func (c *Client) Stream(ctx context.Context, req model.Request) (
 		httpClient = http.DefaultClient
 	}
 
+	startedAt := time.Now()
 	resp, err := httpClient.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("openai request: %w", err)
 	}
+	timeToHeaders := time.Since(startedAt)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		defer resp.Body.Close()
 
@@ -96,10 +99,15 @@ func (c *Client) Stream(ctx context.Context, req model.Request) (
 	}
 
 	events := make(chan model.Event)
+	metrics := streamMetrics{
+		startedAt:     startedAt,
+		timeToHeaders: timeToHeaders,
+		requestBytes:  requestContentLength(httpReq),
+	}
 	if c.apiMode() == APIResponses {
-		go streamResponsesAPI(ctx, resp.Body, events)
+		go streamResponsesAPI(ctx, resp.Body, events, metrics)
 	} else {
-		go streamChatCompletions(ctx, resp.Body, events)
+		go streamChatCompletions(ctx, resp.Body, events, metrics)
 	}
 
 	return events, nil
@@ -221,9 +229,76 @@ func (c *Client) addCommonHeaders(req *http.Request) {
 	}
 }
 
+// requestContentLength returns the JSON body length when the request knows it.
+func requestContentLength(req *http.Request) int {
+	if req.ContentLength <= 0 {
+		return 0
+	}
+
+	return int(req.ContentLength)
+}
+
+// streamMetrics tracks one HTTP/SSE model call while it is decoded.
+type streamMetrics struct {
+	// startedAt is the wall-clock time before the HTTP request began.
+	startedAt time.Time
+
+	// timeToHeaders is how long the provider took to return headers.
+	timeToHeaders time.Duration
+
+	// requestBytes is the serialized JSON request body size.
+	requestBytes int
+
+	// responseBytes is the approximate SSE line bytes read so far.
+	responseBytes int
+
+	// timeToFirstEvent is set after the first meaningful SSE payload.
+	timeToFirstEvent time.Duration
+}
+
+// addLine records one raw scanner line in the approximate stream byte total.
+func (m *streamMetrics) addLine(line []byte) {
+	m.responseBytes += len(line)
+}
+
+// markEvent records the first meaningful event payload arrival time.
+func (m *streamMetrics) markEvent(payload string) {
+	if m.timeToFirstEvent != 0 || payload == "" || payload == "[DONE]" {
+		return
+	}
+	m.timeToFirstEvent = time.Since(m.startedAt)
+}
+
+// event returns a neutral model metric event for the completed stream.
+func (m streamMetrics) event() model.Event {
+	return model.Event{
+		Type: model.EventMetrics,
+		Metrics: model.Metrics{
+			RequestBytes:     m.requestBytes,
+			ResponseBytes:    m.responseBytes,
+			TimeToHeaders:    m.timeToHeaders,
+			TimeToFirstEvent: m.timeToFirstEvent,
+		},
+	}
+}
+
+// sendMetricsAndDone reports transport metrics before the stream completion.
+func sendMetricsAndDone(ctx context.Context, events chan<- model.Event,
+	metrics streamMetrics) {
+
+	if !sendEvent(ctx, events, metrics.event()) {
+		return
+	}
+	sendEvent(
+		ctx, events, model.Event{
+			Type: model.EventDone,
+		},
+	)
+}
+
 // streamChatCompletions decodes Chat Completions SSE into neutral events.
 func streamChatCompletions(ctx context.Context, body io.ReadCloser,
-	events chan<- model.Event) {
+	events chan<- model.Event, metrics streamMetrics) {
 
 	defer close(events)
 	defer body.Close()
@@ -231,6 +306,7 @@ func streamChatCompletions(ctx context.Context, body io.ReadCloser,
 	accumulator := newToolAccumulator()
 	scanner := bufio.NewScanner(body)
 	for scanner.Scan() {
+		metrics.addLine(scanner.Bytes())
 		select {
 		case <-ctx.Done():
 			return
@@ -242,6 +318,7 @@ func streamChatCompletions(ctx context.Context, body io.ReadCloser,
 		if !ok {
 			continue
 		}
+		metrics.markEvent(payload)
 		if payload == "[DONE]" {
 			for _, call := range accumulator.calls() {
 				if !sendEvent(ctx, events, model.Event{
@@ -251,11 +328,7 @@ func streamChatCompletions(ctx context.Context, body io.ReadCloser,
 					return
 				}
 			}
-			sendEvent(
-				ctx, events, model.Event{
-					Type: model.EventDone,
-				},
-			)
+			sendMetricsAndDone(ctx, events, metrics)
 
 			return
 		}
@@ -353,7 +426,7 @@ func decodeChunk(payload []byte) (decodedChunk, error) {
 
 // streamResponsesAPI decodes Responses API SSE into neutral model events.
 func streamResponsesAPI(ctx context.Context, body io.ReadCloser,
-	events chan<- model.Event) {
+	events chan<- model.Event, metrics streamMetrics) {
 
 	defer close(events)
 	defer body.Close()
@@ -361,6 +434,7 @@ func streamResponsesAPI(ctx context.Context, body io.ReadCloser,
 	decoder := responseStreamDecoder{}
 	scanner := bufio.NewScanner(body)
 	for scanner.Scan() {
+		metrics.addLine(scanner.Bytes())
 		select {
 		case <-ctx.Done():
 			return
@@ -372,17 +446,19 @@ func streamResponsesAPI(ctx context.Context, body io.ReadCloser,
 		if !ok {
 			continue
 		}
+		metrics.markEvent(payload)
 		if payload == "[DONE]" {
-			sendEvent(
-				ctx, events, model.Event{
-					Type: model.EventDone,
-				},
-			)
+			sendMetricsAndDone(ctx, events, metrics)
 
 			return
 		}
 
 		for _, event := range decoder.decode([]byte(payload)) {
+			if event.Type == model.EventDone {
+				sendMetricsAndDone(ctx, events, metrics)
+
+				return
+			}
 			if !sendEvent(ctx, events, event) {
 				return
 			}

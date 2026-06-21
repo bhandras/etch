@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 )
 
 const (
@@ -32,6 +33,9 @@ const (
 
 	// EventUsage reports provider-counted token usage for one model call.
 	EventUsage = "usage"
+
+	// EventMetrics reports transport-level measurements for one model call.
+	EventMetrics = "metrics"
 
 	// EventDone reports that a stream completed normally.
 	EventDone = "done"
@@ -82,6 +86,9 @@ type Event struct {
 	// Usage stores token counters for EventUsage events.
 	Usage Usage
 
+	// Metrics stores transport counters for EventMetrics events.
+	Metrics Metrics
+
 	// Err stores a provider error message for EventError events.
 	Err string
 }
@@ -122,6 +129,39 @@ func (u Usage) Empty() bool {
 	return u.InputTokens == 0 && u.CachedInputTokens == 0 &&
 		u.OutputTokens == 0 && u.ReasoningOutputTokens == 0 &&
 		u.TotalTokens == 0
+}
+
+// Metrics stores transport-level measurements for one model call.
+type Metrics struct {
+	// RequestBytes is the JSON request body size sent to the provider.
+	RequestBytes int
+
+	// ResponseBytes is the approximate streamed response bytes read.
+	ResponseBytes int
+
+	// TimeToHeaders is the duration from starting the request until the
+	// provider returned response headers.
+	TimeToHeaders time.Duration
+
+	// TimeToFirstEvent is the duration from starting the request until the
+	// first meaningful stream event payload was read.
+	TimeToFirstEvent time.Duration
+}
+
+// Add returns the element-wise sum of two transport metric values.
+func (m Metrics) Add(other Metrics) Metrics {
+	return Metrics{
+		RequestBytes:     m.RequestBytes + other.RequestBytes,
+		ResponseBytes:    m.ResponseBytes + other.ResponseBytes,
+		TimeToHeaders:    m.TimeToHeaders + other.TimeToHeaders,
+		TimeToFirstEvent: m.TimeToFirstEvent + other.TimeToFirstEvent,
+	}
+}
+
+// Empty reports whether metrics contains no provider measurements.
+func (m Metrics) Empty() bool {
+	return m.RequestBytes == 0 && m.ResponseBytes == 0 &&
+		m.TimeToHeaders == 0 && m.TimeToFirstEvent == 0
 }
 
 // ToolSpec describes one model-callable tool.

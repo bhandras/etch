@@ -182,6 +182,7 @@ text start/delta/end
 reasoning start/delta/end
 tool-call start/delta/end
 usage
+metrics
 error
 done
 ```
@@ -209,7 +210,10 @@ OpenAI-compatible streaming client. It uses plain `net/http` and server-sent
 event parsing, not an SDK. Chat Completions remains the default API shape for
 compatibility with local OpenAI-compatible endpoints. The same provider can use
 the Responses API when callers want OpenAI reasoning summaries or richer output
-items.
+items. It should measure the existing HTTP/SSE path before we consider a
+WebSocket transport: request body bytes, approximate streamed response bytes,
+time to response headers, and time to the first meaningful stream event are
+reported as provider-neutral `metrics` events and folded into turn timing.
 
 OpenAI-compatible usage is selected explicitly:
 

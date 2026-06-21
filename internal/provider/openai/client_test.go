@@ -89,8 +89,8 @@ func TestClientStreamsChatCompletions(t *testing.T) {
 
 		t.Fatalf("unexpected messages: %#v", gotRequest.Messages)
 	}
-	if len(got) != 4 {
-		t.Fatalf("expected four events, got %#v", got)
+	if len(got) != 5 {
+		t.Fatalf("expected five events, got %#v", got)
 	}
 	if got[0].Text != "hel" || got[1].Text != "lo" {
 		t.Fatalf("unexpected text events: %#v", got)
@@ -104,8 +104,16 @@ func TestClientStreamsChatCompletions(t *testing.T) {
 
 		t.Fatalf("unexpected usage event: %#v", got[2])
 	}
-	if got[3].Type != model.EventDone {
-		t.Fatalf("expected done event, got %#v", got[3])
+	if got[3].Type != model.EventMetrics ||
+		got[3].Metrics.RequestBytes == 0 ||
+		got[3].Metrics.ResponseBytes == 0 ||
+		got[3].Metrics.TimeToHeaders == 0 ||
+		got[3].Metrics.TimeToFirstEvent == 0 {
+
+		t.Fatalf("unexpected metrics event: %#v", got[3])
+	}
+	if got[4].Type != model.EventDone {
+		t.Fatalf("expected done event, got %#v", got[4])
 	}
 }
 
@@ -166,8 +174,8 @@ func TestClientStreamsFragmentedToolCall(t *testing.T) {
 
 		t.Fatalf("request missing tool schema: %#v", gotRequest.Tools)
 	}
-	if len(got) != 2 {
-		t.Fatalf("expected tool call and done, got %#v", got)
+	if len(got) != 3 {
+		t.Fatalf("expected tool call, metrics, and done, got %#v", got)
 	}
 	if got[0].Type != model.EventToolCall {
 		t.Fatalf("expected tool call event, got %#v", got[0])
@@ -178,8 +186,14 @@ func TestClientStreamsFragmentedToolCall(t *testing.T) {
 
 		t.Fatalf("unexpected tool call: %#v", got[0].ToolCall)
 	}
-	if got[1].Type != model.EventDone {
-		t.Fatalf("expected done event, got %#v", got[1])
+	if got[1].Type != model.EventMetrics ||
+		got[1].Metrics.RequestBytes == 0 ||
+		got[1].Metrics.ResponseBytes == 0 {
+
+		t.Fatalf("unexpected metrics event: %#v", got[1])
+	}
+	if got[2].Type != model.EventDone {
+		t.Fatalf("expected done event, got %#v", got[2])
 	}
 }
 
@@ -216,8 +230,8 @@ func TestClientStreamsChatReasoning(t *testing.T) {
 	}
 
 	got := collectEvents(events)
-	if len(got) != 3 {
-		t.Fatalf("expected three events, got %#v", got)
+	if len(got) != 4 {
+		t.Fatalf("expected four events, got %#v", got)
 	}
 	if got[0].Type != model.EventReasoningDelta ||
 		got[0].Text != "checking" {
@@ -226,6 +240,12 @@ func TestClientStreamsChatReasoning(t *testing.T) {
 	}
 	if got[1].Type != model.EventTextDelta || got[1].Text != "hi" {
 		t.Fatalf("unexpected text event: %#v", got[1])
+	}
+	if got[2].Type != model.EventMetrics {
+		t.Fatalf("expected metrics event, got %#v", got[2])
+	}
+	if got[3].Type != model.EventDone {
+		t.Fatalf("expected done event, got %#v", got[3])
 	}
 }
 
@@ -337,8 +357,8 @@ func TestClientStreamsResponsesAPI(t *testing.T) {
 		t.Fatalf("unexpected reasoning config: %#v",
 			gotRequest.Reasoning)
 	}
-	if len(got) != 5 {
-		t.Fatalf("expected five events, got %#v", got)
+	if len(got) != 6 {
+		t.Fatalf("expected six events, got %#v", got)
 	}
 	if got[0].Type != model.EventReasoningDelta ||
 		got[0].Text != "checking" {
@@ -363,8 +383,14 @@ func TestClientStreamsResponsesAPI(t *testing.T) {
 
 		t.Fatalf("unexpected usage event: %#v", got[3])
 	}
-	if got[4].Type != model.EventDone {
-		t.Fatalf("unexpected done event: %#v", got[4])
+	if got[4].Type != model.EventMetrics ||
+		got[4].Metrics.RequestBytes == 0 ||
+		got[4].Metrics.ResponseBytes == 0 {
+
+		t.Fatalf("unexpected metrics event: %#v", got[4])
+	}
+	if got[5].Type != model.EventDone {
+		t.Fatalf("unexpected done event: %#v", got[5])
 	}
 }
 

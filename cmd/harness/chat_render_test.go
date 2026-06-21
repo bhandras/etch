@@ -538,4 +538,20 @@ func TestFormatTurnStatsSummarizesToolCounts(t *testing.T) {
 		t.Fatalf("unexpected timing stats:\nwant %q\ngot  %q", want,
 			got)
 	}
+
+	got = formatTurnStats(liveTurnStats{
+		Timing: core.TurnTiming{
+			ModelCalls:       2,
+			RequestBytes:     1536,
+			ResponseBytes:    768,
+			TimeToHeaders:    time.Second,
+			TimeToFirstEvent: 2 * time.Second,
+		},
+	})
+	want = " · 2 requests · 1.5KB up · 768B down · headers 1s" +
+		" · first event 2s"
+	if got != want {
+		t.Fatalf("unexpected transport stats:\nwant %q\ngot  %q", want,
+			got)
+	}
 }

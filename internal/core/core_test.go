@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"harness/internal/config"
 	"harness/internal/hooks"
@@ -647,6 +648,16 @@ func TestRunTurnNotifiesObserver(t *testing.T) {
 					},
 				},
 				{
+					Type: model.EventMetrics,
+					Metrics: model.Metrics{
+						RequestBytes:  100,
+						ResponseBytes: 40,
+						TimeToHeaders: time.Millisecond,
+						TimeToFirstEvent: 2 *
+							time.Millisecond,
+					},
+				},
+				{
 					Type: model.EventDone,
 				},
 			},
@@ -654,6 +665,17 @@ func TestRunTurnNotifiesObserver(t *testing.T) {
 				{
 					Type: model.EventTextDelta,
 					Text: "done",
+				},
+				{
+					Type: model.EventMetrics,
+					Metrics: model.Metrics{
+						RequestBytes:  120,
+						ResponseBytes: 60,
+						TimeToHeaders: 3 *
+							time.Millisecond,
+						TimeToFirstEvent: 4 *
+							time.Millisecond,
+					},
 				},
 				{
 					Type: model.EventDone,
@@ -709,6 +731,14 @@ func TestRunTurnNotifiesObserver(t *testing.T) {
 	}
 	if observer.timing.ModelDuration <= 0 {
 		t.Fatalf("missing model timing: %#v", observer.timing)
+	}
+	if observer.timing.ModelCalls != 2 ||
+		observer.timing.RequestBytes != 220 ||
+		observer.timing.ResponseBytes != 100 ||
+		observer.timing.TimeToHeaders != 4*time.Millisecond ||
+		observer.timing.TimeToFirstEvent != 6*time.Millisecond {
+
+		t.Fatalf("unexpected model metrics: %#v", observer.timing)
 	}
 	if observer.timing.ToolBatches != 1 ||
 		observer.timing.LargestToolBatch != 1 {

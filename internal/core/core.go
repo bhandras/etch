@@ -101,6 +101,10 @@ type TurnResult struct {
 	// AssistantText is the complete assistant text assembled from the
 	// stream.
 	AssistantText string `json:"assistantText"`
+
+	// Timing stores coarse model, transport, and tool timing collected
+	// while producing the turn.
+	Timing TurnTiming `json:"timing"`
 }
 
 // AutoCompactResult describes one automatic compaction pass.
@@ -123,8 +127,23 @@ type AutoCompactResult struct {
 
 // TurnTiming records coarse wall-clock timing for one completed turn.
 type TurnTiming struct {
+	// ModelCalls is the number of provider requests made during the turn.
+	ModelCalls int
+
 	// ModelDuration is the cumulative time spent waiting for model streams.
 	ModelDuration time.Duration
+
+	// RequestBytes is the cumulative provider request body size.
+	RequestBytes int
+
+	// ResponseBytes is the approximate cumulative provider stream bytes.
+	ResponseBytes int
+
+	// TimeToHeaders is the cumulative time until provider response headers.
+	TimeToHeaders time.Duration
+
+	// TimeToFirstEvent is the cumulative time until first stream events.
+	TimeToFirstEvent time.Duration
 
 	// ToolDuration is the cumulative time spent executing tools and
 	// post-tool hooks.
@@ -273,9 +292,14 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 			ctx, req.Model, callMessages, req.Tools, req.Observer,
 		)
 		timing.ModelDuration += time.Since(modelStarted)
+		timing.ModelCalls++
 		if err != nil {
 			return nil, err
 		}
+		timing.RequestBytes += response.Metrics.RequestBytes
+		timing.ResponseBytes += response.Metrics.ResponseBytes
+		timing.TimeToHeaders += response.Metrics.TimeToHeaders
+		timing.TimeToFirstEvent += response.Metrics.TimeToFirstEvent
 		notifyReasoningCompleted(req.Observer, response.Reasoning)
 		if len(response.ToolCalls) == 0 {
 			assistant, err = store.Append(
@@ -424,6 +448,7 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 		UserEventID:      user.ID,
 		AssistantEventID: assistant.ID,
 		AssistantText:    text,
+		Timing:           timing,
 	}, nil
 }
 
@@ -786,6 +811,9 @@ type modelResponse struct {
 
 	// Usage stores provider-reported token counters for this model pass.
 	Usage model.Usage
+
+	// Metrics stores provider-reported transport counters for this pass.
+	Metrics model.Metrics
 }
 
 // collectModelResponse starts a model stream and collects one assistant pass.
@@ -819,6 +847,7 @@ func collectStream(ctx context.Context, stream <-chan model.Event,
 	var reasoning strings.Builder
 	var calls []model.ToolCall
 	var usage model.Usage
+	var metrics model.Metrics
 	for {
 		select {
 		case <-ctx.Done():
@@ -831,6 +860,7 @@ func collectStream(ctx context.Context, stream <-chan model.Event,
 					Reasoning: reasoning.String(),
 					ToolCalls: calls,
 					Usage:     usage,
+					Metrics:   metrics,
 				}, nil
 			}
 			switch event.Type {
@@ -848,12 +878,16 @@ func collectStream(ctx context.Context, stream <-chan model.Event,
 			case model.EventUsage:
 				usage = usage.Add(event.Usage)
 
+			case model.EventMetrics:
+				metrics = metrics.Add(event.Metrics)
+
 			case model.EventDone:
 				return modelResponse{
 					Text:      text.String(),
 					Reasoning: reasoning.String(),
 					ToolCalls: calls,
 					Usage:     usage,
+					Metrics:   metrics,
 				}, nil
 
 			case model.EventError:

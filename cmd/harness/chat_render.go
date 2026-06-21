@@ -887,11 +887,62 @@ func formatTurnStats(stats liveTurnStats) string {
 			"model "+formatElapsed(stats.Timing.ModelDuration),
 		)
 	}
+	parts = append(parts, timingStatParts(stats.Timing)...)
 	if len(parts) == 0 {
 		return ""
 	}
 
 	return " · " + strings.Join(parts, " · ")
+}
+
+// timingStatParts returns compact provider transport measurements.
+func timingStatParts(timing core.TurnTiming) []string {
+	var parts []string
+	if timing.ModelCalls > 0 {
+		if timing.ModelCalls == 1 {
+			parts = append(parts, "1 request")
+		} else {
+			parts = append(
+				parts, fmt.Sprintf("%d requests",
+					timing.ModelCalls),
+			)
+		}
+	}
+	if timing.RequestBytes > 0 || timing.ResponseBytes > 0 {
+		parts = append(
+			parts,
+			fmt.Sprintf(
+				"%s up · %s down",
+				formatBytes(timing.RequestBytes),
+				formatBytes(timing.ResponseBytes),
+			),
+		)
+	}
+	if timing.TimeToHeaders > 0 {
+		parts = append(
+			parts, "headers "+formatElapsed(timing.TimeToHeaders),
+		)
+	}
+	if timing.TimeToFirstEvent > 0 {
+		parts = append(
+			parts,
+			"first event "+formatElapsed(timing.TimeToFirstEvent),
+		)
+	}
+
+	return parts
+}
+
+// formatBytes returns a compact byte count for provider payload metrics.
+func formatBytes(bytes int) string {
+	if bytes < 1024 {
+		return fmt.Sprintf("%dB", bytes)
+	}
+	if bytes < 1024*1024 {
+		return fmt.Sprintf("%.1fKB", float64(bytes)/1024)
+	}
+
+	return fmt.Sprintf("%.1fMB", float64(bytes)/(1024*1024))
 }
 
 // formatUsageStats returns compact provider token counters without a leading

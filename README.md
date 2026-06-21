@@ -41,6 +41,8 @@ Harness currently has:
   `/status` session stats
 - provider-reported token usage for OpenAI Chat Completions and Responses API
   streams
+- provider transport timing for OpenAI-compatible HTTP/SSE streams, including
+  request count, payload sizes, response headers, and first-event latency
 - chat steering that lets prompts typed while a turn is running influence the
   next safe model-call boundary
 - session-backed prompt history for Up/Down navigation in interactive chat
