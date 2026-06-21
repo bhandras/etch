@@ -8,6 +8,12 @@ import (
 	"strings"
 )
 
+const (
+	// resumeRecentMessageLimit bounds the transcript tail shown before a
+	// resumed chat prompt.
+	resumeRecentMessageLimit = 8
+)
+
 // runChat starts a line-oriented interactive chat session.
 func runChat(cfg cliConfig, stdin io.Reader, stdout io.Writer,
 	stderr io.Writer) int {
@@ -35,6 +41,14 @@ func runChat(cfg cliConfig, stdin io.Reader, stdout io.Writer,
 			stdout, "continuing session %s\n",
 			shortID(runtime.resumeID),
 		)
+		if err := renderRecentSessionPath(
+			runtime.sessionPath, resumeRecentMessageLimit, stdout,
+		); err != nil {
+
+			fmt.Fprintln(stderr, "error:", err)
+
+			return 1
+		}
 	}
 
 	input := newChatInput(stdin, stdout)

@@ -608,6 +608,24 @@ func renderChatPrompt(stdout io.Writer) {
 	)
 }
 
+// renderCommittedPromptText writes a submitted prompt island into scrollback.
+func renderCommittedPromptText(stdout io.Writer, text string) {
+	renderCommittedPromptIsland(
+		stdout,
+		wrappedPromptRows(
+			[]rune(text), terminalWidth(stdout),
+		),
+	)
+}
+
+// renderCommittedPromptIsland writes wrapped prompt rows with stable padding.
+func renderCommittedPromptIsland(stdout io.Writer, inputRows []string) {
+	fmt.Fprint(
+		stdout, "\n", promptIslandRows(stdout, inputRows), ansiReset,
+		"\n\n",
+	)
+}
+
 // terminalChatPrompt returns the styled prompt prefix for interactive chat.
 func terminalChatPrompt() string {
 	return promptIslandStyle() + " > "

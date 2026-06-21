@@ -7,6 +7,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"harness/internal/model"
 	"harness/internal/render"
 	"harness/internal/session"
 )
@@ -98,6 +99,31 @@ func renderSessionPath(path string, stdout io.Writer) error {
 	return renderEvents(events, stdout)
 }
 
+// renderRecentSessionPath renders a bounded transcript tail from a JSONL path.
+func renderRecentSessionPath(path string, limit int, stdout io.Writer) error {
+	events, err := session.ReadAll(path)
+	if err != nil {
+		return err
+	}
+	recent, omitted := recentResumeEvents(events, limit)
+	if len(recent) == 0 {
+		return nil
+	}
+	fmt.Fprintln(stdout)
+	fmt.Fprintln(stdout, "Recent")
+	if omitted > 0 {
+		fmt.Fprintf(
+			stdout, "... %d earlier messages omitted\n", omitted,
+		)
+	}
+	if err := renderRecentEvents(recent, stdout); err != nil {
+		return err
+	}
+	fmt.Fprintln(stdout)
+
+	return nil
+}
+
 // printSessionStatus renders durable activity statistics for a session.
 func printSessionStatus(path string, stdout io.Writer) error {
 	events, err := session.ReadAll(path)
@@ -109,6 +135,72 @@ func printSessionStatus(path string, stdout io.Writer) error {
 		return err
 	}
 	fmt.Fprintln(stdout, session.FormatStatus(status))
+
+	return nil
+}
+
+// recentResumeEvents returns the last limit events useful for resume context.
+func recentResumeEvents(events []session.Event,
+	limit int) ([]session.Event, int) {
+
+	if limit <= 0 {
+		return nil, 0
+	}
+	var recent []session.Event
+	for _, event := range events {
+		if session.IsMessageEvent(event.Type) ||
+			event.Type == session.EventModelReasoning {
+
+			recent = append(recent, event)
+		}
+	}
+	if len(recent) <= limit {
+		return recent, 0
+	}
+
+	return recent[len(recent)-limit:], len(recent) - limit
+}
+
+// renderRecentEvents renders resume context using chat-style message blocks.
+func renderRecentEvents(events []session.Event, stdout io.Writer) error {
+	renderer := newLiveChatRenderer(stdout, false)
+	for _, event := range events {
+		if event.Type == session.EventModelReasoning {
+			reasoning, err := decodeReasoning(event)
+			if err != nil {
+				return err
+			}
+			renderer.renderReasoning(reasoning.Reasoning)
+
+			continue
+		}
+		message, err := decodeMessage(event)
+		if err != nil {
+			return err
+		}
+		switch message.Role {
+		case session.RoleAssistant:
+			text := render.MessageText(message)
+			if text != "" {
+				renderer.renderAssistant(text)
+			}
+			for _, call := range message.ToolCalls {
+				renderer.renderToolCall(model.ToolCall{
+					ID:        call.ID,
+					Name:      call.Name,
+					Arguments: call.Arguments,
+				})
+			}
+
+		case session.RoleTool:
+			renderer.renderToolResult(message)
+
+		default:
+			renderCommittedPromptText(
+				stdout, render.MessageText(message),
+			)
+		}
+	}
 
 	return nil
 }
@@ -140,6 +232,17 @@ func decodeMessage(event session.Event) (session.MessageData, error) {
 	}
 
 	return message, nil
+}
+
+// decodeReasoning unmarshals a reasoning event payload into its typed shape.
+func decodeReasoning(event session.Event) (session.ReasoningData, error) {
+	var data session.ReasoningData
+	if err := json.Unmarshal(event.Data, &data); err != nil {
+		return session.ReasoningData{}, fmt.Errorf("decode "+
+			"reasoning: %w", err)
+	}
+
+	return data, nil
 }
 
 // decodeUsage decodes a durable model usage event.

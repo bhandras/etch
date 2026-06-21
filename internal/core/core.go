@@ -311,6 +311,12 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 		timing.ResponseBytes += response.Metrics.ResponseBytes
 		timing.TimeToHeaders += response.Metrics.TimeToHeaders
 		timing.TimeToFirstEvent += response.Metrics.TimeToFirstEvent
+		parentID, err = appendModelReasoning(
+			store, parentID, response.Reasoning, req.Observer,
+		)
+		if err != nil {
+			return nil, err
+		}
 		notifyReasoningCompleted(req.Observer, response.Reasoning)
 		if len(response.ToolCalls) == 0 {
 			assistant, err = store.Append(
@@ -1036,6 +1042,27 @@ func collectStream(ctx context.Context, stream <-chan model.Event,
 			}
 		}
 	}
+}
+
+// appendModelReasoning persists displayable reasoning when the provider sends
+// a completed summary.
+func appendModelReasoning(store *session.Store, parentID string,
+	reasoning string, observer Observer) (string, error) {
+
+	if strings.TrimSpace(reasoning) == "" {
+		return parentID, nil
+	}
+
+	event, err := store.Append(session.EventModelReasoning, parentID,
+		session.ReasoningData{
+			Reasoning: reasoning,
+		})
+	if err != nil {
+		return "", fmt.Errorf("append model reasoning: %w", err)
+	}
+	notifyEvent(observer, event)
+
+	return event.ID, nil
 }
 
 // appendModelMetadata persists usage and response identity after a model pass.

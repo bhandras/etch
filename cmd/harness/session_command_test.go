@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"harness/internal/session"
 )
 
 // TestRunWritesSessionAndListsIt exercises the CLI path from prompt execution
@@ -88,6 +90,89 @@ func TestShowRendersTranscript(t *testing.T) {
 	}
 }
 
+// TestRecentResumeEventsReturnsTail verifies resume context omits older
+// visible events while preserving the last visible events in order.
+func TestRecentResumeEventsReturnsTail(t *testing.T) {
+	events := []session.Event{
+		{
+			Type: session.EventSessionStarted,
+		},
+		messageEvent(
+			t, session.EventUserMessage,
+			session.TextMessage(session.RoleUser, "one"),
+		),
+		messageEvent(
+			t, session.EventAssistantMessage,
+			session.TextMessage(session.RoleAssistant, "two"),
+		),
+		messageEvent(
+			t, session.EventUserMessage,
+			session.TextMessage(session.RoleUser, "three"),
+		),
+	}
+	events[1].ID = "1"
+	events[2].ID = "2"
+	events[3].ID = "3"
+
+	recent, omitted := recentResumeEvents(events, 2)
+	if omitted != 1 {
+		t.Fatalf("expected one omitted message, got %d", omitted)
+	}
+	if len(recent) != 2 || recent[0].ID != "2" || recent[1].ID != "3" {
+		t.Fatalf("unexpected recent events: %#v", recent)
+	}
+}
+
+// TestRenderRecentEventsUsesChatBlocks verifies resume context does not use the
+// plain transcript assistant prefix and still renders tool activity.
+func TestRenderRecentEventsUsesChatBlocks(t *testing.T) {
+	events := []session.Event{
+		messageEvent(
+			t, session.EventUserMessage,
+			session.TextMessage(session.RoleUser, "show code"),
+		),
+		reasoningEvent(t, "checking context"),
+		messageEvent(
+			t, session.EventAssistantMessage, session.TextMessage(
+				session.RoleAssistant,
+				"Here:\n\n```text\nhello\n```",
+			),
+		),
+		messageEvent(
+			t, session.EventAssistantMessage,
+			session.AssistantToolCallMessage("", []session.ToolCallData{{
+				ID:        "call_1",
+				Name:      "bash",
+				Arguments: `{"command":"go test ./..."}`,
+			}}),
+		),
+	}
+
+	var stdout bytes.Buffer
+	if err := renderRecentEvents(events, &stdout); err != nil {
+		t.Fatalf("render recent events: %v", err)
+	}
+	got := stdout.String()
+	if strings.Contains(got, "assistant:") {
+		t.Fatalf("recent output used plain transcript prefix: %q", got)
+	}
+	if strings.Contains(got, "user:") {
+		t.Fatalf("recent output used plain user prefix: %q", got)
+	}
+	for _, want := range []string{
+		"> show code",
+		"• checking context",
+		"• Here:",
+		"```text",
+		"hello",
+		"• Ran bash go test ./...",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("recent output missing %q:\n%s", want, got)
+		}
+	}
+}
+
 // TestResumeCommandContinuesSession verifies the resume command re-enters chat
 // on an existing session and prints a copyable continuation command on exit.
 func TestResumeCommandContinuesSession(t *testing.T) {
@@ -141,6 +226,15 @@ func TestResumeCommandContinuesSession(t *testing.T) {
 
 		t.Fatalf("missing resume notice: %q", chatOut.String())
 	}
+	if !strings.Contains(chatOut.String(), "Recent\n") ||
+		!strings.Contains(chatOut.String(), "> hello") ||
+		!strings.Contains(chatOut.String(), "• hello") ||
+		strings.Contains(chatOut.String(), "user: hello") ||
+		strings.Contains(chatOut.String(), "assistant: hello") {
+
+		t.Fatalf("missing recent transcript on resume: %q",
+			chatOut.String())
+	}
 	if !strings.Contains(
 		chatOut.String(), "resume: harness resume "+
 			"--session-dir "+sessionDir+" "+result.SessionID,
@@ -168,6 +262,23 @@ func TestResumeCommandContinuesSession(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("transcript missing %q:\n%s", want, got)
 		}
+	}
+}
+
+// reasoningEvent creates one durable reasoning event for CLI rendering tests.
+func reasoningEvent(t *testing.T, reasoning string) session.Event {
+	t.Helper()
+	raw, err := json.Marshal(session.ReasoningData{
+		Reasoning: reasoning,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return session.Event{
+		Type: session.EventModelReasoning,
+		ID:   "event_reasoning",
+		Data: raw,
 	}
 }
 

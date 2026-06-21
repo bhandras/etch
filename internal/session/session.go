@@ -44,6 +44,10 @@ const (
 	// call.
 	EventModelUsage = "model.usage"
 
+	// EventModelReasoning records displayable reasoning summary text for
+	// one model call.
+	EventModelReasoning = "model.reasoning"
+
 	// EventModelResponse records provider response identity for one model
 	// call.
 	EventModelResponse = "model.response"
@@ -188,6 +192,13 @@ type UsageData struct {
 
 	// TotalTokens is the provider-reported total token count.
 	TotalTokens int `json:"totalTokens"`
+}
+
+// ReasoningData is displayable reasoning summary text for one model call.
+type ReasoningData struct {
+	// Reasoning stores provider-emitted summary text that can be replayed
+	// in terminal transcripts without becoming model-visible history.
+	Reasoning string `json:"reasoning"`
 }
 
 // ResponseData is provider-reported response identity for one model call.

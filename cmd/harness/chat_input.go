@@ -667,10 +667,7 @@ func (i *terminalChatInput) finishLocked() {
 	width := terminalWidth(i.stdout)
 	inputRows := wrappedPromptRows(i.input, width)
 	i.clearLocked(width)
-	fmt.Fprint(
-		i.stdout, promptIslandRows(i.stdout, inputRows), ansiReset,
-		"\n\n",
-	)
+	renderCommittedPromptIsland(i.stdout, inputRows)
 	i.clearRenderStateLocked()
 	i.input = i.input[:0]
 }

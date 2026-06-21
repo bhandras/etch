@@ -746,7 +746,7 @@ func TestRunTurnNotifiesObserver(t *testing.T) {
 		},
 	}
 
-	_, err := RunTurn(context.Background(), TurnRequest{
+	result, err := RunTurn(context.Background(), TurnRequest{
 		Prompt:     "list files",
 		SessionDir: t.TempDir(),
 		CWD:        dir,
@@ -760,6 +760,7 @@ func TestRunTurnNotifiesObserver(t *testing.T) {
 	got := observer.types()
 	want := []string{
 		session.EventUserMessage,
+		session.EventModelReasoning,
 		session.EventAssistantMessage,
 		session.EventToolMessage,
 		session.EventAssistantMessage,
@@ -806,6 +807,16 @@ func TestRunTurnNotifiesObserver(t *testing.T) {
 		observer.timing.LargestToolBatch != 1 {
 
 		t.Fatalf("unexpected tool batch timing: %#v", observer.timing)
+	}
+	events, err := session.ReadAll(result.SessionPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) < 4 || events[2].Type != session.EventModelReasoning ||
+		events[3].Type != session.EventAssistantMessage {
+
+		t.Fatalf("reasoning was not persisted before assistant: %#v",
+			events)
 	}
 }
 

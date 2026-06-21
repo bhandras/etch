@@ -275,8 +275,11 @@ OPENAI_API_KEY=... go run ./cmd/harness chat \
 ```
 
 The harness treats these as displayable summaries, not raw hidden
-chain-of-thought. Chat mode renders them as muted dot-led live blocks and does
-not persist them into the JSONL transcript in this first version.
+chain-of-thought. Chat mode renders them as muted dot-led live blocks. The core
+also persists completed summaries as `model.reasoning` JSONL events so resumed
+sessions can replay the recent UI context. These events are deliberately not
+message events, so prompt projection still treats user, assistant, tool, and
+summary context as the model-visible state.
 
 Local or proxy-compatible endpoints can override the base URL:
 
@@ -525,6 +528,13 @@ actual input, cached input, output, reasoning output, and total tokens across
 the session. These actual counters complement `/context` estimates: usage says
 what a completed provider call consumed, while context stats estimate what the
 next prompt projection contains.
+
+Model clients may emit displayable reasoning summaries when a provider exposes
+them. The core stores those summaries as `model.reasoning` JSONL events chained
+before the assistant message or tool-call message they explain. Resume rendering
+can replay them as muted thinking blocks, while context projection ignores them
+because they are UI transcript metadata rather than model-visible conversation
+turns.
 
 Model clients should also emit provider response identity when available. The
 core stores those identifiers as `model.response` JSONL events chained after the

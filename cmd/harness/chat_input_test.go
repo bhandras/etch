@@ -164,7 +164,7 @@ func TestTerminalChatInputPadsStatusAbovePrompt(t *testing.T) {
 }
 
 // TestTerminalChatInputSubmitPadsIsland verifies committed prompt islands leave
-// one blank transcript row after the shaded island.
+// one blank transcript row before and after the shaded island.
 func TestTerminalChatInputSubmitPadsIsland(t *testing.T) {
 	t.Setenv("COLUMNS", "64")
 	var stdout bytes.Buffer
@@ -180,8 +180,8 @@ func TestTerminalChatInputSubmitPadsIsland(t *testing.T) {
 	input.finishLocked()
 
 	got := stdout.String()
-	if strings.HasPrefix(got, "\n\n") {
-		t.Fatalf("submit owned an extra leading gap: %q", got)
+	if !strings.Contains(got, "\n"+promptIslandStyle()) {
+		t.Fatalf("submit did not leave a leading gap: %q", got)
 	}
 	if !strings.HasSuffix(got, ansiReset+"\n\n") {
 		t.Fatalf("submit did not leave a trailing gap: %q", got)
@@ -213,8 +213,11 @@ func TestTerminalChatInputStacksSubmittedIslands(t *testing.T) {
 	if strings.Contains(got, ansiReset+"\n\n\n"+promptIslandStyle()) {
 		t.Fatalf("submitted islands had a double gap: %q", got)
 	}
-	if !strings.Contains(got, ansiReset+"\n\n\r"+promptIslandStyle()) {
-		t.Fatalf("submitted islands missing single gap: %q", got)
+	if gotCommitted := strings.Count(
+		got, "\n"+promptIslandStyle()+"> ",
+	); gotCommitted != 2 {
+
+		t.Fatalf("submitted islands missing committed gaps: %q", got)
 	}
 }
 
