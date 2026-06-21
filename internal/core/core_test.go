@@ -185,13 +185,27 @@ func TestRunTurnPersistsModelUsage(t *testing.T) {
 // session files.
 func TestRunTurnRejectsEmptyPrompt(t *testing.T) {
 	_, err := RunTurn(context.Background(), TurnRequest{
-		Prompt:     "   ",
+		Prompt:     "",
 		SessionDir: t.TempDir(),
 		CWD:        "/work/project",
 		Model:      model.EchoClient{},
 	})
 	if err == nil {
 		t.Fatal("expected empty prompt error")
+	}
+}
+
+// TestRunTurnRejectsWhitespacePrompt verifies blank prompts are rejected after
+// trimming so they cannot create empty session files.
+func TestRunTurnRejectsWhitespacePrompt(t *testing.T) {
+	_, err := RunTurn(context.Background(), TurnRequest{
+		Prompt:     "   ",
+		SessionDir: t.TempDir(),
+		CWD:        "/work/project",
+		Model:      model.EchoClient{},
+	})
+	if err == nil {
+		t.Fatal("expected whitespace prompt error")
 	}
 }
 

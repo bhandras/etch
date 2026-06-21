@@ -908,6 +908,27 @@ func TestRunChatProcessesMultipleTurns(t *testing.T) {
 	}
 }
 
+// TestRunChatSkipsWhitespacePrompt verifies whitespace-only input is ignored
+// after trimming rather than started as a model turn.
+func TestRunChatSkipsWhitespacePrompt(t *testing.T) {
+	cfg := cliConfig{
+		command:    commandChat,
+		sessionDir: filepath.Join(t.TempDir(), "sessions"),
+		provider:   providerEcho,
+	}
+	var stdout, stderr bytes.Buffer
+	code := runChat(cfg, strings.NewReader("  \n/exit\n"), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("chat failed: code=%d stdout=%q stderr=%q", code,
+			stdout.String(), stderr.String())
+	}
+
+	got := stdout.String()
+	if strings.Contains(got, "•") {
+		t.Fatalf("whitespace prompt reached model: %q", got)
+	}
+}
+
 // TestRunChatListsTools verifies that slash commands run without starting a
 // model turn.
 func TestRunChatListsTools(t *testing.T) {

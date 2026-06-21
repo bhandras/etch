@@ -701,14 +701,16 @@ func runChat(cfg cliConfig, stdin io.Reader, stdout io.Writer,
 		if !result.OK {
 			break
 		}
-		line := strings.TrimSpace(result.Line)
-		if line == "" {
+		line := result.Line
+		commandLine := strings.TrimSpace(line)
+		if commandLine == "" {
 			continue
 		}
-		if strings.HasPrefix(line, "/") {
+		if strings.HasPrefix(commandLine, "/") {
 			keepGoing, nextPath := runChatCommandWithOutput(
-				composer, cfg, line, sessionPath, modelClient,
-				registry, stdout, stderr, hookRunner,
+				composer, cfg, commandLine, sessionPath,
+				modelClient, registry, stdout, stderr,
+				hookRunner,
 			)
 			sessionPath = nextPath
 			if !keepGoing {

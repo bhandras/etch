@@ -226,3 +226,38 @@ func TestTerminalChatInputFinishCommitsPromptOnly(t *testing.T) {
 		t.Fatalf("composer stayed rendered after submit")
 	}
 }
+
+// TestTerminalChatInputSubmitSkipsBlankPrompt verifies blank submissions are
+// erased instead of being preserved as empty prompt islands in scrollback.
+func TestTerminalChatInputSubmitSkipsBlankPrompt(t *testing.T) {
+	t.Setenv("COLUMNS", "16")
+	for _, submitted := range []string{"", "   "} {
+		var stdout bytes.Buffer
+		input := &terminalChatInput{
+			stdout: &stdout,
+			input:  []rune(submitted),
+		}
+		if err := input.renderLocked(); err != nil {
+			t.Fatalf("initial render failed: %v", err)
+		}
+		stdout.Reset()
+
+		line := input.submitLocked()
+		if line != submitted {
+			t.Fatalf("blank submit returned %q, want %q", line,
+				submitted)
+		}
+
+		got := stdout.String()
+		if strings.Contains(got, ">") {
+			t.Fatalf("blank prompt was committed: %q", got)
+		}
+		if input.rendered {
+			t.Fatalf("composer stayed rendered after blank submit")
+		}
+		if len(input.input) != 0 {
+			t.Fatalf("input was not cleared: %q",
+				string(input.input))
+		}
+	}
+}

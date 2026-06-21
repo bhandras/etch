@@ -188,8 +188,7 @@ func (i *terminalChatInput) ReadLine() (string, bool, error) {
 		switch r {
 		case '\n', '\r':
 			i.mu.Lock()
-			line := string(i.input)
-			i.finishLocked()
+			line := i.submitLocked()
 			i.mu.Unlock()
 
 			return line, true, nil
@@ -470,6 +469,19 @@ func reflowedRowsForLine(oldWidth int, newWidth int) int {
 	return (oldWidth + newWidth - 1) / newWidth
 }
 
+// submitLocked accepts current input and commits only non-blank prompts.
+func (i *terminalChatInput) submitLocked() string {
+	line := string(i.input)
+	if strings.TrimSpace(line) == "" {
+		i.discardLocked()
+
+		return line
+	}
+	i.finishLocked()
+
+	return line
+}
+
 // finishLocked moves the cursor below the active prompt island.
 func (i *terminalChatInput) finishLocked() {
 	if !i.rendered {
@@ -482,6 +494,19 @@ func (i *terminalChatInput) finishLocked() {
 		i.stdout, promptIslandRows(i.stdout, inputRows), ansiReset,
 		"\n",
 	)
+	i.clearRenderStateLocked()
+	i.input = i.input[:0]
+}
+
+// discardLocked erases the live prompt without committing it to scrollback.
+func (i *terminalChatInput) discardLocked() {
+	if !i.rendered {
+		i.input = i.input[:0]
+
+		return
+	}
+	width := terminalWidth(i.stdout)
+	i.clearLocked(width)
 	i.clearRenderStateLocked()
 	i.input = i.input[:0]
 }
