@@ -88,12 +88,23 @@ The core loop should stay explicit:
 4. Render streamed assistant output.
 5. Validate and execute requested tool calls.
 6. Append tool results.
-7. Continue until the model stops or the user cancels.
+7. Admit any queued steering prompts at the next safe model boundary.
+8. Continue until the model stops or the user cancels.
 ```
 
 Cancellation should flow through `context.Context`. The user must be able to
 interrupt a model stream or a running tool call without killing the whole
 session.
+
+Interactive chat supports steering: text submitted while a turn is running can
+be admitted into the same turn before a later model call. Steering is not
+cancellation. It does not abort the active model stream or running tools. The
+core exposes a `DrainSteering` callback and checks it only after a tool batch
+has completed, immediately before the next model request. This keeps provider
+tool-call protocol order valid: an assistant tool-call message is still followed
+by its tool results before any new user message appears. If a turn finishes
+without another model-call boundary, unconsumed steering remains queued as the
+next normal prompt in the chat loop.
 
 The loop uses a configurable safety bound rather than a tiny fixed ceiling.
 `DefaultMaxToolRounds` is 32 model/tool exchange rounds per user turn. A round

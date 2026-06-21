@@ -347,6 +347,83 @@ func TestRunTurnExecutesToolCalls(t *testing.T) {
 	}
 }
 
+// TestRunTurnInjectsSteeringAfterToolBatch verifies queued steering is admitted
+// after tool results and before the next model request.
+func TestRunTurnInjectsSteeringAfterToolBatch(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "go.mod"), "")
+
+	client := &scriptedToolClient{
+		events: [][]model.Event{
+			{
+				{
+					Type: model.EventToolCall,
+					ToolCall: model.ToolCall{
+						ID:   "call_1",
+						Name: tool.NameLS,
+						Arguments: `{"path":` +
+							quoteJSON(dir) +
+							`}`,
+					},
+				},
+				{
+					Type: model.EventDone,
+				},
+			},
+			{
+				{
+					Type: model.EventTextDelta,
+					Text: "I included the steering.",
+				},
+				{
+					Type: model.EventDone,
+				},
+			},
+		},
+	}
+	drained := false
+
+	result, err := RunTurn(context.Background(), TurnRequest{
+		Prompt:     "list files",
+		SessionDir: t.TempDir(),
+		CWD:        dir,
+		Model:      client,
+		Tools:      tool.DefaultRegistry(),
+		DrainSteering: func() []string {
+			if drained {
+				return nil
+			}
+			drained = true
+
+			return []string{
+				"also explain why",
+			}
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.AssistantText != "I included the steering." {
+		t.Fatalf("unexpected assistant text: %q", result.AssistantText)
+	}
+	if len(client.requests) != 2 {
+		t.Fatalf("expected two model requests, got %d",
+			len(client.requests))
+	}
+	messages := client.requests[1].Messages
+	last := messages[len(messages)-1]
+	if last.Role != model.RoleUser ||
+		last.Content != "also explain why" {
+
+		t.Fatalf("missing steering message: %#v", messages)
+	}
+	previous := messages[len(messages)-2]
+	if previous.Role != model.RoleTool {
+		t.Fatalf("steering was not placed after tool result: %#v",
+			messages)
+	}
+}
+
 // TestRunTurnAppliesPreToolUseHook verifies tool preflight hooks can transform
 // arguments before persistence and execution.
 func TestRunTurnAppliesPreToolUseHook(t *testing.T) {

@@ -41,6 +41,8 @@ Harness currently has:
   `/status` session stats
 - provider-reported token usage for OpenAI Chat Completions and Responses API
   streams
+- chat steering that lets prompts typed while a turn is running influence the
+  next safe model-call boundary
 - built-in tools for `ls`, `find`, `grep`, `read`, `write`, `edit`, and
   `bash`, including dry-run previews for exact replacement edits
 - external process hooks for session, turn, prompt, context, tool, and

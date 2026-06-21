@@ -687,7 +687,14 @@ func runChat(cfg cliConfig, stdin io.Reader, stdout io.Writer,
 	if composer != nil {
 		composer.SetFooter(chrome.Footer())
 	}
-	for result := range readChatLines(input) {
+	results := readChatLines(input)
+	pendingResults := []chatLineResult{}
+	inputDone := false
+	for {
+		result, ok := nextChatLine(results, &pendingResults, inputDone)
+		if !ok {
+			break
+		}
 		if result.Err != nil {
 			if errors.Is(result.Err, errChatInputInterrupted) {
 				return 0
@@ -720,20 +727,65 @@ func runChat(cfg cliConfig, stdin io.Reader, stdout io.Writer,
 			continue
 		}
 
-		observer := &chatObserver{
-			renderer: newLiveChatRenderer(stdout, true),
-			chrome:   chrome,
+		turn, err := runChatTurnWithSteering(
+			cfg, line, sessionPath, cwd, projectContext.SystemText,
+			modelClient, registry, hookRunner, chrome, composer,
+			results, &inputDone, &pendingResults, stdout,
+		)
+		if err != nil {
+			fmt.Fprintln(stderr, "error:", err)
+
+			return 1
 		}
-		observer.renderer.composer = composer
-		observer.renderer.startStatus("Working")
-		startedAt := time.Now()
+		sessionPath = turn.SessionPath
+	}
+
+	return 0
+}
+
+// nextChatLine returns queued chat input before reading from the live channel.
+func nextChatLine(results <-chan chatLineResult, pending *[]chatLineResult,
+	inputDone bool) (chatLineResult, bool) {
+
+	if len(*pending) > 0 {
+		result := (*pending)[0]
+		*pending = (*pending)[1:]
+
+		return result, true
+	}
+	if inputDone {
+		return chatLineResult{}, false
+	}
+	result, ok := <-results
+
+	return result, ok
+}
+
+// runChatTurnWithSteering runs one model turn while capturing steering input.
+func runChatTurnWithSteering(cfg cliConfig, line string, sessionPath string,
+	cwd string, systemText string, modelClient model.Client,
+	registry *tool.Registry, hookRunner *hooks.Runner, chrome *chatChrome,
+	composer *terminalChatInput, results <-chan chatLineResult,
+	inputDone *bool, pendingResults *[]chatLineResult,
+	stdout io.Writer) (*core.TurnResult, error) {
+
+	observer := &chatObserver{
+		renderer: newLiveChatRenderer(stdout, true),
+		chrome:   chrome,
+	}
+	observer.renderer.composer = composer
+	observer.renderer.startStatus("Working")
+	startedAt := time.Now()
+	busyInput := &chatBusyInput{}
+	outcomes := make(chan chatTurnOutcome, 1)
+	go func() {
 		result, err := core.RunTurn(
 			context.Background(), core.TurnRequest{
 				Prompt:        line,
 				SessionDir:    cfg.sessionDir,
 				SessionPath:   sessionPath,
 				CWD:           cwd,
-				SystemText:    projectContext.SystemText,
+				SystemText:    systemText,
 				Model:         modelClient,
 				ModelName:     cfg.model,
 				Tools:         registry,
@@ -743,21 +795,75 @@ func runChat(cfg cliConfig, stdin io.Reader, stdout io.Writer,
 				),
 				AutoCompactKeepMessages:     cfg.keepMessages,
 				AutoCompactKeepRecentTokens: cfg.keepRecentTokens,
+				DrainSteering:               busyInput.DrainSteering,
 				Observer:                    observer,
 				Hooks:                       hookRunner,
 			},
 		)
-		if err != nil {
-			observer.renderer.stopStatus()
-			fmt.Fprintln(stderr, "error:", err)
+		outcomes <- chatTurnOutcome{Result: result, Err: err}
+	}()
 
-			return 1
-		}
-		observer.Finish(time.Since(startedAt))
-		sessionPath = result.SessionPath
+	liveResults := results
+	if *inputDone {
+		liveResults = nil
 	}
+	for {
+		select {
+		case outcome := <-outcomes:
+			if outcome.Err != nil {
+				observer.renderer.stopStatus()
 
-	return 0
+				return nil, outcome.Err
+			}
+			observer.Finish(time.Since(startedAt))
+			*pendingResults = append(
+				*pendingResults, busyInput.Pending()...,
+			)
+
+			return outcome.Result, nil
+
+		case result, ok := <-liveResults:
+			if !ok {
+				*inputDone = true
+				liveResults = nil
+
+				continue
+			}
+			collectBusyChatInput(result, busyInput)
+		}
+	}
+}
+
+// chatTurnOutcome carries the asynchronous result of one core turn.
+type chatTurnOutcome struct {
+	// Result stores the successful turn result.
+	Result *core.TurnResult
+
+	// Err stores any turn failure.
+	Err error
+}
+
+// collectBusyChatInput records input submitted while a turn is active.
+func collectBusyChatInput(result chatLineResult, busyInput *chatBusyInput) {
+	if result.Err != nil || !result.OK {
+		busyInput.AddPending(result)
+
+		return
+	}
+	line := result.Line
+	commandLine := strings.TrimSpace(line)
+	if commandLine == "" {
+		return
+	}
+	if strings.HasPrefix(commandLine, "/") {
+		busyInput.AddPending(chatLineResult{
+			Line: commandLine,
+			OK:   true,
+		})
+
+		return
+	}
+	busyInput.AddSteering(line)
 }
 
 // runChatCommandWithOutput clears the live prompt around slash-command output.

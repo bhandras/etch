@@ -70,6 +70,11 @@ type TurnRequest struct {
 	// retained raw by automatic compaction.
 	AutoCompactKeepRecentTokens int
 
+	// DrainSteering returns user prompts submitted while the turn is
+	// running. The core admits them after a tool batch, before the next
+	// model call, because tool-call protocol order must stay contiguous.
+	DrainSteering func() []string
+
 	// Observer receives durable events as they are appended during the
 	// turn.
 	Observer Observer
@@ -201,7 +206,7 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 	if req.SessionPath != "" {
 		sessionStartReason = "resume"
 	}
-	promptText, err := runUserPromptHooks(ctx, req)
+	promptText, err := runUserPromptHooks(ctx, req, req.Prompt)
 	if err != nil {
 		return nil, err
 	}
@@ -389,6 +394,13 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 			})
 			parentID = toolEvent.ID
 		}
+		steeredParentID, err := applySteeringPrompts(
+			ctx, req, store, parentID, &messages,
+		)
+		if err != nil {
+			return nil, err
+		}
+		parentID = steeredParentID
 	}
 	if assistant == nil {
 		return nil, fmt.Errorf("tool round limit exceeded")
@@ -438,15 +450,17 @@ func runSessionStartHooks(ctx context.Context, req TurnRequest,
 }
 
 // runUserPromptHooks applies configured prompt submission hooks.
-func runUserPromptHooks(ctx context.Context, req TurnRequest) (string, error) {
+func runUserPromptHooks(ctx context.Context, req TurnRequest,
+	prompt string) (string, error) {
+
 	if req.Hooks == nil {
-		return req.Prompt, nil
+		return prompt, nil
 	}
 
 	result, err := req.Hooks.UserPromptSubmit(
 		ctx,
 		hooks.UserPromptSubmitEvent{
-			Prompt:      req.Prompt,
+			Prompt:      prompt,
 			SessionPath: req.SessionPath,
 		},
 	)
@@ -461,7 +475,44 @@ func runUserPromptHooks(ctx context.Context, req TurnRequest) (string, error) {
 		return *result.Prompt, nil
 	}
 
-	return req.Prompt, nil
+	return prompt, nil
+}
+
+// applySteeringPrompts admits queued user steering before the next model call.
+func applySteeringPrompts(ctx context.Context, req TurnRequest,
+	store *session.Store, parentID string,
+	messages *[]model.Message) (string, error) {
+
+	if req.DrainSteering == nil {
+		return parentID, nil
+	}
+	for _, promptText := range req.DrainSteering() {
+		if strings.TrimSpace(promptText) == "" {
+			continue
+		}
+		hookedPrompt, err := runUserPromptHooks(ctx, req, promptText)
+		if err != nil {
+			return parentID, err
+		}
+		if strings.TrimSpace(hookedPrompt) == "" {
+			continue
+		}
+		user, err := store.Append(
+			session.EventUserMessage, parentID,
+			session.TextMessage(session.RoleUser, hookedPrompt),
+		)
+		if err != nil {
+			return parentID, err
+		}
+		notifyEvent(req.Observer, user)
+		*messages = append(*messages, model.Message{
+			Role:    model.RoleUser,
+			Content: hookedPrompt,
+		})
+		parentID = user.ID
+	}
+
+	return parentID, nil
 }
 
 // runTurnStartHooks applies configured turn start lifecycle hooks.
