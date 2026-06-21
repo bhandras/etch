@@ -249,28 +249,8 @@ func parseChatFlags(args []string, stderr io.Writer) (cliConfig, error) {
 	if err != nil {
 		return cliConfig{}, err
 	}
-	baseURLExplicit := defaults.OpenAI.BaseURL != ""
-	openaiAPIExplicit := defaults.OpenAI.API != ""
-	cfg := cliConfig{
-		command:           commandChat,
-		sessionDir:        configSessionDir(defaults),
-		provider:          configProvider(defaults),
-		model:             defaults.Provider.Model,
-		baseURL:           configOpenAIBaseURL(defaults),
-		apiKey:            apiKeyFromEnv(),
-		openaiAPI:         configOpenAIAPI(defaults),
-		openaiAPIExplicit: openaiAPIExplicit,
-		reasoningEffort:   defaults.OpenAI.ReasoningEffort,
-		reasoningSummary:  defaults.OpenAI.ReasoningSummary,
-		maxToolRounds:     configMaxToolRounds(defaults),
-		autoCompact:       defaults.Context.AutoCompact,
-		autoCompactLimit:  configAutoCompactThreshold(defaults),
-		keepMessages:      configKeepMessages(defaults),
-		keepRecentTokens:  configKeepRecentTokens(defaults),
-		baseURLExplicit:   baseURLExplicit,
-		hooks:             defaults.Hooks,
-		plugins:           defaults.Plugins,
-	}
+	cfg := configCLIConfigDefaults(defaults)
+	cfg.command = commandChat
 	fs := flag.NewFlagSet(commandChat, flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.StringVar(
@@ -281,17 +261,7 @@ func parseChatFlags(args []string, stderr io.Writer) (cliConfig, error) {
 		&cfg.sessionID, "session", "",
 		"existing session id or prefix to continue",
 	)
-	fs.StringVar(
-		&cfg.provider, "provider", cfg.provider,
-		"model provider: echo or openai",
-	)
-	fs.StringVar(&cfg.model, "model", cfg.model, "provider model name")
-	addOpenAIFlags(fs, &cfg)
-	fs.StringVar(
-		&cfg.baseURL, "base-url", cfg.baseURL,
-		"OpenAI-compatible API base URL",
-	)
-	apiKeyFlag := apiKeyFlagValue(fs)
+	providerFlags := registerProviderFlags(fs, &cfg)
 	fs.IntVar(
 		&cfg.maxToolRounds, "max-tool-rounds", cfg.maxToolRounds,
 		"maximum model/tool exchange rounds per user turn",
@@ -329,10 +299,7 @@ func parseChatFlags(args []string, stderr io.Writer) (cliConfig, error) {
 		return cliConfig{}, fmt.Errorf("keep-recent-tokens must be " +
 			"positive")
 	}
-	cfg.baseURLExplicit = cfg.baseURLExplicit || flagWasSet(fs, "base-url")
-	cfg.openaiAPIExplicit = cfg.openaiAPIExplicit ||
-		flagWasSet(fs, "openai-api")
-	applyAPIKeyFlag(&cfg, *apiKeyFlag)
+	mergeExplicitProviderFlags(fs, &cfg, providerFlags)
 
 	return cfg, nil
 }
@@ -343,25 +310,8 @@ func parseCompactFlags(args []string, stderr io.Writer) (cliConfig, error) {
 	if err != nil {
 		return cliConfig{}, err
 	}
-	baseURLExplicit := defaults.OpenAI.BaseURL != ""
-	openaiAPIExplicit := defaults.OpenAI.API != ""
-	cfg := cliConfig{
-		command:           commandCompact,
-		sessionDir:        configSessionDir(defaults),
-		provider:          configProvider(defaults),
-		model:             defaults.Provider.Model,
-		baseURL:           configOpenAIBaseURL(defaults),
-		apiKey:            apiKeyFromEnv(),
-		openaiAPI:         configOpenAIAPI(defaults),
-		openaiAPIExplicit: openaiAPIExplicit,
-		reasoningEffort:   defaults.OpenAI.ReasoningEffort,
-		reasoningSummary:  defaults.OpenAI.ReasoningSummary,
-		keepMessages:      configKeepMessages(defaults),
-		keepRecentTokens:  configKeepRecentTokens(defaults),
-		baseURLExplicit:   baseURLExplicit,
-		hooks:             defaults.Hooks,
-		plugins:           defaults.Plugins,
-	}
+	cfg := configCLIConfigDefaults(defaults)
+	cfg.command = commandCompact
 	fs := flag.NewFlagSet(commandCompact, flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.StringVar(
@@ -372,17 +322,7 @@ func parseCompactFlags(args []string, stderr io.Writer) (cliConfig, error) {
 		&cfg.sessionID, "session", "",
 		"existing session id or prefix to compact",
 	)
-	fs.StringVar(
-		&cfg.provider, "provider", cfg.provider,
-		"model provider: echo or openai",
-	)
-	fs.StringVar(&cfg.model, "model", cfg.model, "provider model name")
-	addOpenAIFlags(fs, &cfg)
-	fs.StringVar(
-		&cfg.baseURL, "base-url", cfg.baseURL,
-		"OpenAI-compatible API base URL",
-	)
-	apiKeyFlag := apiKeyFlagValue(fs)
+	providerFlags := registerProviderFlags(fs, &cfg)
 	fs.IntVar(
 		&cfg.keepMessages, "keep-messages", cfg.keepMessages,
 		"fallback message count when token retention is disabled",
@@ -406,10 +346,7 @@ func parseCompactFlags(args []string, stderr io.Writer) (cliConfig, error) {
 		return cliConfig{}, fmt.Errorf("keep-recent-tokens must be " +
 			"positive")
 	}
-	cfg.baseURLExplicit = cfg.baseURLExplicit || flagWasSet(fs, "base-url")
-	cfg.openaiAPIExplicit = cfg.openaiAPIExplicit ||
-		flagWasSet(fs, "openai-api")
-	applyAPIKeyFlag(&cfg, *apiKeyFlag)
+	mergeExplicitProviderFlags(fs, &cfg, providerFlags)
 
 	return cfg, nil
 }
@@ -420,24 +357,8 @@ func parseRunFlags(args []string, stderr io.Writer) (cliConfig, error) {
 	if err != nil {
 		return cliConfig{}, err
 	}
-	baseURLExplicit := defaults.OpenAI.BaseURL != ""
-	openaiAPIExplicit := defaults.OpenAI.API != ""
-	cfg := cliConfig{
-		command:           commandRun,
-		sessionDir:        configSessionDir(defaults),
-		provider:          configProvider(defaults),
-		model:             defaults.Provider.Model,
-		baseURL:           configOpenAIBaseURL(defaults),
-		apiKey:            apiKeyFromEnv(),
-		openaiAPI:         configOpenAIAPI(defaults),
-		openaiAPIExplicit: openaiAPIExplicit,
-		reasoningEffort:   defaults.OpenAI.ReasoningEffort,
-		reasoningSummary:  defaults.OpenAI.ReasoningSummary,
-		maxToolRounds:     configMaxToolRounds(defaults),
-		baseURLExplicit:   baseURLExplicit,
-		hooks:             defaults.Hooks,
-		plugins:           defaults.Plugins,
-	}
+	cfg := configCLIConfigDefaults(defaults)
+	cfg.command = commandRun
 	fs := flag.NewFlagSet("harness", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.StringVar(&cfg.prompt, "p", "", "prompt to run non-interactively")
@@ -448,17 +369,7 @@ func parseRunFlags(args []string, stderr io.Writer) (cliConfig, error) {
 	fs.BoolVar(
 		&cfg.jsonOutput, "json", false, "print the turn result as JSON",
 	)
-	fs.StringVar(
-		&cfg.provider, "provider", cfg.provider,
-		"model provider: echo or openai",
-	)
-	fs.StringVar(&cfg.model, "model", cfg.model, "provider model name")
-	addOpenAIFlags(fs, &cfg)
-	fs.StringVar(
-		&cfg.baseURL, "base-url", cfg.baseURL,
-		"OpenAI-compatible API base URL",
-	)
-	apiKeyFlag := apiKeyFlagValue(fs)
+	providerFlags := registerProviderFlags(fs, &cfg)
 	fs.IntVar(
 		&cfg.maxToolRounds, "max-tool-rounds", cfg.maxToolRounds,
 		"maximum model/tool exchange rounds per user turn",
@@ -473,12 +384,46 @@ func parseRunFlags(args []string, stderr io.Writer) (cliConfig, error) {
 	if cfg.prompt == "" {
 		return cliConfig{}, fmt.Errorf("provide a prompt with -p")
 	}
+	mergeExplicitProviderFlags(fs, &cfg, providerFlags)
+
+	return cfg, nil
+}
+
+// providerFlagValues stores values registered outside cliConfig directly.
+type providerFlagValues struct {
+	// apiKey stores the explicit API-key flag without exposing env
+	// defaults.
+	apiKey *string
+}
+
+// registerProviderFlags adds provider and OpenAI flags shared by run commands.
+func registerProviderFlags(fs *flag.FlagSet,
+	cfg *cliConfig) providerFlagValues {
+
+	fs.StringVar(
+		&cfg.provider, "provider", cfg.provider,
+		"model provider: echo or openai",
+	)
+	fs.StringVar(&cfg.model, "model", cfg.model, "provider model name")
+	addOpenAIFlags(fs, cfg)
+	fs.StringVar(
+		&cfg.baseURL, "base-url", cfg.baseURL,
+		"OpenAI-compatible API base URL",
+	)
+
+	return providerFlagValues{
+		apiKey: apiKeyFlagValue(fs),
+	}
+}
+
+// mergeExplicitProviderFlags records provider flags supplied by the caller.
+func mergeExplicitProviderFlags(fs *flag.FlagSet, cfg *cliConfig,
+	values providerFlagValues) {
+
 	cfg.baseURLExplicit = cfg.baseURLExplicit || flagWasSet(fs, "base-url")
 	cfg.openaiAPIExplicit = cfg.openaiAPIExplicit ||
 		flagWasSet(fs, "openai-api")
-	applyAPIKeyFlag(&cfg, *apiKeyFlag)
-
-	return cfg, nil
+	applyAPIKeyFlag(cfg, *values.apiKey)
 }
 
 // apiKeyFlagValue registers the API key flag without exposing env defaults.

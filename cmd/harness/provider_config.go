@@ -116,6 +116,29 @@ func loadConfigDefaults() (harnessconfig.Config, error) {
 	return harnessconfig.Load(cwd)
 }
 
+// configCLIConfigDefaults projects TOML defaults into shared CLI defaults.
+func configCLIConfigDefaults(cfg harnessconfig.Config) cliConfig {
+	return cliConfig{
+		sessionDir:        configSessionDir(cfg),
+		provider:          configProvider(cfg),
+		model:             cfg.Provider.Model,
+		baseURL:           configOpenAIBaseURL(cfg),
+		apiKey:            apiKeyFromEnv(),
+		openaiAPI:         configOpenAIAPI(cfg),
+		openaiAPIExplicit: cfg.OpenAI.API != "",
+		reasoningEffort:   cfg.OpenAI.ReasoningEffort,
+		reasoningSummary:  cfg.OpenAI.ReasoningSummary,
+		maxToolRounds:     configMaxToolRounds(cfg),
+		autoCompact:       cfg.Context.AutoCompact,
+		autoCompactLimit:  configAutoCompactThreshold(cfg),
+		keepMessages:      configKeepMessages(cfg),
+		keepRecentTokens:  configKeepRecentTokens(cfg),
+		baseURLExplicit:   cfg.OpenAI.BaseURL != "",
+		hooks:             cfg.Hooks,
+		plugins:           cfg.Plugins,
+	}
+}
+
 // configSessionDir returns the configured session directory or the CLI default.
 func configSessionDir(cfg harnessconfig.Config) string {
 	if cfg.Session.Dir != "" {
