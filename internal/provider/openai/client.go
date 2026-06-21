@@ -1,10 +1,10 @@
 package openai
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -39,6 +39,14 @@ const (
 
 	// promptCacheKeyMaxRunes is OpenAI's maximum prompt cache key length.
 	promptCacheKeyMaxRunes = 64
+
+	// sseReadBufferSize keeps stream reads large enough to amortize
+	// syscalls without retaining oversized buffers for normal model deltas.
+	sseReadBufferSize = 32 * 1024
+
+	// sseMaxFrameBytes bounds one server-sent-event frame before a
+	// delimiter must arrive.
+	sseMaxFrameBytes = 4 * 1024 * 1024
 )
 
 // Client streams responses from an OpenAI-compatible Chat Completions endpoint.
@@ -304,16 +312,16 @@ type streamMetrics struct {
 	// requestBytes is the serialized JSON request body size.
 	requestBytes int
 
-	// responseBytes is the approximate SSE line bytes read so far.
+	// responseBytes is the raw SSE body byte count read so far.
 	responseBytes int
 
 	// timeToFirstEvent is set after the first meaningful SSE payload.
 	timeToFirstEvent time.Duration
 }
 
-// addLine records one raw scanner line in the approximate stream byte total.
-func (m *streamMetrics) addLine(line []byte) {
-	m.responseBytes += len(line)
+// addBytes records raw stream bytes as they are read from the response body.
+func (m *streamMetrics) addBytes(count int) {
+	m.responseBytes += count
 }
 
 // markEvent records the first meaningful event payload arrival time.
@@ -356,62 +364,46 @@ func streamChatCompletions(ctx context.Context, body io.ReadCloser,
 	events chan<- model.Event, metrics streamMetrics) {
 
 	defer close(events)
-	defer body.Close()
 
 	accumulator := newToolAccumulator()
-	scanner := bufio.NewScanner(body)
-	for scanner.Scan() {
-		metrics.addLine(scanner.Bytes())
-		select {
-		case <-ctx.Done():
-			return
+	streamSSEPayloads(
+		ctx, body, events, &metrics, "read openai stream",
+		func(payload string) bool {
+			if payload == "[DONE]" {
+				for _, call := range accumulator.calls() {
+					if !sendEvent(ctx, events, model.Event{
+						Type:     model.EventToolCall,
+						ToolCall: call,
+					}) {
+						return false
+					}
+				}
+				sendMetricsAndDone(ctx, events, metrics)
 
-		default:
-		}
+				return false
+			}
 
-		payload, ok := eventPayload(scanner.Text())
-		if !ok {
-			continue
-		}
-		metrics.markEvent(payload)
-		if payload == "[DONE]" {
-			for _, call := range accumulator.calls() {
-				if !sendEvent(ctx, events, model.Event{
-					Type:     model.EventToolCall,
-					ToolCall: call,
-				}) {
-					return
+			chunk, err := decodeChunk([]byte(payload))
+			if err != nil {
+				sendEvent(ctx, events, model.Event{
+					Type: model.EventError,
+					Err:  err.Error(),
+				})
+
+				return false
+			}
+			for _, event := range chunk.Events {
+				if !sendEvent(ctx, events, event) {
+					return false
 				}
 			}
-			sendMetricsAndDone(ctx, events, metrics)
-
-			return
-		}
-
-		chunk, err := decodeChunk([]byte(payload))
-		if err != nil {
-			sendEvent(ctx, events, model.Event{
-				Type: model.EventError,
-				Err:  err.Error(),
-			})
-
-			return
-		}
-		for _, event := range chunk.Events {
-			if !sendEvent(ctx, events, event) {
-				return
+			for _, delta := range chunk.ToolDeltas {
+				accumulator.add(delta)
 			}
-		}
-		for _, delta := range chunk.ToolDeltas {
-			accumulator.add(delta)
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		sendEvent(ctx, events, model.Event{
-			Type: model.EventError,
-			Err:  fmt.Errorf("read openai stream: %w", err).Error(),
-		})
-	}
+
+			return true
+		},
+	)
 }
 
 // sendEvent sends one stream event unless the context has been cancelled.
@@ -427,17 +419,233 @@ func sendEvent(ctx context.Context, events chan<- model.Event,
 	}
 }
 
-// eventPayload extracts the payload from one SSE data line.
-func eventPayload(line string) (string, bool) {
-	line = strings.TrimSpace(line)
-	if line == "" || strings.HasPrefix(line, ":") {
-		return "", false
+// streamSSEPayloads reads meaningful SSE payloads and dispatches them to
+// handle until the stream ends, the context is cancelled, or handle stops.
+func streamSSEPayloads(ctx context.Context, body io.ReadCloser,
+	events chan<- model.Event, metrics *streamMetrics,
+	readErrorPrefix string, handle func(payload string) bool) {
+
+	defer body.Close()
+	stopCloseOnCancel := closeOnCancel(ctx, body)
+	defer stopCloseOnCancel()
+
+	reader := newSSEPayloadReader(body, metrics)
+	for {
+		payload, ok, err := reader.Next()
+		if errors.Is(err, io.EOF) {
+			return
+		}
+		if err != nil {
+			sendEvent(ctx, events, model.Event{
+				Type: model.EventError,
+				Err: fmt.
+					Errorf("%s: %w", readErrorPrefix, err).
+					Error(),
+			})
+
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+
+		default:
+		}
+		if !ok {
+			continue
+		}
+		metrics.markEvent(payload)
+		if !handle(payload) {
+			return
+		}
 	}
-	if !strings.HasPrefix(line, "data:") {
+}
+
+// closeOnCancel closes body when ctx is cancelled to unblock a pending read.
+func closeOnCancel(ctx context.Context, body io.Closer) func() {
+	done := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = body.Close()
+
+		case <-done:
+		}
+	}()
+
+	return func() {
+		close(done)
+	}
+}
+
+// ssePayloadReader reads Server-Sent Event frames without bufio.Scanner size
+// limits and reports raw transport bytes to stream metrics.
+type ssePayloadReader struct {
+	// reader is the underlying HTTP response body.
+	reader io.Reader
+
+	// metrics receives byte counts as data is read from reader.
+	metrics *streamMetrics
+
+	// buffer stores bytes that have been read but not yet framed.
+	buffer []byte
+
+	// scratch is reused for response body reads.
+	scratch []byte
+
+	// pendingErr is returned after any already-read buffered frames.
+	pendingErr error
+
+	// reachedEOF reports that the reader has no more bytes to provide.
+	reachedEOF bool
+}
+
+// newSSEPayloadReader creates a frame-oriented SSE reader for a stream body.
+func newSSEPayloadReader(reader io.Reader,
+	metrics *streamMetrics) *ssePayloadReader {
+
+	return &ssePayloadReader{
+		reader:  reader,
+		metrics: metrics,
+		scratch: make([]byte, sseReadBufferSize),
+	}
+}
+
+// Next returns the next SSE data payload, skipping comments and empty frames.
+func (r *ssePayloadReader) Next() (string, bool, error) {
+	for {
+		frame, ok, err := r.popFrame()
+		if err != nil {
+			return "", false, err
+		}
+		if ok {
+			payload, hasPayload := sseFramePayload(frame)
+
+			return payload, hasPayload, nil
+		}
+		if r.reachedEOF {
+			return "", false, io.EOF
+		}
+		if r.pendingErr != nil {
+			err := r.pendingErr
+			r.pendingErr = nil
+			if errors.Is(err, io.EOF) {
+				r.reachedEOF = true
+
+				continue
+			}
+
+			return "", false, err
+		}
+
+		count, err := r.reader.Read(r.scratch)
+		if count > 0 {
+			if r.metrics != nil {
+				r.metrics.addBytes(count)
+			}
+			r.buffer = append(r.buffer, r.scratch[:count]...)
+			if len(r.buffer) > sseMaxFrameBytes {
+				if index, _ := sseFrameBoundary(
+					r.buffer,
+				); index < 0 {
+					return "", false, fmt.Errorf("sse "+
+						"frame exceeded %d bytes",
+						sseMaxFrameBytes)
+				}
+			}
+			if err != nil {
+				r.pendingErr = err
+			}
+
+			continue
+		}
+		if errors.Is(err, io.EOF) {
+			r.reachedEOF = true
+
+			continue
+		}
+		if err != nil {
+			return "", false, err
+		}
+	}
+}
+
+// popFrame removes one complete SSE frame or the final unterminated frame.
+func (r *ssePayloadReader) popFrame() ([]byte, bool, error) {
+	if index, width := sseFrameBoundary(r.buffer); index >= 0 {
+		if index > sseMaxFrameBytes {
+			return nil, false, fmt.Errorf("sse frame exceeded "+
+				"%d bytes", sseMaxFrameBytes)
+		}
+		frame := r.buffer[:index]
+		r.buffer = r.buffer[index+width:]
+
+		return frame, true, nil
+	}
+	if r.reachedEOF && len(bytes.TrimSpace(r.buffer)) > 0 {
+		if len(r.buffer) > sseMaxFrameBytes {
+			return nil, false, fmt.Errorf("sse frame exceeded "+
+				"%d bytes", sseMaxFrameBytes)
+		}
+		frame := r.buffer
+		r.buffer = nil
+
+		return frame, true, nil
+	}
+
+	return nil, false, nil
+}
+
+// sseFrameBoundary returns the earliest blank-line boundary in an SSE buffer.
+func sseFrameBoundary(buffer []byte) (int, int) {
+	lineFeed := bytes.Index(buffer, []byte("\n\n"))
+	crlf := bytes.Index(buffer, []byte("\r\n\r\n"))
+	switch {
+	case lineFeed < 0:
+		return crlf, 4
+
+	case crlf < 0:
+		return lineFeed, 2
+
+	case lineFeed < crlf:
+		return lineFeed, 2
+
+	default:
+		return crlf, 4
+	}
+}
+
+// sseFramePayload extracts and joins data fields from one SSE frame.
+func sseFramePayload(frame []byte) (string, bool) {
+	lines := strings.Split(
+		strings.ReplaceAll(
+			string(frame),
+			"\r\n", "\n",
+		),
+		"\n",
+	)
+	payloadLines := make([]string, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimRight(line, "\r")
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, ":") {
+			continue
+		}
+		if !strings.HasPrefix(trimmed, "data:") {
+			continue
+		}
+		payloadLines = append(
+			payloadLines,
+			strings.TrimSpace(
+				strings.TrimPrefix(trimmed, "data:"),
+			),
+		)
+	}
+	if len(payloadLines) == 0 {
 		return "", false
 	}
 
-	return strings.TrimSpace(strings.TrimPrefix(line, "data:")), true
+	return strings.TrimSpace(strings.Join(payloadLines, "\n")), true
 }
 
 // decodeChunk converts one JSON stream payload into neutral model events.
@@ -484,49 +692,31 @@ func streamResponsesAPI(ctx context.Context, body io.ReadCloser,
 	events chan<- model.Event, metrics streamMetrics) {
 
 	defer close(events)
-	defer body.Close()
 
 	decoder := responseStreamDecoder{}
-	scanner := bufio.NewScanner(body)
-	for scanner.Scan() {
-		metrics.addLine(scanner.Bytes())
-		select {
-		case <-ctx.Done():
-			return
-
-		default:
-		}
-
-		payload, ok := eventPayload(scanner.Text())
-		if !ok {
-			continue
-		}
-		metrics.markEvent(payload)
-		if payload == "[DONE]" {
-			sendMetricsAndDone(ctx, events, metrics)
-
-			return
-		}
-
-		for _, event := range decoder.decode([]byte(payload)) {
-			if event.Type == model.EventDone {
+	streamSSEPayloads(
+		ctx, body, events, &metrics, "read openai response stream",
+		func(payload string) bool {
+			if payload == "[DONE]" {
 				sendMetricsAndDone(ctx, events, metrics)
 
-				return
+				return false
 			}
-			if !sendEvent(ctx, events, event) {
-				return
+
+			for _, event := range decoder.decode([]byte(payload)) {
+				if event.Type == model.EventDone {
+					sendMetricsAndDone(ctx, events, metrics)
+
+					return false
+				}
+				if !sendEvent(ctx, events, event) {
+					return false
+				}
 			}
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		sendEvent(ctx, events, model.Event{
-			Type: model.EventError,
-			Err: fmt.
-				Errorf("read openai response stream: %w", err).
-				Error(),
-		})
-	}
+
+			return true
+		},
+	)
 }
 
 // responseStreamDecoder converts Responses API SSE with item lifecycle state.

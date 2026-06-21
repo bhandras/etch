@@ -3,12 +3,14 @@ package openai
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"harness/internal/model"
 )
@@ -114,6 +116,112 @@ func TestClientStreamsChatCompletions(t *testing.T) {
 	}
 	if got[4].Type != model.EventDone {
 		t.Fatalf("expected done event, got %#v", got[4])
+	}
+}
+
+// TestSSEPayloadReaderHandlesFragmentedFrames verifies frame parsing survives
+// arbitrary read boundaries and reports raw response bytes.
+func TestSSEPayloadReaderHandlesFragmentedFrames(t *testing.T) {
+	stream := "data: hello\n\n: ignored\n\ndata: [DONE]"
+	metrics := streamMetrics{}
+	reader := newSSEPayloadReader(&fragmentedReader{chunks: []string{
+		"data: he",
+		"llo\n",
+		"\n: ign",
+		"ored\n\n",
+		"data: [DONE]",
+	}}, &metrics)
+
+	payload, ok, err := reader.Next()
+	if err != nil || !ok || payload != "hello" {
+		t.Fatalf("unexpected first payload: %q %v %v", payload, ok, err)
+	}
+	payload, ok, err = reader.Next()
+	if err != nil || ok || payload != "" {
+		t.Fatalf("unexpected comment frame: %q %v %v", payload, ok, err)
+	}
+	payload, ok, err = reader.Next()
+	if err != nil || !ok || payload != "[DONE]" {
+		t.Fatalf("unexpected final payload: %q %v %v", payload, ok, err)
+	}
+	_, _, err = reader.Next()
+	if !errors.Is(err, io.EOF) {
+		t.Fatalf("expected EOF, got %v", err)
+	}
+	if metrics.responseBytes != len(stream) {
+		t.Fatalf("expected %d response bytes, got %d", len(stream),
+			metrics.responseBytes)
+	}
+}
+
+// TestSSEPayloadReaderJoinsMultilineData verifies spec-style multiline data
+// frames are surfaced as one payload.
+func TestSSEPayloadReaderJoinsMultilineData(t *testing.T) {
+	metrics := streamMetrics{}
+	reader := newSSEPayloadReader(
+		strings.NewReader(
+			"event: message\r\ndata: hello\r\ndata: world\r\n\r\n",
+		),
+		&metrics,
+	)
+
+	payload, ok, err := reader.Next()
+	if err != nil || !ok {
+		t.Fatalf("expected payload, got %q %v %v", payload, ok, err)
+	}
+	if payload != "hello\nworld" {
+		t.Fatalf("unexpected payload: %q", payload)
+	}
+}
+
+// TestSSEPayloadReaderRejectsOversizedFrame verifies malformed streams cannot
+// grow the buffered frame without bound.
+func TestSSEPayloadReaderRejectsOversizedFrame(t *testing.T) {
+	reader := newSSEPayloadReader(
+		strings.NewReader(
+			"data: "+strings.Repeat("x", sseMaxFrameBytes),
+		),
+		nil,
+	)
+
+	_, _, err := reader.Next()
+	if err == nil {
+		t.Fatal("expected oversized frame error")
+	}
+	if !strings.Contains(err.Error(), "sse frame exceeded") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// TestStreamChatCompletionsClosesBodyOnCancel verifies context cancellation
+// actively unblocks a pending response-body read.
+func TestStreamChatCompletionsClosesBodyOnCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	body := newBlockingReadCloser()
+	events := make(chan model.Event)
+	done := make(chan struct{})
+	go func() {
+		streamChatCompletions(ctx, body, events, streamMetrics{})
+		close(done)
+	}()
+
+	cancel()
+	select {
+	case <-done:
+	case <-body.closed:
+		<-done
+
+	case <-time.After(2 * time.Second):
+		t.Fatal("stream goroutine did not exit after cancellation")
+	}
+	select {
+	case _, ok := <-events:
+		if ok {
+			t.Fatal("expected event channel to be closed")
+		}
+
+	default:
+		t.Fatal("expected event channel to be closed")
 	}
 }
 
@@ -649,4 +757,58 @@ func collectEvents(events <-chan model.Event) []model.Event {
 	}
 
 	return got
+}
+
+// fragmentedReader returns fixed string chunks to exercise stream buffering.
+type fragmentedReader struct {
+	// chunks are returned in order as separate reads.
+	chunks []string
+}
+
+// Read copies the next configured chunk into p.
+func (r *fragmentedReader) Read(p []byte) (int, error) {
+	if len(r.chunks) == 0 {
+		return 0, io.EOF
+	}
+	chunk := r.chunks[0]
+	if len(chunk) > len(p) {
+		count := copy(p, chunk)
+		r.chunks[0] = chunk[count:]
+
+		return count, nil
+	}
+	r.chunks = r.chunks[1:]
+
+	return copy(p, chunk), nil
+}
+
+// blockingReadCloser blocks reads until Close is called.
+type blockingReadCloser struct {
+	// closed is closed exactly once when Close is called.
+	closed chan struct{}
+}
+
+// newBlockingReadCloser creates a response body that waits for cancellation.
+func newBlockingReadCloser() *blockingReadCloser {
+	return &blockingReadCloser{
+		closed: make(chan struct{}),
+	}
+}
+
+// Read blocks until Close is called.
+func (b *blockingReadCloser) Read(_ []byte) (int, error) {
+	<-b.closed
+
+	return 0, io.ErrClosedPipe
+}
+
+// Close unblocks any pending Read call.
+func (b *blockingReadCloser) Close() error {
+	select {
+	case <-b.closed:
+	default:
+		close(b.closed)
+	}
+
+	return nil
 }
