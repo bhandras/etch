@@ -248,6 +248,10 @@ func Parse(text string) (Config, error) {
 		}
 	}
 
+	if err := Validate(cfg); err != nil {
+		return Config{}, err
+	}
+
 	return cfg, nil
 }
 

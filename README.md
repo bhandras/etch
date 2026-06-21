@@ -204,6 +204,10 @@ go run ./cmd/harness config show --effective
 go run ./cmd/harness config schema
 ```
 
+`config check` validates both the TOML subset and semantic settings such as
+provider names, OpenAI API modes, hook events, matcher regexes, and enabled
+hook/plugin commands.
+
 Hooks are external shell commands that inspect or mutate lifecycle events.
 Harness sends a JSON envelope on stdin and expects either empty stdout or an
 event-specific JSON object on stdout. Hooks run sequentially in config file

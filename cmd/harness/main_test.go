@@ -89,6 +89,29 @@ func TestConfigCheckValidatesDiscoveredConfig(t *testing.T) {
 	}
 }
 
+// TestConfigCheckRejectsInvalidDiscoveredConfig verifies semantic validation is
+// surfaced before runtime commands consume project config.
+func TestConfigCheckRejectsInvalidDiscoveredConfig(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	if err := os.Mkdir(filepath.Join(root, ".harness"), 0o755); err != nil {
+		t.Fatalf("make config dir: %v", err)
+	}
+	writeFile(
+		t, filepath.Join(root, ".harness", "config.toml"),
+		"[provider]\nname = \"mystery\"\n",
+	)
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"config", "check"}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("config check unexpectedly succeeded")
+	}
+	if !strings.Contains(stderr.String(), "provider.name must be one of") {
+		t.Fatalf("missing validation error: %q", stderr.String())
+	}
+}
+
 // TestConfigShowEffectiveRendersMergedDefaults verifies effective config output
 // includes compiled defaults and project TOML values without credentials.
 func TestConfigShowEffectiveRendersMergedDefaults(t *testing.T) {
@@ -112,9 +135,9 @@ func TestConfigShowEffectiveRendersMergedDefaults(t *testing.T) {
 	}
 	for _, want := range []string{
 		"Effective Config",
-		"- name: openai",
-		"- model: gpt-test",
-		"- dir: .harness/sessions",
+		"- name: openai (config)",
+		"- model: gpt-test (config)",
+		"- dir: .harness/sessions (default)",
 	} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Fatalf("missing %q in effective config:\n%s", want,

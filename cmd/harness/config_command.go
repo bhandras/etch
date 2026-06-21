@@ -24,7 +24,7 @@ func runConfig(cfg cliConfig, stdout io.Writer, stderr io.Writer) int {
 
 			return 0
 		}
-		fmt.Fprintf(stdout, "config ok: %s\n", loaded.Path)
+		fmt.Fprintln(stdout, formatConfigCheck(loaded))
 
 		return 0
 
@@ -88,39 +88,83 @@ func formatEffectiveConfig(cfg harnessconfig.Config) string {
 	writeConfigPath(&out, cfg.Path)
 	fmt.Fprintln(&out)
 	fmt.Fprintln(&out, "Session")
-	fmt.Fprintf(&out, "- dir: %s\n", defaults.sessionDir)
-	fmt.Fprintf(&out, "- max tool rounds: %d\n", defaults.maxToolRounds)
-	fmt.Fprintf(&out, "- keep messages: %d\n", defaults.keepMessages)
+	writeEffectiveString(&out, "dir", defaults.sessionDir, cfg.Session.Dir)
+	writeEffectiveInt(
+		&out, "max tool rounds", defaults.maxToolRounds,
+		cfg.Session.MaxToolRounds,
+	)
+	writeEffectiveInt(
+		&out, "keep messages", defaults.keepMessages,
+		cfg.Session.KeepMessages,
+	)
 	fmt.Fprintln(&out)
 	fmt.Fprintln(&out, "Context")
-	fmt.Fprintf(&out, "- auto compact: %t\n", defaults.autoCompact)
-	fmt.Fprintf(
-		&out, "- auto compact threshold tokens: %d\n",
-		defaults.autoCompactLimit,
+	writeEffectiveBool(
+		&out, "auto compact", defaults.autoCompact,
+		cfg.Context.AutoCompact,
 	)
-	fmt.Fprintf(
-		&out, "- keep recent tokens: %d\n", defaults.keepRecentTokens,
+	writeEffectiveInt(
+		&out, "auto compact threshold tokens",
+		defaults.autoCompactLimit,
+		cfg.Context.AutoCompactThresholdTokens,
+	)
+	writeEffectiveInt(
+		&out, "keep recent tokens", defaults.keepRecentTokens,
+		cfg.Context.KeepRecentTokens,
 	)
 	fmt.Fprintln(&out)
 	fmt.Fprintln(&out, "Provider")
-	fmt.Fprintf(&out, "- name: %s\n", displayString(defaults.provider))
-	fmt.Fprintf(&out, "- model: %s\n", displayString(defaults.model))
+	writeEffectiveString(&out, "name", defaults.provider, cfg.Provider.Name)
+	writeEffectiveString(&out, "model", defaults.model, cfg.Provider.Model)
 	fmt.Fprintln(&out)
 	fmt.Fprintln(&out, "OpenAI")
-	fmt.Fprintf(&out, "- base url: %s\n", displayString(defaults.baseURL))
-	fmt.Fprintf(&out, "- api: %s\n", displayString(defaults.openaiAPI))
-	fmt.Fprintf(
-		&out, "- reasoning effort: %s\n",
-		displayString(defaults.reasoningEffort),
+	writeEffectiveString(
+		&out, "base url", defaults.baseURL, cfg.OpenAI.BaseURL,
 	)
-	fmt.Fprintf(
-		&out, "- reasoning summary: %s\n",
-		displayString(defaults.reasoningSummary),
+	writeEffectiveString(&out, "api", defaults.openaiAPI, cfg.OpenAI.API)
+	writeEffectiveString(
+		&out, "reasoning effort", defaults.reasoningEffort,
+		cfg.OpenAI.ReasoningEffort,
+	)
+	writeEffectiveString(
+		&out, "reasoning summary", defaults.reasoningSummary,
+		cfg.OpenAI.ReasoningSummary,
 	)
 	fmt.Fprintln(&out)
 	writeHooksAndPlugins(&out, cfg.Hooks, cfg.Plugins)
 
 	return strings.TrimRight(out.String(), "\n")
+}
+
+// formatConfigCheck renders a concise successful validation summary.
+func formatConfigCheck(cfg harnessconfig.Config) string {
+	var out strings.Builder
+	fmt.Fprintf(&out, "config ok: %s\n", cfg.Path)
+	fmt.Fprintln(&out)
+	fmt.Fprintln(&out, "Summary")
+	fmt.Fprintf(
+		&out, "- provider: %s\n",
+		displayString(
+			configProvider(cfg),
+		),
+	)
+	fmt.Fprintf(&out, "- model: %s\n", displayString(cfg.Provider.Model))
+	fmt.Fprintf(
+		&out, "- openai api: %s\n",
+		displayString(
+			configOpenAIAPI(cfg),
+		),
+	)
+	fmt.Fprintf(
+		&out, "- hooks: %d enabled, %d disabled\n",
+		enabledHooks(cfg.Hooks), disabledHooks(cfg.Hooks),
+	)
+	fmt.Fprintf(
+		&out, "- plugins: %d enabled, %d disabled",
+		enabledPlugins(cfg.Plugins), disabledPlugins(cfg.Plugins),
+	)
+
+	return out.String()
 }
 
 // writeRawConfigSections renders the loaded TOML values without defaults.
@@ -182,22 +226,111 @@ func writeHooksAndPlugins(out *strings.Builder,
 	plugins []harnessconfig.PluginConfig) {
 
 	fmt.Fprintln(out, "Hooks")
-	fmt.Fprintf(out, "- count: %d\n", len(hooks))
+	fmt.Fprintf(
+		out, "- count: %d (%d enabled, %d disabled)\n", len(hooks),
+		enabledHooks(hooks), disabledHooks(hooks),
+	)
 	for i, hook := range hooks {
 		fmt.Fprintf(
-			out, "- %d: %s %s\n", i+1, displayString(hook.Event),
+			out, "- %d: %s %s%s\n", i+1, displayString(hook.Event),
 			displayString(hook.Command),
+			disabledSuffix(hook.Disabled),
 		)
 	}
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "Plugins")
-	fmt.Fprintf(out, "- count: %d\n", len(plugins))
+	fmt.Fprintf(
+		out, "- count: %d (%d enabled, %d disabled)\n", len(plugins),
+		enabledPlugins(plugins), disabledPlugins(plugins),
+	)
 	for i, plugin := range plugins {
 		fmt.Fprintf(
-			out, "- %d: %s %s\n", i+1, displayString(plugin.Name),
+			out, "- %d: %s %s%s\n", i+1, displayString(plugin.Name),
 			displayString(plugin.Command),
+			disabledSuffix(plugin.Disabled),
 		)
 	}
+}
+
+// writeEffectiveString renders one effective string value with its source.
+func writeEffectiveString(out *strings.Builder, label string, value string,
+	configValue string) {
+
+	fmt.Fprintf(
+		out, "- %s: %s (%s)\n", label, displayString(value),
+		valueSource(configValue != ""),
+	)
+}
+
+// writeEffectiveInt renders one effective integer value with its source.
+func writeEffectiveInt(out *strings.Builder, label string, value int,
+	configValue int) {
+
+	fmt.Fprintf(
+		out, "- %s: %d (%s)\n", label, value,
+		valueSource(configValue > 0),
+	)
+}
+
+// writeEffectiveBool renders one effective boolean value with its source.
+func writeEffectiveBool(out *strings.Builder, label string, value bool,
+	configValue bool) {
+
+	fmt.Fprintf(
+		out, "- %s: %t (%s)\n", label, value, valueSource(configValue),
+	)
+}
+
+// valueSource renders the source marker for one effective value.
+func valueSource(configured bool) string {
+	if configured {
+		return "config"
+	}
+
+	return "default"
+}
+
+// disabledSuffix marks disabled extension rows in config output.
+func disabledSuffix(disabled bool) string {
+	if disabled {
+		return " (disabled)"
+	}
+
+	return ""
+}
+
+// enabledHooks counts configured hooks that are not disabled.
+func enabledHooks(hooks []harnessconfig.HookConfig) int {
+	return len(hooks) - disabledHooks(hooks)
+}
+
+// disabledHooks counts disabled hook definitions.
+func disabledHooks(hooks []harnessconfig.HookConfig) int {
+	count := 0
+	for _, hook := range hooks {
+		if hook.Disabled {
+			count++
+		}
+	}
+
+	return count
+}
+
+// enabledPlugins counts configured plugins that are not disabled.
+func enabledPlugins(plugins []harnessconfig.PluginConfig) int {
+	return len(plugins) - disabledPlugins(plugins)
+}
+
+// disabledPlugins counts disabled plugin definitions.
+func disabledPlugins(plugins []harnessconfig.PluginConfig) int {
+	count := 0
+	for _, plugin := range plugins {
+		if plugin.Disabled {
+			count++
+		}
+	}
+
+	return count
 }
 
 // displayString returns a printable value marker for optional strings.

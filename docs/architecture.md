@@ -350,7 +350,9 @@ keys. It should be updated in the same change that adds or removes config
 surface. The CLI also exposes `harness config check`, `harness config show
 --effective`, and `harness config schema` so a user or agent can validate the
 discovered project config, inspect merged defaults, and see the model-neutral
-schema without reading the source.
+schema without reading the source. Config validation includes scalar TOML
+parsing plus semantic checks for provider names, OpenAI API modes, reasoning
+options, hook events, hook matcher regexes, and enabled hook/plugin commands.
 
 ## External Hooks
 

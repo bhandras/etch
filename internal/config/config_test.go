@@ -211,6 +211,84 @@ func TestParseRejectsUnknownKeys(t *testing.T) {
 	}
 }
 
+// TestParseRejectsInvalidSemanticConfig verifies schema validation catches
+// values that parse but would fail later at runtime.
+func TestParseRejectsInvalidSemanticConfig(t *testing.T) {
+	tests := []struct {
+		// name identifies the invalid config case.
+		name string
+
+		// text is the config fragment expected to fail.
+		text string
+
+		// want is the stable diagnostic fragment expected in the error.
+		want string
+	}{
+		{
+			name: "provider",
+			text: "[provider]\nname = \"mystery\"\n",
+			want: "provider.name must be one of",
+		},
+		{
+			name: "openai api",
+			text: "[openai]\napi = \"mystery\"\n",
+			want: "openai.api must be one of",
+		},
+		{
+			name: "reasoning effort",
+			text: "[openai]\nreasoning_effort = \"maximum\"\n",
+			want: "openai.reasoning_effort must be one of",
+		},
+		{
+			name: "hook event",
+			text: "[[hooks]]\nevent = \"Nope\"\ncommand = \"cat\"\n",
+			want: "hooks[1].event must be one of",
+		},
+		{
+			name: "hook command",
+			text: "[[hooks.PreToolUse]]\n",
+			want: "hooks[1].command must not be empty",
+		},
+		{
+			name: "hook matcher",
+			text: "[[hooks.PreToolUse]]\nmatcher = \"[\"\ncommand = \"cat\"\n",
+			want: "hooks[1].matcher:",
+		},
+		{
+			name: "plugin name",
+			text: "[[plugins]]\ncommand = \"cat\"\n",
+			want: "plugins[1].name must not be empty",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := Parse(test.text)
+			if err == nil {
+				t.Fatal("expected validation error")
+			}
+			if !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("expected %q in error %q", test.want,
+					err.Error())
+			}
+		})
+	}
+}
+
+// TestParseAllowsDisabledIncompleteExtensions verifies disabled hook and plugin
+// placeholders may omit runtime-required fields.
+func TestParseAllowsDisabledIncompleteExtensions(t *testing.T) {
+	_, err := Parse(`
+[[hooks.PreToolUse]]
+disabled = true
+
+[[plugins]]
+disabled = true
+`)
+	if err != nil {
+		t.Fatalf("parse disabled extension placeholders: %v", err)
+	}
+}
+
 // TestSampleConfigDocumentsSupportedKeys verifies CI fails when a config field
 // is not represented in the sample configuration file.
 func TestSampleConfigDocumentsSupportedKeys(t *testing.T) {
