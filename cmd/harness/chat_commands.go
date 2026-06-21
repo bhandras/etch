@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -82,6 +83,28 @@ func handleChatCommand(cfg cliConfig, line string, sessionPath string,
 
 		return true, sessionPath
 	}
+	if line == "/tool" || strings.HasPrefix(line, "/tool ") ||
+		strings.HasPrefix(line, "/tools ") {
+
+		name := strings.TrimSpace(strings.TrimPrefix(line, "/tool"))
+		if strings.HasPrefix(line, "/tools ") {
+			name = strings.TrimSpace(
+				strings.TrimPrefix(line, "/tools"),
+			)
+		}
+		if name == "" {
+			for _, spec := range registry.Specs() {
+				fmt.Fprintln(stdout, spec.Name)
+			}
+
+			return true, sessionPath
+		}
+		if err := printToolSpec(registry, name, stdout); err != nil {
+			fmt.Fprintln(stderr, "error:", err)
+		}
+
+		return true, sessionPath
+	}
 
 	switch line {
 	case "/exit", "/quit":
@@ -146,7 +169,7 @@ func handleChatCommand(cfg cliConfig, line string, sessionPath string,
 	case "/help":
 		fmt.Fprintln(
 			stdout, "/exit /quit /new /show /sessions /context "+
-				"/status /compact /tools /help",
+				"/status /compact /tools /tool /help",
 		)
 
 		return true, sessionPath
@@ -156,6 +179,49 @@ func handleChatCommand(cfg cliConfig, line string, sessionPath string,
 
 		return true, sessionPath
 	}
+}
+
+// printToolSpec renders the model-facing schema for one registered tool.
+func printToolSpec(registry *tool.Registry, name string,
+	stdout io.Writer) error {
+
+	specs := registry.Specs()
+	for _, spec := range specs {
+		if spec.Name != name {
+			continue
+		}
+		fmt.Fprintf(stdout, "Tool: %s\n\n", spec.Name)
+		fmt.Fprintf(stdout, "Description:\n%s\n", spec.Description)
+		if len(spec.Parameters) > 0 {
+			formatted, err := formatJSON(spec.Parameters)
+			if err != nil {
+				return fmt.Errorf("format %s schema: %w", name,
+					err)
+			}
+			fmt.Fprintf(
+				stdout, "\nParameters:\n```json\n%s\n```\n",
+				formatted,
+			)
+		}
+
+		return nil
+	}
+
+	return fmt.Errorf("unknown tool %q", name)
+}
+
+// formatJSON returns stable indented JSON for command output.
+func formatJSON(raw json.RawMessage) (string, error) {
+	var value any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return "", err
+	}
+	encoded, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		return "", err
+	}
+
+	return string(encoded), nil
 }
 
 // printChatPrompt writes the fixed line-mode prompt.

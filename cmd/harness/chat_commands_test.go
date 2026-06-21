@@ -30,6 +30,36 @@ func TestRunChatListsTools(t *testing.T) {
 	}
 }
 
+// TestRunChatShowsToolSchema verifies slash commands can inspect the exact
+// model-facing schema for a registered tool.
+func TestRunChatShowsToolSchema(t *testing.T) {
+	cfg := cliConfig{
+		command:    commandChat,
+		sessionDir: filepath.Join(t.TempDir(), "sessions"),
+		provider:   providerEcho,
+	}
+	var stdout, stderr bytes.Buffer
+	code := runChat(
+		cfg, strings.NewReader("/tool grep\n/exit\n"), &stdout, &stderr,
+	)
+	if code != 0 {
+		t.Fatalf("chat failed: code=%d stdout=%q stderr=%q", code,
+			stdout.String(), stderr.String())
+	}
+	for _, want := range []string{
+		"Tool: grep",
+		"Description:",
+		"Parameters:",
+		"```json",
+		`"regex"`,
+	} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("missing %q in tool schema output: %q", want,
+				stdout.String())
+		}
+	}
+}
+
 // TestRunChatContextAndCompactCommands verifies the context stats and manual
 // compaction slash commands.
 func TestRunChatContextAndCompactCommands(t *testing.T) {
@@ -158,7 +188,7 @@ func TestRunChatCommandWithOutputRedrawsPrompt(t *testing.T) {
 	if strings.HasPrefix(got, "\n\n") {
 		t.Fatalf("slash output had extra leading padding: %q", got)
 	}
-	if !strings.Contains(got, "/tools /help\n\n") {
+	if !strings.Contains(got, "/tools /tool /help\n\n") {
 		t.Fatalf("slash output missing trailing padding: %q", got)
 	}
 	if promptAt < 0 {

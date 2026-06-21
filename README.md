@@ -256,7 +256,8 @@ go run ./cmd/harness tool project_files --args '{"path":".","limit":200}'
 The repository also includes a standard-library-only Go intelligence plugin at
 `plugins/go-intel`. It is intentionally a plugin, not core harness behavior. It
 uses `go/parser`, `go/ast`, and `go/token` to list symbols by package or file
-and to return a specific symbol's docs plus full declaration source:
+and to return a specific symbol's structured godoc, function or method
+signature, and optional declaration source:
 
 ```toml
 [[plugins]]
@@ -270,6 +271,7 @@ go run ./cmd/harness tool go_list_symbols --args '{"path":"internal/session","gr
 go run ./cmd/harness tool go_package_symbols --args '{"path":"internal","package":"session"}'
 go run ./cmd/harness tool go_file_symbols --args '{"path":"internal/session/session.go"}'
 go run ./cmd/harness tool go_symbol --args '{"path":"internal/session","name":"Store.Append"}'
+go run ./cmd/harness tool go_symbol --args '{"path":"internal/session","name":"Store.Append","declaration":"signature"}'
 ```
 
 ## Sessions and Chat Commands
@@ -296,7 +298,8 @@ Inside chat, use slash commands for local session and context operations:
 /compact   Append a model-written summary for older session history.
 /show      Render the active session transcript.
 /sessions  List known local sessions.
-/tools     List built-in tool names.
+/tools     List registered tool names.
+/tool NAME Show one tool's description and model-facing JSON schema.
 /new       Start a fresh session in the same chat process.
 /help      Show available chat commands.
 /exit      Leave chat.

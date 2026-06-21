@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"go/ast"
 	"go/parser"
+	"go/printer"
 	"go/token"
 	"io/fs"
 	"os"
@@ -38,6 +40,16 @@ const (
 
 	// maxSymbolLimit prevents accidental giant symbol listings.
 	maxSymbolLimit = 2000
+
+	// declarationFull renders a symbol's full source declaration.
+	declarationFull = "full"
+
+	// declarationSignature renders only metadata, godoc, and signatures.
+	declarationSignature = "signature"
+
+	// declarationNone renders metadata and godoc without source
+	// declarations.
+	declarationNone = "none"
 )
 
 // listSymbolsArgs stores arguments shared by symbol-listing tools.
@@ -113,6 +125,10 @@ type symbolArgs struct {
 	// IncludeUnexported permits matching lowercase package symbols when
 	// true.
 	IncludeUnexported bool `json:"includeUnexported"`
+
+	// Declaration controls how much source is returned: full, signature, or
+	// none. Empty defaults to full.
+	Declaration string `json:"declaration"`
 }
 
 // packageInfo stores parsed Go package metadata and symbols.
@@ -135,6 +151,7 @@ type symbolInfo struct {
 	relFile     string
 	line        int
 	doc         string
+	signature   string
 	declaration string
 }
 
@@ -275,8 +292,8 @@ func goFileSymbolsSpec() sdk.Tool {
 func goSymbolSpec() sdk.Tool {
 	return sdk.Tool{
 		Name: toolGoSymbol,
-		Description: "Return the doc comment and full source declaration " +
-			"for one Go symbol, such as a function, method, or struct.",
+		Description: "Return structured godoc, function signatures, " +
+			"and optional source declaration for one Go symbol.",
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -298,6 +315,11 @@ func goSymbolSpec() sdk.Tool {
 				),
 				"includeUnexported": boolSchema(
 					"Permit lowercase package symbols.",
+				),
+				"declaration": stringSchema(
+					"Declaration detail: full, " +
+						"signature, or none. " +
+						"Defaults to full.",
 				),
 			},
 			"required": []string{
@@ -470,6 +492,10 @@ func runGoSymbol(raw json.RawMessage) (string, error) {
 	if name == "" {
 		return "", fmt.Errorf("name must not be empty")
 	}
+	declarationMode, err := normalizeDeclarationMode(args.Declaration)
+	if err != nil {
+		return "", err
+	}
 	path := defaultPath(args.Path)
 	packages, err := parsePackages(path)
 	if err != nil {
@@ -489,7 +515,7 @@ func runGoSymbol(raw json.RawMessage) (string, error) {
 		return formatAmbiguousSymbol(name, matches), nil
 	}
 
-	return formatSymbolDetail(matches[0]), nil
+	return formatSymbolDetail(matches[0], declarationMode), nil
 }
 
 // decodeArguments unmarshals a possibly empty JSON object into out.
@@ -524,6 +550,22 @@ func normalizeSymbolLimit(limit int) int {
 	}
 
 	return limit
+}
+
+// normalizeDeclarationMode returns a supported source rendering mode.
+func normalizeDeclarationMode(mode string) (string, error) {
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	if mode == "" {
+		return declarationFull, nil
+	}
+	switch mode {
+	case declarationFull, declarationSignature, declarationNone:
+		return mode, nil
+
+	default:
+		return "", fmt.Errorf("declaration must be %q, %q, or %q",
+			declarationFull, declarationSignature, declarationNone)
+	}
 }
 
 // parsePackages parses Go files under path into package summaries.
@@ -708,7 +750,7 @@ func funcSymbol(fset *token.FileSet, root string, file string,
 	return newSymbolInfo(
 		fset, root, file, packageName, name, kind, content, decl,
 		decl.Doc,
-	)
+	).withSignature(funcSignature(fset, decl))
 }
 
 // genDeclSymbols returns symbols represented by type, const, or var specs.
@@ -795,6 +837,32 @@ func newSymbolInfo(fset *token.FileSet, root string, file string,
 		doc:         docText(doc),
 		declaration: sourceForNode(fset, content, node, doc),
 	}
+}
+
+// withSignature stores a function or method signature on symbol.
+func (s symbolInfo) withSignature(signature string) symbolInfo {
+	s.signature = signature
+
+	return s
+}
+
+// funcSignature renders a function declaration without its body or doc block.
+func funcSignature(fset *token.FileSet, decl *ast.FuncDecl) string {
+	clone := *decl
+	clone.Doc = nil
+	clone.Body = nil
+	var out bytes.Buffer
+	config := printer.Config{Mode: printer.RawFormat, Tabwidth: 8}
+	if err := config.Fprint(&out, fset, &clone); err != nil {
+		return ""
+	}
+
+	return compactSignature(out.String())
+}
+
+// compactSignature folds a rendered function signature onto one logical line.
+func compactSignature(signature string) string {
+	return strings.Join(strings.Fields(signature), " ")
 }
 
 // docText returns normalized documentation text for a declaration.
@@ -1014,7 +1082,7 @@ func writeSymbolRows(builder *strings.Builder, symbols []symbolInfo) {
 }
 
 // formatSymbolDetail renders a detailed source view for one symbol.
-func formatSymbolDetail(symbol symbolInfo) string {
+func formatSymbolDetail(symbol symbolInfo, declarationMode string) string {
 	var builder strings.Builder
 	fmt.Fprintf(&builder, "symbol: %s\n", symbol.name)
 	fmt.Fprintf(&builder, "kind: %s\n", symbol.kind)
@@ -1023,14 +1091,23 @@ func formatSymbolDetail(symbol symbolInfo) string {
 		symbol.relDir,
 	)
 	fmt.Fprintf(&builder, "file: %s:%d\n", symbol.relFile, symbol.line)
-	if symbol.doc != "" {
-		fmt.Fprintf(&builder, "\ndoc:\n%s\n", symbol.doc)
+	if symbol.signature != "" {
+		fmt.Fprintf(
+			&builder, "\nsignature:\n```go\n%s\n```\n",
+			symbol.signature,
+		)
 	}
-	fmt.Fprintf(
-		&builder, "\ndeclaration:\n```go\n%s\n```", symbol.declaration,
-	)
+	if symbol.doc != "" {
+		fmt.Fprintf(&builder, "\ngodoc:\n%s\n", symbol.doc)
+	}
+	if declarationMode == declarationFull && symbol.declaration != "" {
+		fmt.Fprintf(
+			&builder, "\ndeclaration:\n```go\n%s\n```",
+			symbol.declaration,
+		)
+	}
 
-	return builder.String()
+	return strings.TrimRight(builder.String(), "\n")
 }
 
 // formatAmbiguousSymbol renders candidate symbols for an ambiguous lookup.

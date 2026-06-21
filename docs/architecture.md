@@ -785,13 +785,15 @@ The repository also carries a Go intelligence plugin under `plugins/go-intel`.
 It is deliberately a plugin rather than core behavior. The plugin uses only the
 Go standard library parser packages plus `harness/sdk` to expose symbol-listing
 and source-lookup tools (`go_list_symbols`, `go_package_symbols`,
-`go_file_symbols`, and `go_symbol`). This keeps language-specific intelligence
-behind the plugin boundary while giving the project a practical richer-plugin
-example. Because it is its own Go module, local configs should start it with a
-command such as `go run ./plugins/go-intel/main.go` rather than `go run
-./plugins/go-intel` from the root module. Naming the file keeps the plugin's
-working directory at the project root while avoiding Go's nested-module package
-resolution error.
+`go_file_symbols`, and `go_symbol`). `go_symbol` returns structured godoc and
+function or method signatures, and can include the full declaration source when
+the caller needs implementation context. This keeps language-specific
+intelligence behind the plugin boundary while giving the project a practical
+richer-plugin example. Because it is its own Go module, local configs should
+start it with a command such as `go run ./plugins/go-intel/main.go` rather than
+`go run ./plugins/go-intel` from the root module. Naming the file keeps the
+plugin's working directory at the project root while avoiding Go's
+nested-module package resolution error.
 
 The implementation currently serializes calls to one plugin process. This keeps
 the first protocol client small and predictable. The request IDs are still part

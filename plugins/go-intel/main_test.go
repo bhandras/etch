@@ -64,13 +64,73 @@ func TestRunGoSymbolReturnsDocAndDeclaration(t *testing.T) {
 		t.Fatalf("lookup go symbol: %v", err)
 	}
 	for _, want := range []string{
-		"doc:\nWidget stores a display name.",
+		"godoc:\nWidget stores a display name.",
 		"type Widget struct",
 		"Name string",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("missing %q in output:\n%s", want, text)
 		}
+	}
+}
+
+// TestRunGoSymbolReturnsFunctionSignature verifies function lookups include a
+// standalone signature, godoc, and the default full declaration.
+func TestRunGoSymbolReturnsFunctionSignature(t *testing.T) {
+	dir := goFixture(t)
+	text, err := runGoSymbol(json.RawMessage(
+		`{"path":` + jsonQuote(dir) + `,"name":"NewWidget"}`,
+	))
+	if err != nil {
+		t.Fatalf("lookup go symbol: %v", err)
+	}
+	for _, want := range []string{
+		"signature:\n```go\nfunc NewWidget(name string) Widget\n```",
+		"godoc:\nNewWidget builds a Widget.",
+		"declaration:",
+		"return Widget{Name: name}",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("missing %q in output:\n%s", want, text)
+		}
+	}
+}
+
+// TestRunGoSymbolReturnsMethodSignature verifies method lookups render the
+// receiver as part of the structured signature block.
+func TestRunGoSymbolReturnsMethodSignature(t *testing.T) {
+	dir := goFixture(t)
+	text, err := runGoSymbol(json.RawMessage(
+		`{"path":` + jsonQuote(dir) + `,"name":"NameText"}`,
+	))
+	if err != nil {
+		t.Fatalf("lookup go symbol: %v", err)
+	}
+	want := "signature:\n```go\nfunc (w Widget) NameText() string\n```"
+	if !strings.Contains(text, want) {
+		t.Fatalf("missing method signature %q in output:\n%s", want,
+			text)
+	}
+}
+
+// TestRunGoSymbolSignatureModeSkipsFullDeclaration verifies callers can request
+// API shape and godoc without sending the whole declaration body.
+func TestRunGoSymbolSignatureModeSkipsFullDeclaration(t *testing.T) {
+	dir := goFixture(t)
+	text, err := runGoSymbol(json.RawMessage(
+		`{"path":` + jsonQuote(dir) +
+			`,"name":"NewWidget","declaration":"signature"}`,
+	))
+	if err != nil {
+		t.Fatalf("lookup go symbol: %v", err)
+	}
+	if !strings.Contains(text, "func NewWidget(name string) Widget") {
+		t.Fatalf("missing function signature in output:\n%s", text)
+	}
+	if strings.Contains(text, "declaration:") ||
+		strings.Contains(text, "return Widget{Name: name}") {
+
+		t.Fatalf("signature mode leaked full declaration:\n%s", text)
 	}
 }
 
