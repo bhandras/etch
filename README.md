@@ -50,8 +50,8 @@ Harness currently has:
   compaction events
 - explicit config-based stdio plugin tools over a small JSONL protocol
 - streaming terminal feedback with an animated working line, grouped tool-call
-  batches, compact tool output, and colored live diffs for file edits and
-  replacements
+  batches, compact tool output, and line-numbered colored live diffs for file
+  edits and replacements
 
 The compiled default provider is an offline echo model, so the CLI can run
 without network access. Project config can change that default. Use the

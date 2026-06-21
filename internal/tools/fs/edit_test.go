@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -63,6 +64,68 @@ func TestEditFileDryRunReturnsDiffWithoutWriting(t *testing.T) {
 		!strings.Contains(result, "+gamma") {
 
 		t.Fatalf("missing diff output: %q", result)
+	}
+}
+
+// TestUnifiedDiffShowsOnlyChangedHunks verifies model-facing diffs avoid
+// replaying unchanged file content outside nearby context.
+func TestUnifiedDiffShowsOnlyChangedHunks(t *testing.T) {
+	before := numberedLines(20)
+	after := strings.Replace(before, "line 10\n", "changed 10\n", 1)
+
+	got := unifiedDiff("note.txt", before, after, defaultEditDiffMaxBytes)
+	if !strings.Contains(got, "@@ -7,7 +7,7 @@") {
+		t.Fatalf("missing hunk range: %q", got)
+	}
+	if !strings.Contains(got, " line 07") ||
+		!strings.Contains(got, "-line 10") ||
+		!strings.Contains(got, "+changed 10") ||
+		!strings.Contains(got, " line 13") {
+
+		t.Fatalf("missing changed hunk content: %q", got)
+	}
+	if strings.Contains(got, "line 01") ||
+		strings.Contains(got, "line 20") {
+
+		t.Fatalf("diff included distant unchanged lines: %q", got)
+	}
+}
+
+// TestUnifiedDiffSplitsDistantChanges verifies separated edits render as
+// separate hunks rather than exposing the unchanged middle of the file.
+func TestUnifiedDiffSplitsDistantChanges(t *testing.T) {
+	before := numberedLines(30)
+	after := strings.Replace(before, "line 05\n", "changed 05\n", 1)
+	after = strings.Replace(after, "line 25\n", "changed 25\n", 1)
+
+	got := unifiedDiff("note.txt", before, after, defaultEditDiffMaxBytes)
+	if count := strings.Count(got, "@@ -"); count != 2 {
+		t.Fatalf("hunk count = %d, want 2 in %q", count, got)
+	}
+	if strings.Contains(got, "line 15") {
+		t.Fatalf("diff included unchanged middle content: %q", got)
+	}
+}
+
+// TestUnifiedDiffShowsSmallChangeInLargeFile verifies a localized edit in a
+// large file still produces a compact hunk instead of an omitted diff.
+func TestUnifiedDiffShowsSmallChangeInLargeFile(t *testing.T) {
+	before := numberedLines(1000)
+	after := strings.Replace(before, "line 500\n", "changed 500\n", 1)
+
+	got := unifiedDiff("large.txt", before, after, defaultEditDiffMaxBytes)
+	if strings.Contains(got, "diff omitted") {
+		t.Fatalf("small localized change was omitted: %q", got)
+	}
+	if !strings.Contains(got, "-line 500") ||
+		!strings.Contains(got, "+changed 500") {
+
+		t.Fatalf("missing localized change: %q", got)
+	}
+	if strings.Contains(got, "line 01\n") ||
+		strings.Contains(got, "line 999") {
+
+		t.Fatalf("diff included distant large-file context: %q", got)
 	}
 }
 
@@ -243,4 +306,19 @@ func TestUnifiedDiffOmitsLargeInputs(t *testing.T) {
 	if !strings.Contains(got, "diff omitted") {
 		t.Fatalf("expected omitted diff, got %q", got)
 	}
+}
+
+// numberedLines returns deterministic line-oriented content for diff tests.
+func numberedLines(count int) string {
+	var out strings.Builder
+	for index := 1; index <= count; index++ {
+		out.WriteString("line ")
+		if index < 10 {
+			out.WriteString("0")
+		}
+		out.WriteString(strconv.Itoa(index))
+		out.WriteString("\n")
+	}
+
+	return out.String()
 }

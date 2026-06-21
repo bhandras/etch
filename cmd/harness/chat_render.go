@@ -336,6 +336,9 @@ func (r *liveChatRenderer) renderToolResult(message session.MessageData) {
 	r.renderWithOutputLocked(func() {
 		r.closeStreamLocked()
 		r.printSeparator()
+		if r.renderMutationToolResult(message) {
+			return
+		}
 		for _, line := range cappedToolResultLines(message) {
 			fmt.Fprintln(
 				r.stdout,

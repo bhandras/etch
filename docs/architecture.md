@@ -572,7 +572,9 @@ creates parent directories, writes through a temporary file in the same
 directory, preserves existing file permissions when replacing a file, and
 returns a compact byte-count success message instead of echoing full content
 back into the model context. When replacing an existing file, it also returns a
-bounded unified-style diff so the model and user can inspect what changed.
+bounded unified-style diff so the model and user can inspect what changed. The
+diff must be hunked around changed regions, not a whole-file before/after dump,
+so unchanged file content does not pollute later model context.
 Mutation tools are anchored to the current working directory and refuse to
 modify internal `.git` or `.harness` paths.
 
@@ -583,15 +585,15 @@ of guessing. All edits are located against the original file before any
 replacement is applied, then written from the end of the file backward through
 the same atomic replacement helper used by `write`. Successful edits return a
 compact, unified-style line diff with a 20KB output cap so the model can inspect
-what changed without flooding the transcript. The optional `dryRun` flag runs
-the same validation and diff generation but returns a preview without modifying
-the file. The first version intentionally avoids fuzzy matching; that can be
-considered later after the sharp exact-replacement contract is proven. Adding a
-line is still an exact replacement: the model should replace a unique
-neighboring block with that same block plus the inserted line. Empty files and
-full rewrites should use `write`. Live chat renders mutation diffs with
-conventional red deletion lines and green insertion lines while keeping diff
-headers and context muted.
+what changed without flooding the transcript or the next model prompt. The
+optional `dryRun` flag runs the same validation and diff generation but returns
+a preview without modifying the file. The first version intentionally avoids
+fuzzy matching; that can be considered later after the sharp exact-replacement
+contract is proven. Adding a line is still an exact replacement: the model
+should replace a unique neighboring block with that same block plus the inserted
+line. Empty files and full rewrites should use `write`. Live chat renders
+mutation diffs with line-number gutters, conventional red deletion rows, and
+green insertion rows.
 
 The fifth operation is `bash`, a bounded command execution tool for
 verification and local diagnostics. It runs `bash -lc` in the current working

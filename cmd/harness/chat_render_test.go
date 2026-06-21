@@ -247,9 +247,9 @@ func TestRenderToolCallKeepsHeaderActive(t *testing.T) {
 	}
 }
 
-// TestRenderToolResultColorsDiffLines verifies live edit and write output uses
-// conventional red and green coloring for unified diff changes.
-func TestRenderToolResultColorsDiffLines(t *testing.T) {
+// TestRenderToolResultFormatsDiffWithLineNumbers verifies live edit and write
+// output uses a compact line-numbered diff view.
+func TestRenderToolResultFormatsDiffWithLineNumbers(t *testing.T) {
 	var stdout bytes.Buffer
 	renderer := &liveChatRenderer{
 		stdout: &stdout,
@@ -260,22 +260,25 @@ func TestRenderToolResultColorsDiffLines(t *testing.T) {
 	renderer.renderToolResult(
 		session.ToolMessage(
 			"call_1", "edit", "Updated.\n\n--- hello.md\n+++ "+
-				"hello.md\n@@\n-old\n+new\n",
+				"hello.md\n@@ -1 +1 @@\n-old\n+new\n",
 		),
 	)
 
 	got := stdout.String()
-	if !strings.Contains(got, ansiRed+"   -old"+ansiReset) {
+	if !strings.Contains(got, ansiBold+"• Edited hello.md (+1 -1)") {
+		t.Fatalf("missing edited diff header: %q", got)
+	}
+	if !strings.Contains(
+		got, ansiDiffDeleteBackground+ansiRed+"  1 - old",
+	) {
+
 		t.Fatalf("missing red deletion: %q", got)
 	}
-	if !strings.Contains(got, ansiGreen+"   +new"+ansiReset) {
+	if !strings.Contains(
+		got, ansiDiffAddBackground+ansiGreen+"  1 + new",
+	) {
+
 		t.Fatalf("missing green insertion: %q", got)
-	}
-	if !strings.Contains(got, ansiDim+"   --- hello.md"+ansiReset) {
-		t.Fatalf("missing muted diff header: %q", got)
-	}
-	if !strings.Contains(got, "   @@") {
-		t.Fatalf("missing readable diff context: %q", got)
 	}
 }
 
