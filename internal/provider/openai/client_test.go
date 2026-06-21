@@ -323,6 +323,7 @@ func TestClientStreamsResponsesAPI(t *testing.T) {
 		ReasoningSummary: "auto",
 	}
 	events, err := client.Stream(context.Background(), model.Request{
+		SessionID: "session-responses",
 		Messages: []model.Message{
 			{Role: model.RoleSystem, Content: "rules"},
 			{Role: model.RoleUser, Content: "list files"},
@@ -349,6 +350,10 @@ func TestClientStreamsResponsesAPI(t *testing.T) {
 	}
 	if !strings.Contains(gotBody, `"store":false`) {
 		t.Fatalf("request omitted explicit store false: %s", gotBody)
+	}
+	if gotRequest.PromptCacheKey != "session-responses" {
+		t.Fatalf("unexpected prompt cache key: %q",
+			gotRequest.PromptCacheKey)
 	}
 	if gotRequest.Reasoning == nil ||
 		gotRequest.Reasoning.Effort != "medium" ||
@@ -391,6 +396,22 @@ func TestClientStreamsResponsesAPI(t *testing.T) {
 	}
 	if got[5].Type != model.EventDone {
 		t.Fatalf("unexpected done event: %#v", got[5])
+	}
+}
+
+// TestPromptCacheKeyClampsRunes verifies cache affinity keys fit OpenAI's
+// documented length limit without splitting multibyte characters.
+func TestPromptCacheKeyClampsRunes(t *testing.T) {
+	long := strings.Repeat("a", promptCacheKeyMaxRunes) + "éé"
+	want := strings.Repeat("a", promptCacheKeyMaxRunes)
+	if got := promptCacheKey(long); got != want {
+		t.Fatalf("unexpected clamped key: %q", got)
+	}
+	if got := promptCacheKey("session"); got != "session" {
+		t.Fatalf("unexpected short key: %q", got)
+	}
+	if got := promptCacheKey(""); got != "" {
+		t.Fatalf("unexpected empty key: %q", got)
 	}
 }
 

@@ -65,6 +65,10 @@ type Message struct {
 
 // Request is the provider-neutral input passed to a model client.
 type Request struct {
+	// SessionID identifies the durable local session for provider-side
+	// cache affinity. Empty means the request is not tied to a session.
+	SessionID string
+
 	// Messages contains the ordered model context for the turn.
 	Messages []Message
 

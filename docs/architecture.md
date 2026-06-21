@@ -214,6 +214,11 @@ items. It should measure the existing HTTP/SSE path before we consider a
 WebSocket transport: request body bytes, approximate streamed response bytes,
 time to response headers, and time to the first meaningful stream event are
 reported as provider-neutral `metrics` events and folded into turn timing.
+Responses API requests include the durable local session ID as
+`prompt_cache_key`, clamped to OpenAI's documented 64-character limit, so Codex
+and Platform Responses calls can get stable cache affinity across turns. Chat
+Completions keeps the narrower compatibility request shape because many local
+or OpenAI-compatible endpoints reject unknown OpenAI-specific fields.
 
 OpenAI-compatible usage is selected explicitly:
 

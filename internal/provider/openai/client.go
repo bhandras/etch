@@ -36,6 +36,9 @@ const (
 
 	// APIResponses selects the Responses API request shape.
 	APIResponses = "responses"
+
+	// promptCacheKeyMaxRunes is OpenAI's maximum prompt cache key length.
+	promptCacheKeyMaxRunes = 64
 )
 
 // Client streams responses from an OpenAI-compatible Chat Completions endpoint.
@@ -154,12 +157,13 @@ func (c *Client) newResponsesRequest(ctx context.Context, req model.Request) (
 	*http.Request, error) {
 
 	body, err := json.Marshal(responseRequest{
-		Model:        c.Model,
-		Stream:       true,
-		Store:        false,
-		Instructions: responseInstructions(req.Messages),
-		Input:        responseInput(req.Messages),
-		Tools:        responseTools(req.Tools),
+		Model:          c.Model,
+		Stream:         true,
+		Store:          false,
+		PromptCacheKey: promptCacheKey(req.SessionID),
+		Instructions:   responseInstructions(req.Messages),
+		Input:          responseInput(req.Messages),
+		Tools:          responseTools(req.Tools),
 		Reasoning: responseReasoningConfig(
 			c.ReasoningEffort, c.ReasoningSummary,
 		),
@@ -227,6 +231,19 @@ func (c *Client) addCommonHeaders(req *http.Request) {
 	if c.UserAgent != "" {
 		req.Header.Set("User-Agent", c.UserAgent)
 	}
+}
+
+// promptCacheKey returns a provider-safe cache affinity key for a session.
+func promptCacheKey(sessionID string) string {
+	if sessionID == "" {
+		return ""
+	}
+	runes := []rune(sessionID)
+	if len(runes) <= promptCacheKeyMaxRunes {
+		return sessionID
+	}
+
+	return string(runes[:promptCacheKeyMaxRunes])
 }
 
 // requestContentLength returns the JSON body length when the request knows it.
@@ -811,6 +828,10 @@ type responseRequest struct {
 
 	// Store disables provider-side response storage when false.
 	Store bool `json:"store"`
+
+	// PromptCacheKey asks OpenAI-compatible backends to reuse prompt cache
+	// state for requests from the same local session.
+	PromptCacheKey string `json:"prompt_cache_key,omitempty"`
 
 	// Instructions stores system-level guidance for the response.
 	Instructions string `json:"instructions,omitempty"`

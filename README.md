@@ -43,6 +43,7 @@ Harness currently has:
   streams
 - provider transport timing for OpenAI-compatible HTTP/SSE streams, including
   request count, payload sizes, response headers, and first-event latency
+- Responses API prompt cache affinity keyed by the durable local session ID
 - chat steering that lets prompts typed while a turn is running influence the
   next safe model-call boundary
 - session-backed prompt history for Up/Down navigation in interactive chat

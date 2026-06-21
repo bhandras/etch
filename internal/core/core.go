@@ -289,7 +289,8 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 		}
 		modelStarted := time.Now()
 		response, err := collectModelResponse(
-			ctx, req.Model, callMessages, req.Tools, req.Observer,
+			ctx, req.Model, store.ID(), callMessages, req.Tools,
+			req.Observer,
 		)
 		timing.ModelDuration += time.Since(modelStarted)
 		timing.ModelCalls++
@@ -818,7 +819,7 @@ type modelResponse struct {
 
 // collectModelResponse starts a model stream and collects one assistant pass.
 func collectModelResponse(ctx context.Context, client model.Client,
-	messages []model.Message, registry *tool.Registry,
+	sessionID string, messages []model.Message, registry *tool.Registry,
 	observer Observer) (modelResponse, error) {
 
 	var specs []model.ToolSpec
@@ -827,8 +828,9 @@ func collectModelResponse(ctx context.Context, client model.Client,
 	}
 
 	stream, err := client.Stream(ctx, model.Request{
-		Messages: messages,
-		Tools:    specs,
+		SessionID: sessionID,
+		Messages:  messages,
+		Tools:     specs,
 	})
 	if err != nil {
 		return modelResponse{}, fmt.Errorf("start model stream: %w",

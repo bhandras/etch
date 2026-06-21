@@ -180,6 +180,13 @@ func TestRunTurnPersistsModelUsage(t *testing.T) {
 
 		t.Fatalf("unexpected usage: %#v", usage)
 	}
+	if len(client.requests) != 1 {
+		t.Fatalf("expected one model request, got %#v", client.requests)
+	}
+	if client.requests[0].SessionID != result.SessionID {
+		t.Fatalf("session id was not sent to model: got %q want %q",
+			client.requests[0].SessionID, result.SessionID)
+	}
 }
 
 // TestRunTurnRejectsEmptyPrompt keeps invalid CLI input from creating empty
