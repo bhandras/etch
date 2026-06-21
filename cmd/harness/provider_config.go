@@ -24,6 +24,9 @@ func modelClient(cfg cliConfig) (model.Client, error) {
 			return nil, fmt.Errorf("openai provider requires " +
 				"--model or provider.model config")
 		}
+		if cfg.apiKeyExplicit && cfg.apiKey != "" {
+			return openAIAPIKeyClient(cfg), nil
+		}
 		var oauthErr error
 		token := ""
 		baseURL := openaiauth.DefaultCodexBaseURL
@@ -38,15 +41,7 @@ func modelClient(cfg cliConfig) (model.Client, error) {
 		}
 
 		if token == "" && cfg.apiKey != "" && oauthErr == nil {
-			return &openai.Client{
-				BaseURL:          cfg.baseURL,
-				APIKey:           cfg.apiKey,
-				Model:            cfg.model,
-				API:              cfg.openaiAPI,
-				ReasoningEffort:  cfg.reasoningEffort,
-				ReasoningSummary: cfg.reasoningSummary,
-				UserAgent:        harnessUserAgent,
-			}, nil
+			return openAIAPIKeyClient(cfg), nil
 		}
 		if oauthErr != nil {
 			return nil, oauthErr
@@ -78,6 +73,19 @@ func modelClient(cfg cliConfig) (model.Client, error) {
 
 	default:
 		return nil, fmt.Errorf("unknown provider %q", cfg.provider)
+	}
+}
+
+// openAIAPIKeyClient returns a provider client using explicit API-key mode.
+func openAIAPIKeyClient(cfg cliConfig) model.Client {
+	return &openai.Client{
+		BaseURL:          cfg.baseURL,
+		APIKey:           cfg.apiKey,
+		Model:            cfg.model,
+		API:              cfg.openaiAPI,
+		ReasoningEffort:  cfg.reasoningEffort,
+		ReasoningSummary: cfg.reasoningSummary,
+		UserAgent:        harnessUserAgent,
 	}
 }
 

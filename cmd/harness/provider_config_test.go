@@ -185,6 +185,75 @@ func TestRunUsesStoredOpenAIOAuthCredentialsFirst(t *testing.T) {
 	}
 }
 
+// TestRunExplicitAPIKeyOverridesStoredOAuth verifies an invocation-scoped API
+// key can target OpenAI-compatible providers even when local OAuth exists.
+func TestRunExplicitAPIKeyOverridesStoredOAuth(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("OPENROUTER_API_KEY", "")
+	t.Setenv("CODEX_ACCESS_TOKEN", "")
+
+	root := t.TempDir()
+	t.Chdir(root)
+
+	sessionDir := filepath.Join(root, "sessions")
+	var gotPath string
+	var gotAuth string
+	server := httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			gotPath = r.URL.Path
+			gotAuth = r.Header.Get("Authorization")
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprint(
+				w, "data: "+
+					"{\"choices\":[{\"delta\":{\"content\":\"hi"+
+					"\"}}]}\n\n",
+			)
+			fmt.Fprint(w, "data: [DONE]\n\n")
+		}),
+	)
+	defer server.Close()
+
+	authPath, err := openaiauth.DefaultStorePath(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := openaiauth.Save(authPath, openaiauth.Credentials{
+		CodexBaseURL: "https://chatgpt.invalid/backend-api/codex",
+		LastRefresh:  time.Now(),
+		Tokens: openaiauth.TokenData{
+			AccessToken: "oauth-token",
+		},
+	}); err != nil {
+
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := run(
+		[]string{
+			"--session-dir", sessionDir,
+			"--provider", "openai",
+			"--base-url", server.URL,
+			"--openai-api", "chat",
+			"--api-key", "explicit-token",
+			"--model", "test-model",
+			"-p", "hello",
+		},
+		&stdout,
+		&stderr,
+	)
+	if code != 0 {
+		t.Fatalf("openai explicit key run failed: code=%d stdout=%q "+
+			"stderr=%q", code, stdout.String(), stderr.String())
+	}
+	if gotPath != "/chat/completions" {
+		t.Fatalf("unexpected api-key path: %q", gotPath)
+	}
+	if gotAuth != "Bearer explicit-token" {
+		t.Fatalf("unexpected auth header: %q", gotAuth)
+	}
+}
+
 // TestRunUsesOpenRouterAPIKeyEnv verifies OpenRouter can be used as an
 // OpenAI-compatible API-key fallback when no OAuth login is present.
 func TestRunUsesOpenRouterAPIKeyEnv(t *testing.T) {

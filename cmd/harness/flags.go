@@ -523,6 +523,7 @@ func addOpenAIFlags(fs *flag.FlagSet, cfg *cliConfig) {
 func applyAPIKeyFlag(cfg *cliConfig, apiKey string) {
 	if apiKey != "" {
 		cfg.apiKey = apiKey
+		cfg.apiKeyExplicit = true
 	}
 }
 

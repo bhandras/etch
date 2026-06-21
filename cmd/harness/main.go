@@ -58,6 +58,7 @@ type cliConfig struct {
 	model               string
 	baseURL             string
 	apiKey              string
+	apiKeyExplicit      bool
 	openaiAPI           string
 	openaiAPIExplicit   bool
 	reasoningEffort     string
