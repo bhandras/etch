@@ -5,8 +5,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -29,15 +31,17 @@ const (
 
 // Client owns one configured plugin process and its JSONL protocol state.
 type Client struct {
-	name    string
-	timeout time.Duration
-	cmd     *exec.Cmd
-	stdin   io.WriteCloser
-	stdout  *bufio.Reader
-	stderr  *limitedBuffer
-	mu      sync.Mutex
-	nextID  int
-	tools   []toolSpec
+	name     string
+	timeout  time.Duration
+	cmd      *exec.Cmd
+	stdin    io.WriteCloser
+	stdout   *bufio.Reader
+	stderr   *limitedBuffer
+	mu       sync.Mutex
+	close    sync.Once
+	closeErr error
+	nextID   int
+	tools    []toolSpec
 }
 
 // StartConfigured starts all enabled configured plugins and registers their
@@ -141,15 +145,44 @@ func (c *Client) Close() error {
 	if c == nil || c.cmd == nil {
 		return nil
 	}
+	c.close.Do(func() {
+		c.closeErr = c.closeProcess()
+	})
+
+	return c.closeErr
+}
+
+// closeProcess performs the one-time process shutdown for Close.
+func (c *Client) closeProcess() error {
 	if c.stdin != nil {
 		_ = c.stdin.Close()
 	}
+	killed := false
 	if c.cmd.Process != nil {
-		_ = c.cmd.Process.Kill()
+		if err := c.cmd.Process.Kill(); err == nil {
+			killed = true
+		} else if !errors.Is(err, os.ErrProcessDone) {
+			return fmt.Errorf("kill plugin %s: %w", c.name, err)
+		}
 	}
 	err := c.cmd.Wait()
 	if err != nil && strings.Contains(err.Error(), "waitid: no child") {
 		return nil
+	}
+	if err != nil && killed {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == -1 {
+			return nil
+		}
+	}
+	if err != nil {
+		text := strings.TrimSpace(c.stderr.String())
+		if text != "" {
+			return fmt.Errorf("wait plugin %s: %w: %s", c.name, err,
+				text)
+		}
+
+		return fmt.Errorf("wait plugin %s: %w", c.name, err)
 	}
 
 	return nil

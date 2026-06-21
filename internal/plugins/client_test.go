@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"harness/internal/config"
 	"harness/internal/model"
@@ -18,6 +19,9 @@ import (
 const (
 	// helperEnv enables the subprocess test helper plugin.
 	helperEnv = "HARNESS_PLUGIN_HELPER"
+
+	// helperModeEnv selects a misbehaving helper mode for lifecycle tests.
+	helperModeEnv = "HARNESS_PLUGIN_HELPER_MODE"
 )
 
 // testTool is a minimal in-process tool used to seed registry conflicts.
@@ -130,6 +134,65 @@ func TestStartConfiguredRejectsDuplicateToolName(t *testing.T) {
 	}
 }
 
+// TestCloseReleasesBlockedCall verifies Close unblocks a call waiting for a
+// plugin response that never arrives.
+func TestCloseReleasesBlockedCall(t *testing.T) {
+	client, err := Start(context.Background(), config.PluginConfig{
+		Name:           "helper",
+		Command:        helperCommandWithMode("hang"),
+		TimeoutSeconds: 10,
+	}, t.TempDir())
+	if err != nil {
+		t.Fatalf("start plugin: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := client.execute(context.Background(), model.ToolCall{
+			ID:        "call_hang",
+			Name:      "plugin_echo",
+			Arguments: `{"text":"hello"}`,
+		})
+		done <- err
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+	if err := client.Close(); err != nil {
+		t.Fatalf("close plugin: %v", err)
+	}
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected blocked call to fail after close")
+		}
+
+	case <-time.After(2 * time.Second):
+		t.Fatal("blocked plugin call did not finish after close")
+	}
+}
+
+// TestCloseReportsCrashedPlugin verifies Close surfaces a plugin that exited
+// before the harness intentionally killed it.
+func TestCloseReportsCrashedPlugin(t *testing.T) {
+	client, err := Start(context.Background(), config.PluginConfig{
+		Name:           "helper",
+		Command:        helperCommandWithMode("exit-after-init"),
+		TimeoutSeconds: 5,
+	}, t.TempDir())
+	if err != nil {
+		t.Fatalf("start plugin: %v", err)
+	}
+
+	time.Sleep(100 * time.Millisecond)
+	err = client.Close()
+	if err == nil {
+		t.Fatal("expected crashed plugin close error")
+	}
+	if !strings.Contains(err.Error(), "wait plugin helper") {
+		t.Fatalf("unexpected close error: %v", err)
+	}
+}
+
 // TestValidateToolParametersRequiresObjectSchema verifies plugin schemas must
 // be objects with the provider-compatible type marker.
 func TestValidateToolParametersRequiresObjectSchema(t *testing.T) {
@@ -196,12 +259,23 @@ func TestPluginHelperProcess(t *testing.T) {
 
 // helperCommand returns a shell command that runs this test binary as a plugin.
 func helperCommand() string {
-	return helperEnv + "=1 " + strconv.Quote(os.Args[0]) +
+	return helperCommandWithMode("")
+}
+
+// helperCommandWithMode returns a helper command with an optional behavior.
+func helperCommandWithMode(mode string) string {
+	modePrefix := ""
+	if mode != "" {
+		modePrefix = helperModeEnv + "=" + strconv.Quote(mode) + " "
+	}
+
+	return helperEnv + "=1 " + modePrefix + strconv.Quote(os.Args[0]) +
 		" -test.run=TestPluginHelperProcess --"
 }
 
 // runHelperPlugin serves the minimal JSONL protocol used by tests.
 func runHelperPlugin() {
+	mode := os.Getenv(helperModeEnv)
 	scanner := bufio.NewScanner(os.Stdin)
 	for scanner.Scan() {
 		var req request
@@ -223,8 +297,17 @@ func runHelperPlugin() {
 					}`),
 				}},
 			})
+			if mode == "exit-after-init" {
+				fmt.Fprintln(
+					os.Stderr, "helper crashed after init",
+				)
+				os.Exit(7)
+			}
 
 		case methodToolExecute:
+			if mode == "hang" {
+				time.Sleep(time.Hour)
+			}
 			var params toolExecuteParams
 			if err := decodeHelperParams(
 				req.Params, &params,
