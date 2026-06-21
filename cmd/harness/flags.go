@@ -126,6 +126,10 @@ func parseToolFlags(args []string, stderr io.Writer) (cliConfig, error) {
 		"1-indexed line offset for tools that support offsets",
 	)
 	fs.IntVar(
+		&cfg.toolContext, "context", 0,
+		"context lines around grep matches",
+	)
+	fs.IntVar(
 		&cfg.toolTimeout, "timeout", 0,
 		"timeout in seconds for tools that run commands",
 	)
@@ -146,8 +150,16 @@ func parseToolFlags(args []string, stderr io.Writer) (cliConfig, error) {
 		"case-insensitive matching for tools that search text",
 	)
 	fs.BoolVar(
+		&cfg.toolRegex, "regex", false,
+		"treat grep pattern as Go RE2 regular expression",
+	)
+	fs.BoolVar(
 		&cfg.toolDryRun, "dry-run", false,
 		"preview edit changes without modifying files",
+	)
+	fs.StringVar(
+		&cfg.toolGlob, "glob", "",
+		"slash-separated glob filter for find or grep",
 	)
 	fs.StringVar(
 		&cfg.toolRawArguments, "args", "",

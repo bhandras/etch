@@ -297,7 +297,9 @@ Run a built-in tool directly:
 ```bash
 go run ./cmd/harness tool ls .
 go run ./cmd/harness tool find readme .
+go run ./cmd/harness tool find --glob '**/*_test.go' '' .
 go run ./cmd/harness tool grep Harness README.md
+go run ./cmd/harness tool grep --regex --context 2 'func Test[A-Za-z0-9_]+' .
 go run ./cmd/harness tool read README.md
 go run ./cmd/harness tool bash -- pwd
 ```

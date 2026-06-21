@@ -121,10 +121,12 @@ func toolArguments(cfg cliConfig) (string, error) {
 		args := struct {
 			Path  string `json:"path,omitempty"`
 			Query string `json:"query,omitempty"`
+			Glob  string `json:"glob,omitempty"`
 			Limit int    `json:"limit,omitempty"`
 		}{
 			Path:  cfg.toolPath,
 			Query: cfg.toolQuery,
+			Glob:  cfg.toolGlob,
 			Limit: cfg.toolLimit,
 		}
 		encoded, err := json.Marshal(args)
@@ -138,11 +140,17 @@ func toolArguments(cfg cliConfig) (string, error) {
 		args := struct {
 			Path       string `json:"path,omitempty"`
 			Pattern    string `json:"pattern"`
+			Regex      bool   `json:"regex,omitempty"`
+			Glob       string `json:"glob,omitempty"`
+			Context    int    `json:"context,omitempty"`
 			Limit      int    `json:"limit,omitempty"`
 			IgnoreCase bool   `json:"ignoreCase,omitempty"`
 		}{
 			Path:       cfg.toolPath,
 			Pattern:    cfg.toolQuery,
+			Regex:      cfg.toolRegex,
+			Glob:       cfg.toolGlob,
+			Context:    cfg.toolContext,
 			Limit:      cfg.toolLimit,
 			IgnoreCase: cfg.toolIgnoreCase,
 		}

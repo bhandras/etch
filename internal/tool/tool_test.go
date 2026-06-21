@@ -213,3 +213,37 @@ func TestSpecsReturnsStableOrder(t *testing.T) {
 		t.Fatalf("unexpected tool name: %q", specs[6].Name)
 	}
 }
+
+// TestSearchToolSpecsExposeAdvancedFilters verifies model schemas advertise
+// glob, regex, and context controls.
+func TestSearchToolSpecsExposeAdvancedFilters(t *testing.T) {
+	registry := DefaultRegistry()
+	specs := registry.Specs()
+	findSpec := specByName(t, specs, NameFind)
+	grepSpec := specByName(t, specs, NameGrep)
+
+	if !strings.Contains(string(findSpec.Parameters), `"glob"`) {
+		t.Fatalf("find schema missing glob: %s", findSpec.Parameters)
+	}
+	for _, field := range []string{`"glob"`, `"regex"`, `"context"`} {
+		if !strings.Contains(string(grepSpec.Parameters), field) {
+			t.Fatalf("grep schema missing %s: %s", field,
+				grepSpec.Parameters)
+		}
+	}
+}
+
+// specByName returns one model tool spec by name.
+func specByName(t *testing.T, specs []model.ToolSpec,
+	name string) model.ToolSpec {
+
+	t.Helper()
+	for _, spec := range specs {
+		if spec.Name == name {
+			return spec
+		}
+	}
+	t.Fatalf("missing spec %s", name)
+
+	return model.ToolSpec{}
+}

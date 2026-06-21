@@ -67,6 +67,32 @@ func TestToolFindRunsDirectly(t *testing.T) {
 	}
 }
 
+// TestToolFindAcceptsGlobFlag verifies the direct find command exposes the
+// same glob filter as the model-facing tool.
+func TestToolFindAcceptsGlobFlag(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "cmd"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(dir, "cmd", "main.go"), "")
+	writeFile(t, filepath.Join(dir, "cmd", "main_test.go"), "")
+
+	var stdout, stderr bytes.Buffer
+	code := run(
+		[]string{
+			"tool", "find", "--glob", "**/*_test.go", "", dir,
+		},
+		&stdout, &stderr,
+	)
+	if code != 0 {
+		t.Fatalf("tool failed: code=%d stdout=%q stderr=%q", code,
+			stdout.String(), stderr.String())
+	}
+	if strings.TrimSpace(stdout.String()) != "cmd/main_test.go" {
+		t.Fatalf("unexpected tool output: %q", stdout.String())
+	}
+}
+
 // TestToolGrepRunsDirectly verifies the manual literal search smoke path.
 func TestToolGrepRunsDirectly(t *testing.T) {
 	dir := t.TempDir()
@@ -82,6 +108,36 @@ func TestToolGrepRunsDirectly(t *testing.T) {
 			stdout.String(), stderr.String())
 	}
 	if strings.TrimSpace(stdout.String()) != "note.txt:2:Needle" {
+		t.Fatalf("unexpected tool output: %q", stdout.String())
+	}
+}
+
+// TestToolGrepAcceptsRegexAndContextFlags verifies direct grep exposes regex
+// and surrounding context controls.
+func TestToolGrepAcceptsRegexAndContextFlags(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(
+		t, filepath.Join(dir, "note.txt"),
+		"before\nNeedle42\nafter\n",
+	)
+
+	var stdout, stderr bytes.Buffer
+	code := run(
+		[]string{
+			"tool", "grep", "--regex", "--context", "1",
+			`Needle\d+`, dir,
+		},
+		&stdout, &stderr,
+	)
+	if code != 0 {
+		t.Fatalf("tool failed: code=%d stdout=%q stderr=%q", code,
+			stdout.String(), stderr.String())
+	}
+	got := strings.TrimSpace(stdout.String())
+	if !strings.Contains(got, "note.txt-1:before") ||
+		!strings.Contains(got, "note.txt:2:Needle42") ||
+		!strings.Contains(got, "note.txt-3:after") {
+
 		t.Fatalf("unexpected tool output: %q", stdout.String())
 	}
 }

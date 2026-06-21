@@ -89,6 +89,11 @@ linters:
           - gosec
         text: "G304"
 
+      - path: internal/tools/fs/pattern\.go
+        linters:
+          - gosec
+        text: "G304"
+
       - path: internal/tools/fs/read\.go
         linters:
           - gosec

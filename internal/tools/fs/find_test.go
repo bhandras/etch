@@ -89,6 +89,54 @@ func TestFindSkipsVeryDeepDirectories(t *testing.T) {
 	}
 }
 
+// TestFindHonorsGlobFilter verifies shell-style path globs can narrow
+// discovery without changing substring query semantics.
+func TestFindHonorsGlobFilter(t *testing.T) {
+	dir := t.TempDir()
+	mkdir(t, filepath.Join(dir, "cmd"))
+	writeFile(t, filepath.Join(dir, "cmd", "main.go"), "")
+	writeFile(t, filepath.Join(dir, "cmd", "main_test.go"), "")
+	writeFile(t, filepath.Join(dir, "README.md"), "")
+
+	got, err := Find(context.Background(), FindRequest{
+		Path: dir,
+		Glob: "**/*_test.go",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "cmd/main_test.go" {
+		t.Fatalf("find glob mismatch: %q", got)
+	}
+}
+
+// TestFindHonorsRootGitignore verifies the walker respects the root
+// .gitignore subset before returning matches.
+func TestFindHonorsRootGitignore(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".gitignore"), "dist/\n*.log\n")
+	mkdir(t, filepath.Join(dir, "dist"))
+	mkdir(t, filepath.Join(dir, "src"))
+	writeFile(t, filepath.Join(dir, "dist", "bundle.js"), "")
+	writeFile(t, filepath.Join(dir, "debug.log"), "")
+	writeFile(t, filepath.Join(dir, "src", "main.go"), "")
+
+	got, err := Find(context.Background(), FindRequest{
+		Path: dir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(got, "dist") || strings.Contains(got, "debug.log") {
+		t.Fatalf("find included ignored paths: %q", got)
+	}
+	if !strings.Contains(got, "src/") ||
+		!strings.Contains(got, "src/main.go") {
+
+		t.Fatalf("find lost visible paths: %q", got)
+	}
+}
+
 // TestFindCapsMatches verifies bounded result output with an explicit
 // truncation notice.
 func TestFindCapsMatches(t *testing.T) {

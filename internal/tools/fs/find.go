@@ -30,6 +30,11 @@ type FindRequest struct {
 	// paths. Empty means every non-internal path matches.
 	Query string
 
+	// Glob optionally filters slash-separated relative paths. Basename
+	// patterns such as *.go and recursive patterns such as **/*_test.go
+	// are supported.
+	Glob string
+
 	// Limit caps the number of rendered matches. Non-positive values use
 	// DefaultFindLimit.
 	Limit int
@@ -50,9 +55,9 @@ func Find(ctx context.Context, req FindRequest) (string, error) {
 	var paths []string
 	skipped := 0
 	if info.IsDir() {
-		paths, skipped, err = findInDirectory(ctx, root, req.Query)
+		paths, skipped, err = findInDirectory(ctx, root, req)
 	} else {
-		paths = findSingleFile(root, req.Query)
+		paths, err = findSingleFile(root, req)
 	}
 	if err != nil {
 		return "", err
@@ -62,12 +67,16 @@ func Find(ctx context.Context, req FindRequest) (string, error) {
 }
 
 // findInDirectory recursively searches one directory tree.
-func findInDirectory(ctx context.Context, root string, query string) ([]string,
-	int, error) {
+func findInDirectory(ctx context.Context, root string, req FindRequest) (
+	[]string, int, error) {
 
 	var paths []string
 	skipped := 0
-	normalized := strings.ToLower(query)
+	filter := findFilter{
+		Query: strings.ToLower(req.Query),
+		Glob:  req.Glob,
+	}
+	ignores := loadIgnoreMatcher(root)
 	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry,
 		walkErr error) error {
 
@@ -83,25 +92,28 @@ func findInDirectory(ctx context.Context, root string, query string) ([]string,
 		if path == root {
 			return nil
 		}
-		if entry.IsDir() && skipDir(entry.Name()) {
-			skipped++
-
-			return filepath.SkipDir
-		}
-		if entry.IsDir() && walkDepthExceeded(root, path) {
-			skipped++
-
-			return filepath.SkipDir
-		}
-		if walkDepthExceeded(root, path) {
-			return nil
-		}
-
 		rendered, err := relativeDisplayPath(root, path, entry.IsDir())
 		if err != nil {
 			return err
 		}
-		if pathMatchesQuery(rendered, normalized) {
+		if entry.IsDir() && (skipDir(entry.Name()) ||
+			walkDepthExceeded(root, path) ||
+			ignores.Ignored(rendered, true)) {
+
+			skipped++
+
+			return filepath.SkipDir
+		}
+		if walkDepthExceeded(root, path) ||
+			ignores.Ignored(rendered, false) {
+			return nil
+		}
+
+		matches, err := pathMatchesFind(rendered, filter)
+		if err != nil {
+			return err
+		}
+		if matches {
 			paths = append(paths, rendered)
 		}
 
@@ -116,22 +128,39 @@ func findInDirectory(ctx context.Context, root string, query string) ([]string,
 }
 
 // findSingleFile matches a non-directory search root against the query.
-func findSingleFile(path string, query string) []string {
+func findSingleFile(path string, req FindRequest) ([]string, error) {
 	rendered := filepath.ToSlash(filepath.Clean(path))
-	if pathMatchesQuery(rendered, strings.ToLower(query)) {
-		return []string{rendered}
+	matches, err := pathMatchesFind(rendered, findFilter{
+		Query: strings.ToLower(req.Query),
+		Glob:  req.Glob,
+	})
+	if err != nil || !matches {
+		return nil, err
 	}
 
-	return nil
+	return []string{rendered}, nil
 }
 
-// pathMatchesQuery reports whether rendered contains the normalized query.
-func pathMatchesQuery(rendered string, normalizedQuery string) bool {
-	if normalizedQuery == "" {
-		return true
+// findFilter stores normalized path search predicates.
+type findFilter struct {
+	// Query is the lowercase substring predicate.
+	Query string
+
+	// Glob is the optional slash-separated path glob predicate.
+	Glob string
+}
+
+// pathMatchesFind reports whether rendered matches all find predicates.
+func pathMatchesFind(rendered string, filter findFilter) (bool, error) {
+	if filter.Query != "" &&
+		!strings.Contains(strings.ToLower(rendered), filter.Query) {
+		return false, nil
+	}
+	if filter.Glob == "" {
+		return true, nil
 	}
 
-	return strings.Contains(strings.ToLower(rendered), normalizedQuery)
+	return matchPathGlob(filter.Glob, rendered)
 }
 
 // relativeDisplayPath returns a slash-separated path relative to root.

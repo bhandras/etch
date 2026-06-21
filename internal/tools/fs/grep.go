@@ -8,7 +8,10 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
+
+	"harness/internal/textutil"
 )
 
 const (
@@ -24,6 +27,12 @@ const (
 	// dependency-free search implementation.
 	DefaultGrepMaxFileBytes = 1024 * 1024
 
+	// DefaultGrepMaxLineBytes caps each rendered search line.
+	DefaultGrepMaxLineBytes = 500
+
+	// DefaultGrepMaxContext caps before/after context lines around matches.
+	DefaultGrepMaxContext = 5
+
 	// NoGrepMatchesText is returned when literal search finds no matches.
 	NoGrepMatchesText = "(no matches)"
 )
@@ -36,6 +45,15 @@ type GrepRequest struct {
 
 	// Pattern is the non-empty literal text to find.
 	Pattern string
+
+	// Regex treats Pattern as Go RE2 syntax instead of literal text.
+	Regex bool
+
+	// Glob optionally filters slash-separated relative paths before search.
+	Glob string
+
+	// Context includes this many surrounding lines around each match.
+	Context int
 
 	// Limit caps the total number of rendered matches. Non-positive values
 	// use DefaultGrepLimit.
@@ -51,6 +69,10 @@ func Grep(ctx context.Context, req GrepRequest) (string, error) {
 	if pattern == "" {
 		return "", fmt.Errorf("pattern is required")
 	}
+	matcher, err := newGrepMatcher(req)
+	if err != nil {
+		return "", err
+	}
 	root := strings.TrimSpace(req.Path)
 	if root == "" {
 		root = "."
@@ -62,7 +84,7 @@ func Grep(ctx context.Context, req GrepRequest) (string, error) {
 	}
 
 	stats := grepStats{SkippedDirs: skippedDirs}
-	matches, err := grepMatches(ctx, root, files, req, &stats)
+	matches, err := grepMatches(ctx, root, files, req, matcher, &stats)
 	if err != nil {
 		return "", err
 	}
@@ -80,6 +102,12 @@ type grepMatch struct {
 
 	// Text is the matched line without its trailing newline.
 	Text string
+
+	// Match reports whether this row is the line that matched.
+	Match bool
+
+	// Truncated reports whether Text was shortened for display.
+	Truncated bool
 }
 
 // grepStats stores skip and truncation notices for rendered output.
@@ -100,6 +128,9 @@ type grepStats struct {
 	// PerFileTruncated counts files whose matches exceeded the per-file
 	// cap.
 	PerFileTruncated int
+
+	// TruncatedLines counts rendered lines shortened by the line cap.
+	TruncatedLines int
 }
 
 // grepFiles returns text-search candidate files under root.
@@ -114,6 +145,7 @@ func grepFiles(ctx context.Context, root string) ([]string, int, error) {
 
 	var files []string
 	skippedDirs := 0
+	ignores := loadIgnoreMatcher(root)
 	err = filepath.WalkDir(root, func(path string, entry fs.DirEntry,
 		walkErr error) error {
 
@@ -131,14 +163,20 @@ func grepFiles(ctx context.Context, root string) ([]string, int, error) {
 
 			return filepath.SkipDir
 		}
+		rendered, err := relativeDisplayPath(root, path, entry.IsDir())
+		if err != nil {
+			return err
+		}
 		if path != root && entry.IsDir() &&
-			walkDepthExceeded(root, path) {
+			(walkDepthExceeded(root, path) ||
+				ignores.Ignored(rendered, true)) {
 
 			skippedDirs++
 
 			return filepath.SkipDir
 		}
-		if walkDepthExceeded(root, path) {
+		if walkDepthExceeded(root, path) ||
+			ignores.Ignored(rendered, false) {
 			return nil
 		}
 		if entry.Type().IsRegular() {
@@ -157,7 +195,8 @@ func grepFiles(ctx context.Context, root string) ([]string, int, error) {
 
 // grepMatches searches candidate files and records bounded matches.
 func grepMatches(ctx context.Context, root string, files []string,
-	req GrepRequest, stats *grepStats) ([]grepMatch, error) {
+	req GrepRequest, matcher grepMatcher,
+	stats *grepStats) ([]grepMatch, error) {
 
 	limit := req.Limit
 	if limit <= 0 {
@@ -172,21 +211,45 @@ func grepMatches(ctx context.Context, root string, files []string,
 
 		default:
 		}
-		fileMatches, skipped, err := grepFile(path, root, req)
+		display := displayPath(root, path)
+		if req.Glob != "" {
+			ok, err := matchPathGlob(req.Glob, display)
+			if err != nil {
+				return nil, err
+			}
+			if !ok {
+				continue
+			}
+		}
+		fileMatches, skipped, err := grepFile(
+			path, display, req, matcher,
+		)
 		if err != nil {
 			return nil, err
 		}
 		stats.SkippedBinaryFiles += skipped.BinaryFiles
 		stats.SkippedLargeFiles += skipped.LargeFiles
-		if len(fileMatches) > DefaultGrepPerFileLimit {
+		fileMatches, truncated := capGrepMatches(
+			fileMatches, DefaultGrepPerFileLimit,
+		)
+		if truncated {
 			stats.PerFileTruncated++
-			fileMatches = fileMatches[:DefaultGrepPerFileLimit]
 		}
 
+		remaining := limit - grepMatchCount(matches)
+		if remaining <= 0 {
+			stats.TruncatedMatches += grepMatchCount(fileMatches)
+			continue
+		}
+		beforeCount := grepMatchCount(fileMatches)
+		fileMatches, truncated = capGrepMatches(fileMatches, remaining)
+		if truncated {
+			stats.TruncatedMatches += beforeCount -
+				grepMatchCount(fileMatches)
+		}
 		for _, match := range fileMatches {
-			if len(matches) >= limit {
-				stats.TruncatedMatches++
-				continue
+			if match.Truncated {
+				stats.TruncatedLines++
 			}
 			matches = append(matches, match)
 		}
@@ -196,8 +259,8 @@ func grepMatches(ctx context.Context, root string, files []string,
 }
 
 // grepFile searches one file and reports whether it was skipped.
-func grepFile(path string, root string, req GrepRequest) ([]grepMatch,
-	grepFileSkip, error) {
+func grepFile(path string, display string, req GrepRequest,
+	matcher grepMatcher) ([]grepMatch, grepFileSkip, error) {
 
 	file, err := os.Open(path)
 	if err != nil {
@@ -224,7 +287,7 @@ func grepFile(path string, root string, req GrepRequest) ([]grepMatch,
 		return nil, grepFileSkip{BinaryFiles: 1}, nil
 	}
 
-	return grepContent(displayPath(root, path), string(content), req), grepFileSkip{}, nil
+	return grepContent(display, string(content), req, matcher), grepFileSkip{}, nil
 }
 
 // grepFileSkip reports why a file was not searched.
@@ -237,29 +300,165 @@ type grepFileSkip struct {
 }
 
 // grepContent returns every literal match from one file.
-func grepContent(path string, content string, req GrepRequest) []grepMatch {
+func grepContent(path string, content string, req GrepRequest,
+	matcher grepMatcher) []grepMatch {
+
+	lines := strings.Split(content, "\n")
+	var matches []grepMatch
+	for i, line := range lines {
+		if matcher.Match(line) {
+			matches = appendContextRows(
+				matches, path, lines, i,
+				grepContext(req.Context),
+			)
+		}
+	}
+
+	return matches
+}
+
+// grepMatcher stores the compiled line matcher for one grep request.
+type grepMatcher struct {
+	// Pattern stores the normalized literal pattern.
+	Pattern string
+
+	// Regex stores the compiled regexp when regex mode is enabled.
+	Regex *regexp.Regexp
+
+	// IgnoreCase enables case-insensitive literal matching.
+	IgnoreCase bool
+}
+
+// newGrepMatcher prepares a literal or regexp line matcher.
+func newGrepMatcher(req GrepRequest) (grepMatcher, error) {
+	if req.Regex {
+		pattern := req.Pattern
+		if req.IgnoreCase {
+			pattern = "(?i:" + pattern + ")"
+		}
+		compiled, err := regexp.Compile(pattern)
+		if err != nil {
+			return grepMatcher{}, fmt.Errorf("compile regex: %w",
+				err)
+		}
+
+		return grepMatcher{Regex: compiled}, nil
+	}
+
 	pattern := req.Pattern
 	if req.IgnoreCase {
 		pattern = strings.ToLower(pattern)
 	}
 
-	lines := strings.Split(content, "\n")
-	var matches []grepMatch
-	for i, line := range lines {
-		haystack := line
-		if req.IgnoreCase {
-			haystack = strings.ToLower(line)
+	return grepMatcher{Pattern: pattern, IgnoreCase: req.IgnoreCase}, nil
+}
+
+// Match reports whether one line satisfies the grep matcher.
+func (m grepMatcher) Match(line string) bool {
+	if m.Regex != nil {
+		return m.Regex.MatchString(line)
+	}
+	haystack := line
+	if m.IgnoreCase {
+		haystack = strings.ToLower(line)
+	}
+
+	return strings.Contains(haystack, m.Pattern)
+}
+
+// grepContext clamps caller-requested context to the supported range.
+func grepContext(context int) int {
+	if context < 0 {
+		return 0
+	}
+	if context > DefaultGrepMaxContext {
+		return DefaultGrepMaxContext
+	}
+
+	return context
+}
+
+// appendContextRows appends one match and bounded surrounding context rows.
+func appendContextRows(rows []grepMatch, path string, lines []string, index int,
+	context int) []grepMatch {
+
+	start := index - context
+	if start < 0 {
+		start = 0
+	}
+	end := index + context + 1
+	if end > len(lines) {
+		end = len(lines)
+	}
+	seen := grepRowsSeen(rows, path)
+	for i := start; i < end; i++ {
+		key := grepRowKey{Path: path, Line: i + 1}
+		if seen[key] {
+			continue
 		}
-		if strings.Contains(haystack, pattern) {
-			matches = append(matches, grepMatch{
-				Path: path,
-				Line: i + 1,
-				Text: lines[i],
-			})
+		text, truncated := textutil.TruncateUTF8Bytes(
+			lines[i], DefaultGrepMaxLineBytes,
+		)
+		rows = append(rows, grepMatch{
+			Path:      path,
+			Line:      i + 1,
+			Text:      text,
+			Match:     i == index,
+			Truncated: truncated,
+		})
+		seen[key] = true
+	}
+
+	return rows
+}
+
+// grepRowKey identifies one rendered file line.
+type grepRowKey struct {
+	// Path is the rendered file path.
+	Path string
+
+	// Line is the one-based line number.
+	Line int
+}
+
+// grepRowsSeen indexes rendered rows by path and line.
+func grepRowsSeen(rows []grepMatch, path string) map[grepRowKey]bool {
+	seen := make(map[grepRowKey]bool, len(rows))
+	for _, row := range rows {
+		if row.Path == path {
+			seen[grepRowKey{Path: row.Path, Line: row.Line}] = true
 		}
 	}
 
-	return matches
+	return seen
+}
+
+// capGrepMatches keeps at most limit matching rows plus their context rows.
+func capGrepMatches(rows []grepMatch, limit int) ([]grepMatch, bool) {
+	matches := 0
+	for index, row := range rows {
+		if !row.Match {
+			continue
+		}
+		matches++
+		if matches > limit {
+			return rows[:index], true
+		}
+	}
+
+	return rows, false
+}
+
+// grepMatchCount counts actual match rows, excluding context rows.
+func grepMatchCount(rows []grepMatch) int {
+	count := 0
+	for _, row := range rows {
+		if row.Match {
+			count++
+		}
+	}
+
+	return count
 }
 
 // displayPath returns a slash-separated path for model-visible output.
@@ -284,9 +483,13 @@ func renderGrepResults(matches []grepMatch, stats grepStats) string {
 				out.WriteByte('\n')
 			}
 			fmt.Fprintf(
-				&out, "%s:%d:%s", match.Path, match.Line,
+				&out, "%s%s%d:%s", match.Path,
+				grepLineSeparator(match), match.Line,
 				match.Text,
 			)
+			if match.Truncated {
+				out.WriteString(" ... [line truncated]")
+			}
 		}
 	}
 
@@ -294,6 +497,9 @@ func renderGrepResults(matches []grepMatch, stats grepStats) string {
 	appendGrepNotice(
 		&out, stats.PerFileTruncated, "truncated",
 		"files by per-file match cap",
+	)
+	appendGrepNotice(
+		&out, stats.TruncatedLines, "truncated", "long lines",
 	)
 	appendGrepNotice(
 		&out, stats.SkippedDirs, "skipped", "directories",
@@ -306,6 +512,15 @@ func renderGrepResults(matches []grepMatch, stats grepStats) string {
 	)
 
 	return out.String()
+}
+
+// grepLineSeparator returns the match or context line separator.
+func grepLineSeparator(match grepMatch) string {
+	if match.Match {
+		return ":"
+	}
+
+	return "-"
 }
 
 // appendGrepNotice appends a parenthesized notice when count is non-zero.

@@ -237,6 +237,10 @@ func (findTool) Spec() model.ToolSpec {
 					"type":"string",
 					"description":"Case-insensitive substring matched against relative paths. Empty returns all non-internal paths."
 				},
+				"glob":{
+					"type":"string",
+					"description":"Optional slash-separated glob filter such as *.go, **/*_test.go, or cmd/**/*.go."
+				},
 				"limit":{
 					"type":"integer",
 					"description":"Maximum matches to return. Defaults to 500."
@@ -283,7 +287,19 @@ func (grepTool) Spec() model.ToolSpec {
 				},
 				"pattern":{
 					"type":"string",
-					"description":"Non-empty literal text to search for."
+					"description":"Non-empty literal text to search for unless regex is true."
+				},
+				"regex":{
+					"type":"boolean",
+					"description":"Treat pattern as Go RE2 regular expression syntax. Literal search is the default."
+				},
+				"glob":{
+					"type":"string",
+					"description":"Optional slash-separated file glob such as *.go, **/*_test.go, or cmd/**/*.go."
+				},
+				"context":{
+					"type":"integer",
+					"description":"Context lines before and after each match. Values above 5 are clamped."
 				},
 				"limit":{
 					"type":"integer",
@@ -291,7 +307,7 @@ func (grepTool) Spec() model.ToolSpec {
 				},
 				"ignoreCase":{
 					"type":"boolean",
-					"description":"Whether to match literal text case-insensitively."
+					"description":"Whether to match case-insensitively."
 				}
 			},
 			"required":["pattern"]

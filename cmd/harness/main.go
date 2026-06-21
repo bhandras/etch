@@ -72,11 +72,14 @@ type cliConfig struct {
 	toolOldText         string
 	toolNewText         string
 	toolQuery           string
+	toolGlob            string
 	toolRawArguments    string
 	toolOffset          int
 	toolLimit           int
+	toolContext         int
 	toolTimeout         int
 	toolIgnoreCase      bool
+	toolRegex           bool
 	toolDryRun          bool
 	autoCompact         bool
 	autoCompactLimit    int
