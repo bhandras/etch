@@ -75,7 +75,24 @@ func runPrompt(cfg cliConfig, stdout io.Writer, stderr io.Writer) int {
 		return 0
 	}
 
-	fmt.Fprintf(stdout, "assistant: %s\n", result.AssistantText)
+	renderPromptAssistant(stdout, result.AssistantText)
 
 	return 0
+}
+
+// renderPromptAssistant prints the non-JSON assistant response for prompt mode.
+func renderPromptAssistant(stdout io.Writer, text string) {
+	lines := markdownLines(text, terminalStyle{
+		enabled: shouldStyle(stdout),
+	})
+	if len(lines) == 1 {
+		fmt.Fprintf(stdout, "assistant: %s\n", lines[0])
+
+		return
+	}
+
+	fmt.Fprintln(stdout, "assistant:")
+	for _, line := range lines {
+		fmt.Fprintln(stdout, line)
+	}
 }

@@ -70,6 +70,38 @@ func TestMarkdownLinesStylesTerminalOutput(t *testing.T) {
 	}
 }
 
+// TestMarkdownLinesRendersTables verifies pipe tables become aligned terminal
+// text instead of raw markdown separators.
+func TestMarkdownLinesRendersTables(t *testing.T) {
+	lines := markdownLines(
+		strings.Join([]string{
+			"| Priority | Lines | Why |",
+			"|---|---:|:---|",
+			"| P0 | 970 | Core orchestration |",
+			"| P1 | 598 | Flags |",
+		}, "\n"),
+		terminalStyle{
+			enabled: true,
+		},
+	)
+	got := strings.Join(lines, "\n")
+	if strings.Contains(got, "|---") {
+		t.Fatalf("table kept raw markdown delimiter: %q", got)
+	}
+	if !strings.Contains(got, ansiBold+"Priority"+ansiReset) {
+		t.Fatalf("table did not style header row: %q", got)
+	}
+	if !strings.Contains(got, "P0          970  Core orchestration") {
+		t.Fatalf("table did not align body rows: %q", got)
+	}
+	if !strings.Contains(
+		got, ansiDim+"--------  -----  ------------------"+ansiReset,
+	) {
+
+		t.Fatalf("table did not render separator: %q", got)
+	}
+}
+
 // TestRenderReasoningStylesMarkdown verifies thinking blocks keep their muted
 // tone while still rendering lightweight markdown.
 func TestRenderReasoningStylesMarkdown(t *testing.T) {

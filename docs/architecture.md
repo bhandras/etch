@@ -813,7 +813,9 @@ events can be too fragmented for reliable line-mode presentation. Live chat
 rendering is intentionally separate from transcript rendering: chat can use
 terminal tone, small markdown styling, capped tool output, grouped tool-call
 batches, colored diffs, and turn footers, while `show` remains a plain durable
-transcript view. Interactive ESC cancellation is implemented with context
+transcript view. Non-interactive prompt output reuses structural markdown
+rendering for tables so single-shot answers keep the same readable shape without
+changing JSON output. Interactive ESC cancellation is implemented with context
 cancellation and raw terminal input instead of being hidden in the renderer.
 The same prompt island handles Up/Down history navigation, preserving the
 current draft and drawing history from the active session transcript.
