@@ -1,283 +1,298 @@
 package main
 
 import (
-	"context"
-	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"os"
-	"strings"
 
-	"harness/internal/core"
-	"harness/internal/hooks"
-	"harness/internal/model"
-	promptctx "harness/internal/prompt"
-	"harness/internal/session"
+	harnessconfig "harness/internal/config"
+	"harness/internal/tool"
 )
 
-// runPrompt executes the default non-interactive prompt path.
-func runPrompt(cfg cliConfig, stdout io.Writer, stderr io.Writer) int {
-	cwd, err := os.Getwd()
-	if err != nil {
-		fmt.Fprintln(stderr, "error: get working directory:", err)
+const (
+	// defaultSessionDir is the local directory used for JSONL session logs
+	// when the caller does not provide one.
+	defaultSessionDir = ".harness/sessions"
 
-		return 1
-	}
+	// commandRun is the implicit command used when the caller passes -p.
+	commandRun = "run"
 
-	modelClient, err := modelClient(cfg)
-	if err != nil {
-		fmt.Fprintln(stderr, "error:", err)
+	// commandSessions lists known local session index entries.
+	commandSessions = "sessions"
 
-		return 1
-	}
-	projectContext, err := promptctx.LoadProjectContext(cwd)
-	if err != nil {
-		fmt.Fprintln(stderr, "error:", err)
+	// commandShow renders one local session transcript.
+	commandShow = "show"
 
-		return 1
-	}
-	hookRunner, err := hooks.New(cfg.hooks, cwd)
-	if err != nil {
-		fmt.Fprintln(stderr, "error:", err)
+	// commandTool executes a builtin tool directly for smoke testing.
+	commandTool = "tool"
 
-		return 1
-	}
-	registry, closePlugins, err := configuredToolRegistry(
-		context.Background(), cfg, cwd,
-	)
-	if err != nil {
-		fmt.Fprintln(stderr, "error:", err)
+	// commandChat starts a minimal interactive line-oriented chat loop.
+	commandChat = "chat"
 
-		return 1
-	}
-	defer closePlugins()
+	// commandCompact summarizes older session history into a context event.
+	commandCompact = "compact"
 
-	result, err := core.RunTurn(context.Background(), core.TurnRequest{
-		Prompt:        cfg.prompt,
-		SessionDir:    cfg.sessionDir,
-		CWD:           cwd,
-		SystemText:    projectContext.SystemText,
-		Model:         modelClient,
-		Tools:         registry,
-		MaxToolRounds: cfg.maxToolRounds,
-		Hooks:         hookRunner,
-	})
-	if err != nil {
-		fmt.Fprintln(stderr, "error:", err)
+	// commandAuth manages local OpenAI OAuth credentials.
+	commandAuth = "auth"
 
-		return 1
-	}
+	// commandHelp prints top-level or command-specific CLI help.
+	commandHelp = "help"
 
-	if cfg.jsonOutput {
-		if err := json.NewEncoder(stdout).Encode(result); err != nil {
-			fmt.Fprintln(stderr, "error: encode json output:", err)
+	// providerEcho selects the dependency-free deterministic model client.
+	providerEcho = "echo"
 
-			return 1
-		}
+	// harnessUserAgent identifies this CLI on provider HTTP requests.
+	harnessUserAgent = "harness"
+)
+
+// cliConfig stores parsed command-line options for one invocation.
+type cliConfig struct {
+	command             string
+	prompt              string
+	sessionDir          string
+	jsonOutput          bool
+	sessionID           string
+	provider            string
+	model               string
+	baseURL             string
+	apiKey              string
+	openaiAPI           string
+	openaiAPIExplicit   bool
+	reasoningEffort     string
+	reasoningSummary    string
+	baseURLExplicit     bool
+	toolName            string
+	toolPath            string
+	toolCommand         string
+	toolContent         string
+	toolOldText         string
+	toolNewText         string
+	toolQuery           string
+	toolRawArguments    string
+	toolOffset          int
+	toolLimit           int
+	toolTimeout         int
+	toolIgnoreCase      bool
+	toolDryRun          bool
+	autoCompact         bool
+	autoCompactLimit    int
+	keepMessages        int
+	keepRecentTokens    int
+	compactInstructions string
+	maxToolRounds       int
+	authAction          string
+	authPath            string
+	authIssuer          string
+	authClientID        string
+	authCodexBaseURL    string
+	hooks               []harnessconfig.HookConfig
+	plugins             []harnessconfig.PluginConfig
+}
+
+// main runs the command and exits with the returned status code.
+func main() {
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+}
+
+// run parses flags, executes one command, and renders the result.
+func run(args []string, stdout io.Writer, stderr io.Writer) int {
+	if len(args) == 0 {
+		printTopLevelHelp(stdout)
 
 		return 0
 	}
+	if isHelpArg(args[0]) {
+		printTopLevelHelp(stdout)
 
-	fmt.Fprintf(stdout, "assistant: %s\n", result.AssistantText)
+		return 0
+	}
+	if args[0] == commandHelp {
+		return runHelp(args[1:], stdout, stderr)
+	}
+
+	cfg, err := parseFlags(args, stderr)
+	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		fmt.Fprintln(stderr, "error:", err)
+
+		return 2
+	}
+
+	switch cfg.command {
+	case commandRun:
+		return runPrompt(cfg, stdout, stderr)
+
+	case commandSessions:
+		return listSessions(cfg, stdout, stderr)
+
+	case commandShow:
+		return showSession(cfg, stdout, stderr)
+
+	case commandTool:
+		return runTool(cfg, stdout, stderr)
+
+	case commandChat:
+		return runChat(cfg, os.Stdin, stdout, stderr)
+
+	case commandCompact:
+		return runCompact(cfg, stdout, stderr)
+
+	case commandAuth:
+		return runAuth(cfg, stdout, stderr)
+
+	default:
+		fmt.Fprintf(stderr, "error: unknown command %q\n", cfg.command)
+
+		return 2
+	}
+}
+
+// runHelp prints top-level or command-specific help text.
+func runHelp(args []string, stdout io.Writer, stderr io.Writer) int {
+	if len(args) == 0 {
+		printTopLevelHelp(stdout)
+
+		return 0
+	}
+	if len(args) > 2 {
+		fmt.Fprintln(stderr, "error: help accepts at most two words")
+
+		return 2
+	}
+
+	err := printCommandHelp(args, stdout)
+	if err != nil {
+		fmt.Fprintln(stderr, "error:", err)
+
+		return 2
+	}
 
 	return 0
 }
 
-// runCompact appends a model-written summary to an existing session.
-func runCompact(cfg cliConfig, stdout io.Writer, stderr io.Writer) int {
-	entry, err := session.Resolve(cfg.sessionDir, cfg.sessionID)
-	if err != nil {
-		fmt.Fprintln(stderr, "error:", err)
-
-		return 1
-	}
-	modelClient, err := modelClient(cfg)
-	if err != nil {
-		fmt.Fprintln(stderr, "error:", err)
-
-		return 1
-	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		fmt.Fprintln(stderr, "error: get working directory:", err)
-
-		return 1
-	}
-	hookRunner, err := hooks.New(cfg.hooks, cwd)
-	if err != nil {
-		fmt.Fprintln(stderr, "error:", err)
-
-		return 1
-	}
-
-	result, err := core.CompactSession(context.Background(),
-		core.CompactRequest{
-			SessionPath:      entry.Path,
-			Model:            modelClient,
-			KeepMessages:     cfg.keepMessages,
-			KeepRecentTokens: cfg.keepRecentTokens,
-			ModelName:        cfg.model,
-			Instructions:     cfg.compactInstructions,
-			Hooks:            hookRunner,
-		})
-	if err != nil {
-		fmt.Fprintln(stderr, "error:", err)
-
-		return 1
-	}
-
-	fmt.Fprintf(
-		stdout, "compacted session %s\nsummary event: %s\n",
-		shortID(entry.ID), result.SummaryEventID,
+// printTopLevelHelp writes the command overview for the harness binary.
+func printTopLevelHelp(stdout io.Writer) {
+	fmt.Fprintln(stdout, "Harness is a minimal Go coding-agent harness.")
+	fmt.Fprintln(stdout)
+	fmt.Fprintln(stdout, "Usage:")
+	fmt.Fprintln(stdout, `  harness -p "prompt" [flags]`)
+	fmt.Fprintln(stdout, "  harness chat [flags]")
+	fmt.Fprintln(stdout, "  harness auth <login|status|logout> [flags]")
+	fmt.Fprintln(stdout, "  harness tool <name> [flags] [args]")
+	fmt.Fprintln(stdout, "  harness sessions [flags]")
+	fmt.Fprintln(stdout, "  harness show [flags] <session-id-prefix>")
+	fmt.Fprintln(stdout, "  harness compact --session <id> [flags]")
+	fmt.Fprintln(stdout, "  harness help [command]")
+	fmt.Fprintln(stdout)
+	fmt.Fprintln(stdout, "Commands:")
+	fmt.Fprintln(stdout, "  chat      start an interactive chat session")
+	fmt.Fprintln(stdout, "  auth      manage OpenAI OAuth credentials")
+	fmt.Fprintln(stdout, "  tool      run a builtin tool directly")
+	fmt.Fprintln(stdout, "  sessions  list local JSONL sessions")
+	fmt.Fprintln(stdout, "  show      render one local session transcript")
+	fmt.Fprintln(stdout, "  compact   summarize an existing session")
+	fmt.Fprintln(stdout, "  help      show help for a command")
+	fmt.Fprintln(stdout)
+	fmt.Fprintln(
+		stdout, "Use \"harness help <command>\" for command flags.",
 	)
-
-	return 0
 }
 
-// runChat starts a line-oriented interactive chat session.
-func runChat(cfg cliConfig, stdin io.Reader, stdout io.Writer,
-	stderr io.Writer) int {
+// printCommandHelp writes generated or custom help for one command.
+func printCommandHelp(args []string, stdout io.Writer) error {
+	command := args[0]
+	switch command {
+	case commandRun:
+		_, err := parseRunFlags([]string{"-h"}, stdout)
 
-	defer showTerminalCursor(stdout)
+		return ignoreHelpError(err)
 
-	cwd, err := os.Getwd()
-	if err != nil {
-		fmt.Fprintln(stderr, "error: get working directory:", err)
+	case commandChat:
+		_, err := parseChatFlags([]string{"-h"}, stdout)
 
-		return 1
-	}
+		return ignoreHelpError(err)
 
-	modelClient, err := modelClient(cfg)
-	if err != nil {
-		fmt.Fprintln(stderr, "error:", err)
+	case commandCompact:
+		_, err := parseCompactFlags([]string{"-h"}, stdout)
 
-		return 1
-	}
-	projectContext, err := promptctx.LoadProjectContext(cwd)
-	if err != nil {
-		fmt.Fprintln(stderr, "error:", err)
+		return ignoreHelpError(err)
 
-		return 1
-	}
-	hookRunner, err := hooks.New(cfg.hooks, cwd)
-	if err != nil {
-		fmt.Fprintln(stderr, "error:", err)
+	case commandSessions:
+		_, err := parseSessionsFlags([]string{"-h"}, stdout)
 
-		return 1
-	}
-	registry, closePlugins, err := configuredToolRegistry(
-		context.Background(), cfg, cwd,
-	)
-	if err != nil {
-		fmt.Fprintln(stderr, "error:", err)
+		return ignoreHelpError(err)
 
-		return 1
-	}
-	defer closePlugins()
+	case commandShow:
+		_, err := parseShowFlags([]string{"-h"}, stdout)
 
-	var sessionPath string
-	initialUsage := model.Usage{}
-	if cfg.sessionID != "" {
-		entry, err := session.Resolve(cfg.sessionDir, cfg.sessionID)
-		if err != nil {
-			fmt.Fprintln(stderr, "error:", err)
+		return ignoreHelpError(err)
 
-			return 1
-		}
-		sessionPath = entry.Path
-		initialUsage, err = chatSessionUsage(sessionPath)
-		if err != nil {
-			fmt.Fprintln(stderr, "error:", err)
-
-			return 1
-		}
-		fmt.Fprintf(
-			stdout, "continuing session %s\n", shortID(entry.ID),
-		)
-	}
-
-	input := newChatInput(stdin, stdout)
-	defer func() {
-		_ = input.Close()
-	}()
-	composer := terminalComposer(input)
-	chrome := newChatChrome(cfg, cwd, initialUsage)
-	if composer != nil {
-		composer.SetFooter(chrome.Footer())
-		if sessionPath != "" {
-			history, err := chatPromptHistory(sessionPath)
-			if err != nil {
-				fmt.Fprintln(stderr, "error:", err)
-
-				return 1
-			}
-			composer.SetHistory(history)
-		}
-	}
-	results := readChatLines(input)
-	pendingResults := []chatLineResult{}
-	inputDone := false
-	for {
-		result, ok := nextChatLine(results, &pendingResults, inputDone)
-		if !ok {
-			break
-		}
-		if result.Err != nil {
-			if errors.Is(result.Err, errChatInputCanceled) {
-				continue
-			}
-			if errors.Is(result.Err, errChatInputInterrupted) {
-				return 0
-			}
-			fmt.Fprintln(
-				stderr, "error: read chat input:", result.Err,
+	case commandAuth:
+		if len(args) == 2 {
+			_, err := parseAuthFlags(
+				[]string{args[1], "-h"}, stdout,
 			)
 
-			return 1
+			return ignoreHelpError(err)
 		}
-		if !result.OK {
-			break
-		}
-		line := result.Line
-		commandLine := strings.TrimSpace(line)
-		if commandLine == "" {
-			continue
-		}
-		if strings.HasPrefix(commandLine, "/") {
-			keepGoing, nextPath := runChatCommandWithOutput(
-				composer, cfg, commandLine, sessionPath,
-				modelClient, registry, stdout, stderr,
-				hookRunner,
+		printAuthHelp(stdout)
+
+		return nil
+
+	case commandTool:
+		if len(args) == 2 {
+			_, err := parseToolFlags(
+				[]string{args[1], "-h"}, stdout,
 			)
-			sessionPath = nextPath
-			if composer != nil && commandLine == "/new" {
-				composer.SetHistory(nil)
-			}
-			if !keepGoing {
-				return 0
-			}
 
-			continue
+			return ignoreHelpError(err)
 		}
+		printToolHelp(stdout)
 
-		turn, err := runChatTurnWithSteering(
-			cfg, line, sessionPath, cwd, projectContext.SystemText,
-			modelClient, registry, hookRunner, chrome, composer,
-			results, &inputDone, &pendingResults, stdout,
-		)
-		if err != nil {
-			if errors.Is(err, context.Canceled) {
-				renderChatCancelNotice(composer, stdout)
+		return nil
 
-				continue
-			}
-			fmt.Fprintln(stderr, "error:", err)
+	default:
+		return fmt.Errorf("unknown help command %q", command)
+	}
+}
 
-			return 1
-		}
-		sessionPath = turn.SessionPath
+// printAuthHelp writes a compact auth command overview.
+func printAuthHelp(stdout io.Writer) {
+	fmt.Fprintln(stdout, "Usage:")
+	fmt.Fprintln(stdout, "  harness auth login [flags]")
+	fmt.Fprintln(stdout, "  harness auth status [flags]")
+	fmt.Fprintln(stdout, "  harness auth logout [flags]")
+	fmt.Fprintln(stdout)
+	fmt.Fprintln(stdout, "Use \"harness help auth login\" for auth flags.")
+}
+
+// printToolHelp writes a compact direct-tool command overview.
+func printToolHelp(stdout io.Writer) {
+	fmt.Fprintln(stdout, "Usage:")
+	fmt.Fprintln(stdout, "  harness tool <name> [flags] [args]")
+	fmt.Fprintln(stdout)
+	fmt.Fprintln(stdout, "Tools:")
+	for _, spec := range tool.DefaultRegistry().Specs() {
+		fmt.Fprintf(stdout, "  %s\n", spec.Name)
+	}
+	fmt.Fprintln(stdout)
+	fmt.Fprintln(stdout, "Use \"harness help tool <name>\" for tool flags.")
+}
+
+// ignoreHelpError treats flag package help as a successful help rendering.
+func ignoreHelpError(err error) error {
+	if errors.Is(err, flag.ErrHelp) {
+		return nil
 	}
 
-	return 0
+	return err
+}
+
+// isHelpArg reports whether arg requests top-level help.
+func isHelpArg(arg string) bool {
+	return arg == "-h" || arg == "--help"
 }
