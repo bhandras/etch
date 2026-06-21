@@ -87,8 +87,11 @@ type terminalChatInput struct {
 	statusStartedAt time.Time
 }
 
-// errChatInputInterrupted reports an explicit interactive input interruption.
+// errChatInputInterrupted reports a request to leave interactive chat.
 var errChatInputInterrupted = errors.New("chat input interrupted")
+
+// errChatInputCanceled reports an escape-key request to cancel active work.
+var errChatInputCanceled = errors.New("chat input canceled")
 
 // newChatInput selects the richest prompt reader supported by the streams.
 func newChatInput(stdin io.Reader, stdout io.Writer) chatInput {
@@ -120,6 +123,9 @@ func readChatLines(input chatInput) <-chan chatLineResult {
 				Line: line,
 				OK:   ok,
 				Err:  err,
+			}
+			if errors.Is(err, errChatInputCanceled) {
+				continue
 			}
 			if err != nil || !ok {
 				return
@@ -220,7 +226,14 @@ func (i *terminalChatInput) ReadLine() (string, bool, error) {
 			i.mu.Unlock()
 
 		case '\x1b':
-			continue
+			if i.consumeEscapeSequence(reader) {
+				continue
+			}
+			i.mu.Lock()
+			i.cancelLocked()
+			i.mu.Unlock()
+
+			return "", false, errChatInputCanceled
 
 		default:
 			if isPromptRune(r) {
@@ -232,6 +245,50 @@ func (i *terminalChatInput) ReadLine() (string, bool, error) {
 		}
 		if err != nil {
 			return "", false, err
+		}
+	}
+}
+
+// consumeEscapeSequence consumes terminal escape sequences after ESC.
+func (i *terminalChatInput) consumeEscapeSequence(reader *bufio.Reader) bool {
+	deadlineSet := false
+	if i.stdin != nil {
+		err := i.stdin.SetReadDeadline(
+			time.Now().Add(25 * time.Millisecond),
+		)
+		deadlineSet = err == nil
+	}
+	if i.stdin != nil && !deadlineSet && reader.Buffered() == 0 {
+		return false
+	}
+	peeked, err := reader.Peek(1)
+	if deadlineSet {
+		_ = i.stdin.SetReadDeadline(time.Time{})
+	}
+	if err != nil {
+		return false
+	}
+	switch peeked[0] {
+	case '[', 'O':
+		_, _ = reader.ReadByte()
+		i.consumeEscapeSequenceBody(reader)
+
+		return true
+
+	default:
+		return false
+	}
+}
+
+// consumeEscapeSequenceBody skips a CSI or SS3 sequence after its introducer.
+func (i *terminalChatInput) consumeEscapeSequenceBody(reader *bufio.Reader) {
+	for {
+		next, err := reader.ReadByte()
+		if err != nil {
+			return
+		}
+		if next >= '@' && next <= '~' {
+			return
 		}
 	}
 }
@@ -575,7 +632,8 @@ func statusComposerLine(frame int, text string, startedAt time.Time,
 
 	frameText := statusPulseDot(frame)
 	elapsed := formatElapsed(time.Since(startedAt))
-	line := fmt.Sprintf("%s %s (%s)", frameText, text, elapsed)
+	line := fmt.Sprintf("%s %s (%s • ESC to cancel)", frameText, text,
+		elapsed)
 
 	return ansiDim + padPromptRow(line, width) + ansiReset
 }

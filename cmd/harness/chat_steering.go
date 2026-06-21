@@ -54,8 +54,11 @@ func (b *chatBusyInput) DrainSteering() []string {
 	var prompts []string
 	for index := range b.entries {
 		entry := &b.entries[index]
-		if !entry.steering || entry.consumed {
+		if entry.consumed {
 			continue
+		}
+		if !entry.steering {
+			break
 		}
 		entry.consumed = true
 		prompts = append(prompts, entry.result.Line)

@@ -122,6 +122,30 @@ func TestRenderReasoningFiltersStreamNoise(t *testing.T) {
 	}
 }
 
+// TestLiveStatusShowsEscapeCancelHint verifies non-composer status output
+// points to the escape-key cancellation path instead of Ctrl+C.
+func TestLiveStatusShowsEscapeCancelHint(t *testing.T) {
+	var stdout bytes.Buffer
+	renderer := &liveChatRenderer{
+		stdout: &stdout,
+		style: terminalStyle{
+			enabled: true,
+		},
+		statusCancel:    make(chan struct{}),
+		statusStartedAt: time.Now(),
+		statusText:      "Working",
+	}
+
+	renderer.redrawStatusLocked()
+	got := stdout.String()
+	if !strings.Contains(got, "ESC to cancel") {
+		t.Fatalf("missing escape cancel hint: %q", got)
+	}
+	if strings.Contains(got, "Ctrl+C") {
+		t.Fatalf("status kept Ctrl+C hint: %q", got)
+	}
+}
+
 // TestChatObserverBuffersReasoningDeltas verifies reasoning deltas only update
 // status until the completed summary can be rendered as one markdown block.
 func TestChatObserverBuffersReasoningDeltas(t *testing.T) {

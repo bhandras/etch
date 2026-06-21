@@ -92,9 +92,9 @@ The core loop should stay explicit:
 8. Continue until the model stops or the user cancels.
 ```
 
-Cancellation should flow through `context.Context`. The user must be able to
-interrupt a model stream or a running tool call without killing the whole
-session.
+Cancellation should flow through `context.Context`. In interactive chat,
+pressing ESC requests cancellation of the active model stream or running tool
+without killing the whole session.
 
 Interactive chat supports steering: text submitted while a turn is running can
 be admitted into the same turn before a later model call. Steering is not
@@ -102,9 +102,11 @@ cancellation. It does not abort the active model stream or running tools. The
 core exposes a `DrainSteering` callback and checks it only after a tool batch
 has completed, immediately before the next model request. This keeps provider
 tool-call protocol order valid: an assistant tool-call message is still followed
-by its tool results before any new user message appears. If a turn finishes
-without another model-call boundary, unconsumed steering remains queued as the
-next normal prompt in the chat loop.
+by its tool results before any new user message appears. Slash commands, EOF,
+and input errors act as ordering barriers, so later typed text is not steered
+past an earlier pending command. If a turn finishes without another model-call
+boundary, unconsumed steering remains queued as the next normal prompt in the
+chat loop.
 
 The loop uses a configurable safety bound rather than a tiny fixed ceiling.
 `DefaultMaxToolRounds` is 32 model/tool exchange rounds per user turn. A round
@@ -802,9 +804,8 @@ events can be too fragmented for reliable line-mode presentation. Live chat
 rendering is intentionally separate from transcript rendering: chat can use
 terminal tone, small markdown styling, capped tool output, grouped tool-call
 batches, colored diffs, and turn footers, while `show` remains a plain durable
-transcript view. Full interactive interruption should be implemented with
-context cancellation and raw terminal input instead of being
-hidden in the renderer.
+transcript view. Interactive ESC cancellation is implemented with context
+cancellation and raw terminal input instead of being hidden in the renderer.
 
 A local HTTP server can come later. If we add one, it should expose the same
 session log, model stream, and tool registry as the terminal uses. The server

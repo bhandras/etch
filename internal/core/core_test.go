@@ -424,6 +424,109 @@ func TestRunTurnInjectsSteeringAfterToolBatch(t *testing.T) {
 	}
 }
 
+// TestRunTurnCompleteHookIncludesSteeringPrompts verifies turn completion
+// payloads expose every prompt admitted during a steered turn.
+func TestRunTurnCompleteHookIncludesSteeringPrompts(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "go.mod"), "")
+	logPath := filepath.Join(dir, "hooks.log")
+	hookScript := filepath.Join(dir, "record-hook.sh")
+	writeFile(
+		t, hookScript, "#!/bin/sh\npayload=$(cat)\nprintf '%s\n' "+
+			"\"$payload\" >> \"$HOOK_LOG\"\nprintf '{}'\n",
+	)
+	if err := os.Chmod(hookScript, 0o755); err != nil {
+		t.Fatalf("chmod hook: %v", err)
+	}
+	command := "HOOK_LOG=" + shellQuote(logPath) + " " +
+		shellQuote(hookScript)
+	runner, err := hooks.New([]config.HookConfig{
+		{Event: hooks.EventTurnComplete, Command: command},
+	}, dir)
+	if err != nil {
+		t.Fatalf("create hooks: %v", err)
+	}
+	client := &scriptedToolClient{
+		events: [][]model.Event{
+			{
+				{
+					Type: model.EventToolCall,
+					ToolCall: model.ToolCall{
+						ID:   "call_1",
+						Name: tool.NameLS,
+						Arguments: `{"path":` +
+							quoteJSON(dir) + `}`,
+					},
+				},
+				{
+					Type: model.EventDone,
+				},
+			},
+			{
+				{
+					Type: model.EventTextDelta,
+					Text: "done",
+				},
+				{
+					Type: model.EventDone,
+				},
+			},
+		},
+	}
+	drained := false
+
+	_, err = RunTurn(context.Background(), TurnRequest{
+		Prompt:     "list files",
+		SessionDir: filepath.Join(dir, "sessions"),
+		CWD:        dir,
+		Model:      client,
+		Tools:      tool.DefaultRegistry(),
+		Hooks:      runner,
+		DrainSteering: func() []string {
+			if drained {
+				return nil
+			}
+			drained = true
+
+			return []string{
+				"also explain why",
+			}
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read hook log: %v", err)
+	}
+	var envelope struct {
+		Payload struct {
+			Prompt      string   `json:"prompt"`
+			UserPrompts []string `json:"userPrompts"`
+		} `json:"payload"`
+	}
+	if err := json.Unmarshal(
+		[]byte(
+			strings.TrimSpace(
+				string(data),
+			),
+		),
+		&envelope,
+	); err != nil {
+
+		t.Fatalf("decode hook envelope: %v", err)
+	}
+	if envelope.Payload.Prompt != "list files" {
+		t.Fatalf("initial prompt = %q", envelope.Payload.Prompt)
+	}
+	want := []string{"list files", "also explain why"}
+	if !equalStrings(envelope.Payload.UserPrompts, want) {
+		t.Fatalf("user prompts mismatch:\nwant %#v\ngot  %#v", want,
+			envelope.Payload.UserPrompts)
+	}
+}
+
 // TestRunTurnAppliesPreToolUseHook verifies tool preflight hooks can transform
 // arguments before persistence and execution.
 func TestRunTurnAppliesPreToolUseHook(t *testing.T) {

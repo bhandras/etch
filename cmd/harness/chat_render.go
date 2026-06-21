@@ -536,7 +536,7 @@ func (r *liveChatRenderer) redrawStatusLocked() {
 		fmt.Fprint(r.stdout, "\n")
 	}
 	fmt.Fprintf(
-		r.stdout, "\r%s%s%s %s (%s • Ctrl+C to stop)%s", ansiClearLine,
+		r.stdout, "\r%s%s%s %s (%s • ESC to cancel)%s", ansiClearLine,
 		ansiDim, frame, r.statusText, elapsed, ansiReset,
 	)
 	if !r.statusVisible {

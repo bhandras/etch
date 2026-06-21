@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"strings"
 	"syscall"
@@ -263,8 +264,8 @@ func TestTerminalChatInputSubmitSkipsBlankPrompt(t *testing.T) {
 	}
 }
 
-// TestTerminalChatInputCancelDiscardsPrompt verifies interrupts clear the live
-// composer without preserving partially typed input in scrollback.
+// TestTerminalChatInputCancelDiscardsPrompt verifies cancellations clear the
+// live composer without preserving partially typed input in scrollback.
 func TestTerminalChatInputCancelDiscardsPrompt(t *testing.T) {
 	t.Setenv("COLUMNS", "16")
 	var stdout bytes.Buffer
@@ -288,6 +289,47 @@ func TestTerminalChatInputCancelDiscardsPrompt(t *testing.T) {
 	}
 	if len(input.input) != 0 {
 		t.Fatalf("input was not cleared: %q", string(input.input))
+	}
+}
+
+// TestTerminalChatInputConsumesEscapeSequences verifies arrow-key sequences do
+// not trigger standalone escape cancellation.
+func TestTerminalChatInputConsumesEscapeSequences(t *testing.T) {
+	reader := bufio.NewReader(strings.NewReader("[A"))
+	input := &terminalChatInput{}
+
+	if !input.consumeEscapeSequence(reader) {
+		t.Fatalf("escape sequence was not consumed")
+	}
+	if reader.Buffered() != 0 {
+		t.Fatalf("escape sequence left %d buffered bytes",
+			reader.Buffered())
+	}
+}
+
+// TestTerminalChatInputIgnoresStandaloneEscapeConsumption verifies a bare ESC
+// remains available for cancellation.
+func TestTerminalChatInputIgnoresStandaloneEscapeConsumption(t *testing.T) {
+	reader := bufio.NewReader(strings.NewReader("x"))
+	input := &terminalChatInput{}
+
+	if input.consumeEscapeSequence(reader) {
+		t.Fatalf("standalone escape was consumed as a sequence")
+	}
+	if reader.Buffered() != 1 {
+		t.Fatalf("standalone escape consumed buffered input")
+	}
+}
+
+// TestStatusComposerLineShowsEscapeCancelHint verifies active work points to
+// the escape-key cancellation path instead of Ctrl+C.
+func TestStatusComposerLineShowsEscapeCancelHint(t *testing.T) {
+	line := statusComposerLine(0, "Working", time.Now(), 80)
+	if !strings.Contains(line, "ESC to cancel") {
+		t.Fatalf("missing escape cancel hint: %q", line)
+	}
+	if strings.Contains(line, "Ctrl+C") {
+		t.Fatalf("status kept Ctrl+C hint: %q", line)
 	}
 }
 

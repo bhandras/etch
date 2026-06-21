@@ -696,6 +696,9 @@ func runChat(cfg cliConfig, stdin io.Reader, stdout io.Writer,
 			break
 		}
 		if result.Err != nil {
+			if errors.Is(result.Err, errChatInputCanceled) {
+				continue
+			}
 			if errors.Is(result.Err, errChatInputInterrupted) {
 				return 0
 			}
@@ -733,6 +736,11 @@ func runChat(cfg cliConfig, stdin io.Reader, stdout io.Writer,
 			results, &inputDone, &pendingResults, stdout,
 		)
 		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				renderChatCancelNotice(composer, stdout)
+
+				continue
+			}
 			fmt.Fprintln(stderr, "error:", err)
 
 			return 1
@@ -741,6 +749,30 @@ func runChat(cfg cliConfig, stdin io.Reader, stdout io.Writer,
 	}
 
 	return 0
+}
+
+// renderChatCancelNotice prints the cancellation notice around the live prompt.
+func renderChatCancelNotice(composer *terminalChatInput, stdout io.Writer) {
+	write := func() {
+		fmt.Fprintln(stdout)
+		fmt.Fprintln(stdout, chatCancelNotice(stdout))
+		fmt.Fprintln(stdout)
+	}
+	if composer == nil {
+		write()
+
+		return
+	}
+	composer.WithOutput(write)
+}
+
+// chatCancelNotice returns the muted dot-led cancellation message.
+func chatCancelNotice(stdout io.Writer) string {
+	style := terminalStyle{
+		enabled: shouldStyle(stdout),
+	}
+
+	return style.wrapTone("• Canceled", terminalTone{muted: true})
 }
 
 // nextChatLine returns queued chat input before reading from the live channel.
@@ -777,10 +809,12 @@ func runChatTurnWithSteering(cfg cliConfig, line string, sessionPath string,
 	observer.renderer.startStatus("Working")
 	startedAt := time.Now()
 	busyInput := &chatBusyInput{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	outcomes := make(chan chatTurnOutcome, 1)
 	go func() {
 		result, err := core.RunTurn(
-			context.Background(), core.TurnRequest{
+			ctx, core.TurnRequest{
 				Prompt:        line,
 				SessionDir:    cfg.sessionDir,
 				SessionPath:   sessionPath,
@@ -812,6 +846,9 @@ func runChatTurnWithSteering(cfg cliConfig, line string, sessionPath string,
 		case outcome := <-outcomes:
 			if outcome.Err != nil {
 				observer.renderer.stopStatus()
+				*pendingResults = append(
+					*pendingResults, busyInput.Pending()...,
+				)
 
 				return nil, outcome.Err
 			}
@@ -829,7 +866,9 @@ func runChatTurnWithSteering(cfg cliConfig, line string, sessionPath string,
 
 				continue
 			}
-			collectBusyChatInput(result, busyInput)
+			if collectBusyChatInput(result, busyInput) {
+				cancel()
+			}
 		}
 	}
 }
@@ -843,17 +882,22 @@ type chatTurnOutcome struct {
 	Err error
 }
 
-// collectBusyChatInput records input submitted while a turn is active.
-func collectBusyChatInput(result chatLineResult, busyInput *chatBusyInput) {
+// collectBusyChatInput records active-turn input and reports cancellations.
+func collectBusyChatInput(result chatLineResult,
+	busyInput *chatBusyInput) bool {
+
+	if errors.Is(result.Err, errChatInputCanceled) {
+		return true
+	}
 	if result.Err != nil || !result.OK {
 		busyInput.AddPending(result)
 
-		return
+		return false
 	}
 	line := result.Line
 	commandLine := strings.TrimSpace(line)
 	if commandLine == "" {
-		return
+		return false
 	}
 	if strings.HasPrefix(commandLine, "/") {
 		busyInput.AddPending(chatLineResult{
@@ -861,9 +905,11 @@ func collectBusyChatInput(result chatLineResult, busyInput *chatBusyInput) {
 			OK:   true,
 		})
 
-		return
+		return false
 	}
 	busyInput.AddSteering(line)
+
+	return false
 }
 
 // runChatCommandWithOutput clears the live prompt around slash-command output.

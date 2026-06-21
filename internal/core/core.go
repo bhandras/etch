@@ -259,6 +259,7 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 	finalReceived := false
 	var text string
 	toolCallCount := 0
+	userPrompts := []string{req.Prompt}
 	var timing TurnTiming
 	for round := 0; round < maxToolRounds; round++ {
 		callMessages, err := runContextBuildHooks(
@@ -395,7 +396,7 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 			parentID = toolEvent.ID
 		}
 		steeredParentID, err := applySteeringPrompts(
-			ctx, req, store, parentID, &messages,
+			ctx, req, store, parentID, &messages, &userPrompts,
 		)
 		if err != nil {
 			return nil, err
@@ -411,6 +412,7 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 	}
 	if err := runTurnCompleteHooks(
 		ctx, req, store, user, assistant, text, toolCallCount,
+		userPrompts,
 	); err != nil {
 		return nil, err
 	}
@@ -480,8 +482,8 @@ func runUserPromptHooks(ctx context.Context, req TurnRequest,
 
 // applySteeringPrompts admits queued user steering before the next model call.
 func applySteeringPrompts(ctx context.Context, req TurnRequest,
-	store *session.Store, parentID string,
-	messages *[]model.Message) (string, error) {
+	store *session.Store, parentID string, messages *[]model.Message,
+	userPrompts *[]string) (string, error) {
 
 	if req.DrainSteering == nil {
 		return parentID, nil
@@ -509,6 +511,7 @@ func applySteeringPrompts(ctx context.Context, req TurnRequest,
 			Role:    model.RoleUser,
 			Content: hookedPrompt,
 		})
+		*userPrompts = append(*userPrompts, hookedPrompt)
 		parentID = user.ID
 	}
 
@@ -534,7 +537,7 @@ func runTurnStartHooks(ctx context.Context, req TurnRequest,
 // runTurnCompleteHooks applies configured turn completion lifecycle hooks.
 func runTurnCompleteHooks(ctx context.Context, req TurnRequest,
 	store *session.Store, user *session.Event, assistant *session.Event,
-	text string, toolCalls int) error {
+	text string, toolCalls int, userPrompts []string) error {
 
 	if req.Hooks == nil {
 		return nil
@@ -546,6 +549,7 @@ func runTurnCompleteHooks(ctx context.Context, req TurnRequest,
 		UserEventID:      user.ID,
 		AssistantEventID: assistant.ID,
 		Prompt:           req.Prompt,
+		UserPrompts:      append([]string(nil), userPrompts...),
 		AssistantText:    text,
 		ToolCalls:        toolCalls,
 	})

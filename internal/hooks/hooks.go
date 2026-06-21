@@ -110,8 +110,12 @@ type TurnCompleteEvent struct {
 	// AssistantEventID is the durable final assistant message event ID.
 	AssistantEventID string `json:"assistantEventId"`
 
-	// Prompt is the prompt admitted to the session.
+	// Prompt is the initial prompt admitted to the session.
 	Prompt string `json:"prompt"`
+
+	// UserPrompts stores every user prompt admitted during the turn,
+	// including steering prompts.
+	UserPrompts []string `json:"userPrompts,omitempty"`
 
 	// AssistantText is the final assistant response text.
 	AssistantText string `json:"assistantText"`
