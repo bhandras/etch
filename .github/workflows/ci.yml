@@ -86,6 +86,9 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
 
+      - name: Validate sample config
+        run: go test ./internal/config -run TestSampleConfigDocumentsSupportedKeys -count=1
+
       - name: Run tests
         run: make test
 

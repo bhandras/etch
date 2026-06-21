@@ -1,9 +1,14 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
+	"sort"
+	"strings"
 	"testing"
+	"unicode"
 )
 
 // TestParseReadsProviderSessionAndHooks verifies the supported TOML subset maps
@@ -161,4 +166,238 @@ func TestParseRejectsUnknownKeys(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected unknown key error")
 	}
+}
+
+// TestSampleConfigDocumentsSupportedKeys verifies CI fails when a config field
+// is not represented in the sample configuration file.
+func TestSampleConfigDocumentsSupportedKeys(t *testing.T) {
+	content, err := os.ReadFile(
+		filepath.Join("..", "..", "sample-config.toml"),
+	)
+	if err != nil {
+		t.Fatalf("read sample config: %v", err)
+	}
+
+	documented, materialized := documentedSampleConfigKeys(string(content))
+	if _, err := Parse(materialized); err != nil {
+		t.Fatalf("parse materialized sample config: %v\n%s", err,
+			materialized)
+	}
+
+	supported := supportedSampleConfigKeys()
+	missing := sampleConfigKeyDifference(supported, documented)
+	if len(missing) > 0 {
+		t.Fatalf("sample-config.toml is missing documented keys: %s",
+			strings.Join(missing, ", "))
+	}
+
+	extra := sampleConfigKeyDifference(documented, supported)
+	if len(extra) > 0 {
+		t.Fatalf("sample-config.toml documents unknown keys: %s",
+			strings.Join(extra, ", "))
+	}
+}
+
+// sampleConfigKey identifies one table-qualified config setting in the sample.
+type sampleConfigKey struct {
+	// Table is the TOML table or array-table family that owns Key.
+	Table string
+
+	// Key is the scalar setting name documented under Table.
+	Key string
+}
+
+// String returns the table-qualified form used in test failure messages.
+func (k sampleConfigKey) String() string {
+	return fmt.Sprintf("%s.%s", k.Table, k.Key)
+}
+
+// supportedSampleConfigKeys returns every configurable field that should appear
+// in sample-config.toml.
+func supportedSampleConfigKeys() map[sampleConfigKey]bool {
+	keys := make(map[sampleConfigKey]bool)
+	addConfigStructKeys(keys, "session", SessionConfig{})
+	addConfigStructKeys(keys, "context", ContextConfig{})
+	addConfigStructKeys(keys, "provider", ProviderConfig{})
+	addConfigStructKeys(keys, "openai", OpenAIConfig{})
+	addConfigStructKeys(keys, "hooks", HookConfig{})
+	addConfigStructKeys(keys, "plugins", PluginConfig{})
+
+	return keys
+}
+
+// addConfigStructKeys adds exported fields from cfg as snake-case config keys.
+func addConfigStructKeys(keys map[sampleConfigKey]bool, table string, cfg any) {
+	typ := reflect.TypeOf(cfg)
+	for i := 0; i < typ.NumField(); i++ {
+		field := typ.Field(i)
+		if !field.IsExported() {
+			continue
+		}
+		keys[sampleConfigKey{
+			Table: table,
+			Key:   configFieldKey(field.Name),
+		}] = true
+	}
+}
+
+// configFieldKey converts a Go config field name into its TOML key spelling.
+func configFieldKey(name string) string {
+	var words []string
+	var current []rune
+	runes := []rune(name)
+	for i, r := range runes {
+		if shouldStartConfigWord(runes, i) {
+			words = append(words, string(current))
+			current = nil
+		}
+		current = append(current, unicode.ToLower(r))
+	}
+	if len(current) > 0 {
+		words = append(words, string(current))
+	}
+
+	return strings.Join(words, "_")
+}
+
+// shouldStartConfigWord reports whether name[index] begins a new key word.
+func shouldStartConfigWord(name []rune, index int) bool {
+	if index == 0 || !unicode.IsUpper(name[index]) {
+		return false
+	}
+	previous := name[index-1]
+	if unicode.IsLower(previous) || unicode.IsDigit(previous) {
+		return true
+	}
+	if index+1 < len(name) && unicode.IsLower(name[index+1]) {
+		return true
+	}
+
+	return false
+}
+
+// documentedSampleConfigKeys scans the sample file for commented or active TOML
+// settings and returns a parseable config built from the examples.
+func documentedSampleConfigKeys(text string) (map[sampleConfigKey]bool,
+	string) {
+
+	documented := make(map[sampleConfigKey]bool)
+	var materialized strings.Builder
+	var table string
+	arrayTable := false
+	for _, raw := range strings.Split(text, "\n") {
+		line := uncommentSampleConfigLine(raw)
+		if line == "" {
+			continue
+		}
+
+		if name, isArray, ok := sampleConfigTable(line); ok {
+			table = name
+			arrayTable = isArray
+			if sampleConfigTableIsMaterialized(name, isArray) {
+				materialized.WriteString(line)
+				materialized.WriteByte('\n')
+			}
+
+			continue
+		}
+
+		key, _, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		group, ok := sampleConfigKeyGroup(table, arrayTable)
+		if !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		documented[sampleConfigKey{Table: group, Key: key}] = true
+		materialized.WriteString(line)
+		materialized.WriteByte('\n')
+	}
+
+	return documented, materialized.String()
+}
+
+// uncommentSampleConfigLine strips the sample's leading comment marker from
+// example TOML while leaving active TOML unchanged.
+func uncommentSampleConfigLine(line string) string {
+	line = strings.TrimSpace(line)
+	if strings.HasPrefix(line, "#") {
+		line = strings.TrimSpace(strings.TrimPrefix(line, "#"))
+	}
+
+	return line
+}
+
+// sampleConfigTable returns the table name and array-table flag from a TOML
+// table header.
+func sampleConfigTable(line string) (string, bool, bool) {
+	if strings.HasPrefix(line, "[[") && strings.HasSuffix(line, "]]") {
+		name := strings.TrimSpace(
+			strings.TrimSuffix(
+				strings.TrimPrefix(line, "[["),
+				"]]",
+			),
+		)
+
+		return name, true, name != ""
+	}
+	if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
+		name := strings.TrimSpace(
+			strings.TrimSuffix(
+				strings.TrimPrefix(line, "["),
+				"]",
+			),
+		)
+
+		return name, false, name != ""
+	}
+
+	return "", false, false
+}
+
+// sampleConfigTableIsMaterialized reports whether table belongs in the
+// generated sample config used to validate example values.
+func sampleConfigTableIsMaterialized(table string, arrayTable bool) bool {
+	if _, ok := sampleConfigKeyGroup(table, arrayTable); ok {
+		return true
+	}
+
+	return table == "hooks" && !arrayTable
+}
+
+// sampleConfigKeyGroup maps concrete TOML table names into documented families.
+func sampleConfigKeyGroup(table string, arrayTable bool) (string, bool) {
+	switch {
+	case table == "session" || table == "context" ||
+		table == "provider" || table == "openai":
+		return table, true
+
+	case table == "plugins":
+		return "plugins", true
+
+	case strings.HasPrefix(table, "hooks.") ||
+		(table == "hooks" && arrayTable):
+		return "hooks", true
+
+	default:
+		return "", false
+	}
+}
+
+// sampleConfigKeyDifference returns sorted keys present in left and absent from
+// right.
+func sampleConfigKeyDifference(left map[sampleConfigKey]bool,
+	right map[sampleConfigKey]bool) []string {
+
+	var diff []string
+	for key := range left {
+		if !right[key] {
+			diff = append(diff, key.String())
+		}
+	}
+	sort.Strings(diff)
+
+	return diff
 }

@@ -231,7 +231,8 @@
 #
 # PostCompact stdout is ignored, but should be empty or "{}" if written.
 
-# [[hooks.SessionStart]]
+# [[hooks]]
+# event = "SessionStart"
 # matcher = "^(new|resume)$"
 # command = ".harness/hooks/session-start.sh"
 
