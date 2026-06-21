@@ -236,11 +236,25 @@ func TestRunTurnRejectsWhitespacePrompt(t *testing.T) {
 // TestRunTurnContinuesExistingSession verifies that a follow-up turn appends
 // to the same JSONL log and replays prior messages into the model request.
 func TestRunTurnContinuesExistingSession(t *testing.T) {
+	firstClient := &scriptedToolClient{
+		events: [][]model.Event{{
+			{
+				Type: model.EventTextDelta,
+				Text: "first",
+			},
+			{Type: model.EventResponseInfo, ResponseInfo: model.ResponseInfo{
+				ProviderResponseID: "resp_first",
+			}},
+			{
+				Type: model.EventDone,
+			},
+		}},
+	}
 	first, err := RunTurn(context.Background(), TurnRequest{
 		Prompt:     "first",
 		SessionDir: t.TempDir(),
 		CWD:        "/work/project",
-		Model:      model.EchoClient{},
+		Model:      firstClient,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -273,6 +287,16 @@ func TestRunTurnContinuesExistingSession(t *testing.T) {
 	if len(client.requests) != 1 {
 		t.Fatalf("expected one model request, got %d",
 			len(client.requests))
+	}
+	if client.requests[0].PreviousResponseID != "resp_first" {
+		t.Fatalf("unexpected previous response id: %q",
+			client.requests[0].PreviousResponseID)
+	}
+	if len(client.requests[0].DeltaMessages) != 1 ||
+		client.requests[0].DeltaMessages[0].Content != "follow-up" {
+
+		t.Fatalf("unexpected delta messages: %#v",
+			client.requests[0].DeltaMessages)
 	}
 
 	messages := client.requests[0].Messages
@@ -316,6 +340,9 @@ func TestRunTurnExecutesToolCalls(t *testing.T) {
 							`}`,
 					},
 				},
+				{Type: model.EventResponseInfo, ResponseInfo: model.ResponseInfo{
+					ProviderResponseID: "resp_tools",
+				}},
 				{
 					Type: model.EventDone,
 				},
@@ -358,16 +385,27 @@ func TestRunTurnExecutesToolCalls(t *testing.T) {
 		t.Fatalf("expected tool result in second request, got %#v",
 			last)
 	}
+	if client.requests[1].PreviousResponseID != "resp_tools" {
+		t.Fatalf("unexpected previous response id: %q",
+			client.requests[1].PreviousResponseID)
+	}
+	if len(client.requests[1].DeltaMessages) != 1 ||
+		client.requests[1].DeltaMessages[0].Role != model.RoleTool ||
+		client.requests[1].DeltaMessages[0].Content != "go.mod" {
+
+		t.Fatalf("unexpected tool delta messages: %#v",
+			client.requests[1].DeltaMessages)
+	}
 
 	events, err := session.ReadAll(result.SessionPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(events) != 5 {
-		t.Fatalf("expected five session events, got %d", len(events))
+	if len(events) != 6 {
+		t.Fatalf("expected six session events, got %d", len(events))
 	}
-	if events[3].Type != session.EventToolMessage {
-		t.Fatalf("expected tool message event, got %q", events[3].Type)
+	if events[4].Type != session.EventToolMessage {
+		t.Fatalf("expected tool message event, got %q", events[4].Type)
 	}
 }
 

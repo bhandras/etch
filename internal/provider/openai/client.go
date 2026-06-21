@@ -95,6 +95,22 @@ func (c *Client) Stream(ctx context.Context, req model.Request) (
 		return nil, fmt.Errorf("openai request: %w", err)
 	}
 	timeToHeaders := time.Since(startedAt)
+	if shouldRetryWithoutContinuation(resp, req) {
+		resp.Body.Close()
+		fallbackReq, err := c.newRequest(
+			ctx, requestWithoutContinuation(req),
+		)
+		if err != nil {
+			return nil, err
+		}
+		httpReq = fallbackReq
+		startedAt = time.Now()
+		resp, err = httpClient.Do(httpReq)
+		if err != nil {
+			return nil, fmt.Errorf("openai request: %w", err)
+		}
+		timeToHeaders = time.Since(startedAt)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		defer resp.Body.Close()
 
@@ -114,6 +130,23 @@ func (c *Client) Stream(ctx context.Context, req model.Request) (
 	}
 
 	return events, nil
+}
+
+// shouldRetryWithoutContinuation reports whether a failed continuation should
+// be retried as a full-context request.
+func shouldRetryWithoutContinuation(resp *http.Response,
+	req model.Request) bool {
+
+	return req.PreviousResponseID != "" &&
+		resp.StatusCode == http.StatusBadRequest
+}
+
+// requestWithoutContinuation returns a full-context retry request.
+func requestWithoutContinuation(req model.Request) model.Request {
+	req.PreviousResponseID = ""
+	req.DeltaMessages = nil
+
+	return req
 }
 
 // newRequest builds the HTTP request for a streaming chat completion.
@@ -156,14 +189,19 @@ func (c *Client) newRequest(ctx context.Context, req model.Request) (
 func (c *Client) newResponsesRequest(ctx context.Context, req model.Request) (
 	*http.Request, error) {
 
+	inputMessages := req.Messages
+	if req.PreviousResponseID != "" && len(req.DeltaMessages) > 0 {
+		inputMessages = req.DeltaMessages
+	}
 	body, err := json.Marshal(responseRequest{
-		Model:          c.Model,
-		Stream:         true,
-		Store:          false,
-		PromptCacheKey: promptCacheKey(req.SessionID),
-		Instructions:   responseInstructions(req.Messages),
-		Input:          responseInput(req.Messages),
-		Tools:          responseTools(req.Tools),
+		Model:              c.Model,
+		Stream:             true,
+		Store:              false,
+		PromptCacheKey:     promptCacheKey(req.SessionID),
+		PreviousResponseID: req.PreviousResponseID,
+		Instructions:       responseInstructions(req.Messages),
+		Input:              responseInput(inputMessages),
+		Tools:              responseTools(req.Tools),
 		Reasoning: responseReasoningConfig(
 			c.ReasoningEffort, c.ReasoningSummary,
 		),
@@ -853,6 +891,9 @@ type responseRequest struct {
 	// PromptCacheKey asks OpenAI-compatible backends to reuse prompt cache
 	// state for requests from the same local session.
 	PromptCacheKey string `json:"prompt_cache_key,omitempty"`
+
+	// PreviousResponseID asks Responses to continue from a prior response.
+	PreviousResponseID string `json:"previous_response_id,omitempty"`
 
 	// Instructions stores system-level guidance for the response.
 	Instructions string `json:"instructions,omitempty"`

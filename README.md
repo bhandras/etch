@@ -41,8 +41,8 @@ Harness currently has:
   `/status` session stats
 - provider-reported token usage for OpenAI Chat Completions and Responses API
   streams
-- durable OpenAI Responses IDs stored as `model.response` events for future
-  continuation support
+- durable OpenAI Responses IDs stored as `model.response` events and used for
+  conservative `previous_response_id` continuation
 - provider transport timing for OpenAI-compatible HTTP/SSE streams, including
   request count, payload sizes, response headers, and first-event latency
 - Responses API prompt cache affinity keyed by the durable local session ID

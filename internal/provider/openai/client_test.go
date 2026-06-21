@@ -329,10 +329,15 @@ func TestClientStreamsResponsesAPI(t *testing.T) {
 		ReasoningSummary: "auto",
 	}
 	events, err := client.Stream(context.Background(), model.Request{
-		SessionID: "session-responses",
+		SessionID:          "session-responses",
+		PreviousResponseID: "resp_previous",
 		Messages: []model.Message{
 			{Role: model.RoleSystem, Content: "rules"},
 			{Role: model.RoleUser, Content: "list files"},
+		},
+		DeltaMessages: []model.Message{
+			{Role: model.RoleSystem, Content: "rules"},
+			{Role: model.RoleUser, Content: "delta only"},
 		},
 		Tools: []model.ToolSpec{{
 			Name:        "ls",
@@ -360,6 +365,16 @@ func TestClientStreamsResponsesAPI(t *testing.T) {
 	if gotRequest.PromptCacheKey != "session-responses" {
 		t.Fatalf("unexpected prompt cache key: %q",
 			gotRequest.PromptCacheKey)
+	}
+	if gotRequest.PreviousResponseID != "resp_previous" {
+		t.Fatalf("unexpected previous response id: %q",
+			gotRequest.PreviousResponseID)
+	}
+	if len(gotRequest.Input) != 1 ||
+		gotRequest.Input[0].Content != "delta only" {
+
+		t.Fatalf("request did not use delta input: %#v",
+			gotRequest.Input)
 	}
 	if gotRequest.Reasoning == nil ||
 		gotRequest.Reasoning.Effort != "medium" ||
@@ -423,6 +438,86 @@ func TestPromptCacheKeyClampsRunes(t *testing.T) {
 	}
 	if got := promptCacheKey(""); got != "" {
 		t.Fatalf("unexpected empty key: %q", got)
+	}
+}
+
+// TestClientRetriesContinuationAsFullRequest verifies experimental
+// previous_response_id failures fall back to a full Responses request.
+func TestClientRetriesContinuationAsFullRequest(t *testing.T) {
+	var requests []responseRequest
+	server := httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var got responseRequest
+			if err := json.NewDecoder(r.Body).Decode(
+				&got,
+			); err != nil {
+
+				t.Fatal(err)
+			}
+			requests = append(requests, got)
+			if len(requests) == 1 {
+				http.Error(
+					w, "bad previous response",
+					http.StatusBadRequest,
+				)
+
+				return
+			}
+
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprint(
+				w, "data: "+
+					"{\"type\":\"response.output_item.added"+
+					"\",\"item\":{\"type\":\"message\",\"role\":\""+
+					"assistant\"}}\n\n",
+			)
+			fmt.Fprint(
+				w, "data: "+
+					"{\"type\":\"response.output_text.delta"+
+					"\",\"delta\":\"ok\"}\n\n",
+			)
+			fmt.Fprint(w, "data: [DONE]\n\n")
+		}),
+	)
+	defer server.Close()
+
+	client := &Client{
+		BaseURL: server.URL,
+		Model:   "test-model",
+		API:     APIResponses,
+	}
+	events, err := client.Stream(context.Background(), model.Request{
+		PreviousResponseID: "resp_previous",
+		Messages: []model.Message{
+			{Role: model.RoleUser, Content: "full"},
+			{Role: model.RoleUser, Content: "current"},
+		},
+		DeltaMessages: []model.Message{
+			{Role: model.RoleUser, Content: "current"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := collectEvents(events)
+	if len(got) != 3 || got[0].Text != "ok" {
+		t.Fatalf("unexpected fallback stream: %#v", got)
+	}
+	if len(requests) != 2 {
+		t.Fatalf("expected retry, got %#v", requests)
+	}
+	if requests[0].PreviousResponseID != "resp_previous" ||
+		len(requests[0].Input) != 1 ||
+		requests[0].Input[0].Content != "current" {
+
+		t.Fatalf("first request was not continuation: %#v", requests[0])
+	}
+	if requests[1].PreviousResponseID != "" ||
+		len(requests[1].Input) != 2 ||
+		requests[1].Input[0].Content != "full" ||
+		requests[1].Input[1].Content != "current" {
+
+		t.Fatalf("fallback was not full request: %#v", requests[1])
 	}
 }
 

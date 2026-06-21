@@ -74,8 +74,17 @@ type Request struct {
 	// cache affinity. Empty means the request is not tied to a session.
 	SessionID string
 
+	// PreviousResponseID identifies a provider response that this request
+	// should continue. Empty means the request contains a full context.
+	PreviousResponseID string
+
 	// Messages contains the ordered model context for the turn.
 	Messages []Message
+
+	// DeltaMessages contains only new input since PreviousResponseID when
+	// a continuation request is safe. Providers that cannot continue can
+	// ignore it and send Messages instead.
+	DeltaMessages []Message
 
 	// Tools contains model-callable tools available for the turn.
 	Tools []ToolSpec

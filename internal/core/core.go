@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -271,6 +272,15 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	continuation, err := initialResponseContinuation(
+		history, req.SystemText,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if req.Hooks != nil {
+		continuation = responseContinuation{}
+	}
 	parentID := store.LastID()
 
 	maxToolRounds := toolRoundLimit(req.MaxToolRounds)
@@ -289,8 +299,8 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 		}
 		modelStarted := time.Now()
 		response, err := collectModelResponse(
-			ctx, req.Model, store.ID(), callMessages, req.Tools,
-			req.Observer,
+			ctx, req.Model, store.ID(), continuation, callMessages,
+			req.Tools, req.Observer,
 		)
 		timing.ModelDuration += time.Since(modelStarted)
 		timing.ModelCalls++
@@ -383,6 +393,14 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 			Content:   response.Text,
 			ToolCalls: toolCalls,
 		})
+		continuation = responseContinuation{}
+		deltaStart := len(messages)
+		if req.Hooks == nil &&
+			response.ResponseInfo.ProviderResponseID != "" {
+
+			continuation.PreviousResponseID =
+				response.ResponseInfo.ProviderResponseID
+		}
 
 		parentID = assistant.ID
 		if usageEvent != nil {
@@ -450,6 +468,14 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 			return nil, err
 		}
 		parentID = steeredParentID
+		if continuation.PreviousResponseID != "" {
+			continuation.DeltaMessages = continuationMessages(
+				messages, deltaStart,
+			)
+			if !hasNonSystemMessage(continuation.DeltaMessages) {
+				continuation = responseContinuation{}
+			}
+		}
 	}
 	if assistant == nil {
 		return nil, fmt.Errorf("tool round limit exceeded")
@@ -821,6 +847,111 @@ func openTurnStore(req TurnRequest) (*session.Store, []session.Event, error) {
 	return store, []session.Event{*started}, nil
 }
 
+// responseContinuation stores a safe provider continuation request slice.
+type responseContinuation struct {
+	// PreviousResponseID identifies the provider response to continue.
+	PreviousResponseID string
+
+	// DeltaMessages contains only messages added after PreviousResponseID.
+	DeltaMessages []model.Message
+}
+
+// initialResponseContinuation derives a continuation from prior session
+// history after the latest durable provider response.
+func initialResponseContinuation(events []session.Event,
+	systemText string) (responseContinuation, error) {
+
+	index, response, ok, err := latestModelResponse(events)
+	if err != nil || !ok || response.ProviderResponseID == "" {
+		return responseContinuation{}, err
+	}
+	deltaEvents := events[index+1:]
+	if containsSummaryEvent(deltaEvents) {
+		return responseContinuation{}, nil
+	}
+
+	messages, err := prompt.BuildHistoryMessages(prompt.HistoryRequest{
+		Events:     deltaEvents,
+		SystemText: systemText,
+	})
+	if err != nil {
+		return responseContinuation{}, err
+	}
+	if !hasNonSystemMessage(messages) {
+		return responseContinuation{}, nil
+	}
+
+	return responseContinuation{
+		PreviousResponseID: response.ProviderResponseID,
+		DeltaMessages:      messages,
+	}, nil
+}
+
+// latestModelResponse returns the newest durable provider response identity.
+func latestModelResponse(events []session.Event) (int, session.ResponseData,
+	bool, error) {
+
+	for i := len(events) - 1; i >= 0; i-- {
+		if events[i].Type != session.EventModelResponse {
+			continue
+		}
+		var response session.ResponseData
+		if err := json.Unmarshal(
+			events[i].Data, &response,
+		); err != nil {
+			return 0, session.ResponseData{}, false,
+				fmt.Errorf("decode model response %s: %w",
+					events[i].ID, err)
+		}
+
+		return i, response, true, nil
+	}
+
+	return 0, session.ResponseData{}, false, nil
+}
+
+// containsSummaryEvent reports whether delta events crossed compaction.
+func containsSummaryEvent(events []session.Event) bool {
+	for _, event := range events {
+		if event.Type == session.EventContextSummary {
+			return true
+		}
+	}
+
+	return false
+}
+
+// continuationMessages prepends leading system messages to a context suffix.
+func continuationMessages(messages []model.Message, start int) []model.Message {
+	if start < 0 {
+		start = 0
+	}
+	if start > len(messages) {
+		start = len(messages)
+	}
+	out := make([]model.Message, 0, start+len(messages)-start)
+	for _, message := range messages {
+		if message.Role != model.RoleSystem {
+			break
+		}
+		out = append(out, message)
+	}
+	out = append(out, messages[start:]...)
+
+	return out
+}
+
+// hasNonSystemMessage reports whether messages contain provider input.
+func hasNonSystemMessage(messages []model.Message) bool {
+	for _, message := range messages {
+		if message.Role != model.RoleSystem {
+			return true
+		}
+	}
+
+	return false
+}
+
 // modelResponse is one complete model pass through text and tool-call events.
 type modelResponse struct {
 	// Text is the complete assistant text assembled from streamed deltas.
@@ -845,7 +976,8 @@ type modelResponse struct {
 
 // collectModelResponse starts a model stream and collects one assistant pass.
 func collectModelResponse(ctx context.Context, client model.Client,
-	sessionID string, messages []model.Message, registry *tool.Registry,
+	sessionID string, continuation responseContinuation,
+	messages []model.Message, registry *tool.Registry,
 	observer Observer) (modelResponse, error) {
 
 	var specs []model.ToolSpec
@@ -854,9 +986,11 @@ func collectModelResponse(ctx context.Context, client model.Client,
 	}
 
 	stream, err := client.Stream(ctx, model.Request{
-		SessionID: sessionID,
-		Messages:  messages,
-		Tools:     specs,
+		SessionID:          sessionID,
+		PreviousResponseID: continuation.PreviousResponseID,
+		Messages:           messages,
+		DeltaMessages:      continuation.DeltaMessages,
+		Tools:              specs,
 	})
 	if err != nil {
 		return modelResponse{}, fmt.Errorf("start model stream: %w",

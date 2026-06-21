@@ -222,6 +222,13 @@ and Platform Responses calls can get stable cache affinity across turns. Chat
 Completions keeps the narrower compatibility request shape because many local
 or OpenAI-compatible endpoints reject unknown OpenAI-specific fields.
 
+When a prior Responses call has a durable `model.response` provider ID, the
+core can send `previous_response_id` plus only the new user/tool input since
+that response. The full context is still carried in the provider-neutral request
+so the OpenAI client can retry without continuation if the provider rejects the
+handle. Context-build hooks currently disable continuation because hooks can
+rewrite message lists in ways the core cannot safely slice.
+
 OpenAI-compatible usage is selected explicitly:
 
 ```bash
@@ -491,10 +498,10 @@ next prompt projection contains.
 
 Model clients should also emit provider response identity when available. The
 core stores those identifiers as `model.response` JSONL events chained after the
-assistant message and any usage event for the same model pass. This is
-observational state for now: it makes sessions auditable and gives future
-continuation transports a durable provider response handle without changing
-current HTTP/SSE request behavior.
+assistant message and any usage event for the same model pass. That state makes
+sessions auditable and lets Responses providers continue from a prior response
+without resending the whole visible transcript when the local session history is
+still a safe suffix of that response.
 
 ## OpenAI And Codex Auth
 
