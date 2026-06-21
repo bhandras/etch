@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"harness/internal/textutil"
 )
 
 const (
@@ -34,11 +36,10 @@ type ReadRequest struct {
 
 // Read returns a model-friendly text slice from a file.
 func Read(ctx context.Context, req ReadRequest) (string, error) {
-	path := strings.TrimSpace(req.Path)
-	if path == "" {
-		return "", fmt.Errorf("path is required")
+	path, err := readPath(req.Path)
+	if err != nil {
+		return "", err
 	}
-
 	info, err := os.Stat(path)
 	if err != nil {
 		return "", fmt.Errorf("stat file: %w", err)
@@ -99,13 +100,14 @@ func renderReadContent(content string, req ReadRequest) (string, error) {
 	if truncated.FirstLineExceedsLimit {
 		return fmt.Sprintf("[Line %d exceeds %s limit. Use a "+
 			"smaller offset/limit or a specialized tool.]",
-			start, formatBytes(DefaultReadMaxBytes)), nil
+			start, textutil.FormatBytes(DefaultReadMaxBytes)), nil
 	}
 	if truncated.Truncated {
 		nextOffset := endLine + 1
 		reason := fmt.Sprintf("%s limit", truncated.Reason)
 		if truncated.Reason == "bytes" {
-			reason = formatBytes(DefaultReadMaxBytes) + " limit"
+			reason = textutil.FormatBytes(DefaultReadMaxBytes) +
+				" limit"
 		}
 		output += fmt.Sprintf("\n\n[Showing lines %d-%d of %d (%s). "+
 			"Use offset=%d to continue.]",
@@ -172,16 +174,4 @@ func truncateLines(lines []string, maxBytes int) truncatedText {
 		Text:        out.String(),
 		OutputLines: len(lines),
 	}
-}
-
-// formatBytes renders byte counts in a compact human-readable form.
-func formatBytes(bytes int) string {
-	if bytes < 1024 {
-		return fmt.Sprintf("%dB", bytes)
-	}
-	if bytes < 1024*1024 {
-		return fmt.Sprintf("%.1fKB", float64(bytes)/1024)
-	}
-
-	return fmt.Sprintf("%.1fMB", float64(bytes)/(1024*1024))
 }

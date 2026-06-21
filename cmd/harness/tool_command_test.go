@@ -27,12 +27,13 @@ func TestToolLSRunsDirectly(t *testing.T) {
 
 // TestToolReadRunsDirectly verifies the manual text file read smoke path.
 func TestToolReadRunsDirectly(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "note.txt")
-	writeFile(t, path, "alpha\nbeta")
+	dir := t.TempDir()
+	t.Chdir(dir)
+	writeFile(t, filepath.Join(dir, "note.txt"), "alpha\nbeta")
 
 	var stdout, stderr bytes.Buffer
 	code := run(
-		[]string{"tool", "read", "--limit", "1", path}, &stdout,
+		[]string{"tool", "read", "--limit", "1", "note.txt"}, &stdout,
 		&stderr,
 	)
 	if code != 0 {

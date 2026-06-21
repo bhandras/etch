@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"harness/internal/textutil"
 )
 
 const (
@@ -112,28 +114,12 @@ func writeSection(out *strings.Builder, name string, content string) {
 	if truncated {
 		fmt.Fprintf(
 			out, "[%s truncated to %s]\n", name,
-			formatBytes(DefaultOutputMaxBytes),
+			textutil.FormatBytes(DefaultOutputMaxBytes),
 		)
 	}
 }
 
 // capText truncates text to a maximum byte count.
 func capText(text string, maxBytes int) (string, bool) {
-	if len(text) <= maxBytes {
-		return text, false
-	}
-
-	return text[:maxBytes], true
-}
-
-// formatBytes renders byte counts in a compact human-readable form.
-func formatBytes(bytes int) string {
-	if bytes < 1024 {
-		return fmt.Sprintf("%dB", bytes)
-	}
-	if bytes < 1024*1024 {
-		return fmt.Sprintf("%.1fKB", float64(bytes)/1024)
-	}
-
-	return fmt.Sprintf("%.1fMB", float64(bytes)/(1024*1024))
+	return textutil.TruncateUTF8Bytes(text, maxBytes)
 }

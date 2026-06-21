@@ -8,13 +8,13 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
-	"runtime"
 	"strings"
 	"sync"
 	"time"
 
 	"harness/internal/config"
 	"harness/internal/model"
+	"harness/internal/platform"
 	"harness/internal/tool"
 )
 
@@ -90,7 +90,7 @@ func Start(ctx context.Context, cfg config.PluginConfig,
 		return nil, err
 	}
 
-	name, args := shellCommand(cfg.Command)
+	name, args := platform.ShellCommand(cfg.Command)
 	cmd := exec.Command(name, args...)
 	cmd.Dir = cwd
 	stdin, err := cmd.StdinPipe()
@@ -443,15 +443,6 @@ func closeClients(clients []*Client) {
 	for _, client := range clients {
 		_ = client.Close()
 	}
-}
-
-// shellCommand returns the platform shell invocation for command.
-func shellCommand(command string) (string, []string) {
-	if runtime.GOOS == "windows" {
-		return "cmd", []string{"/C", command}
-	}
-
-	return "/bin/sh", []string{"-c", command}
 }
 
 // limitedBuffer is a concurrency-safe capped diagnostic buffer.

@@ -3,6 +3,8 @@ package fs
 import (
 	"fmt"
 	"strings"
+
+	"harness/internal/textutil"
 )
 
 const (
@@ -44,7 +46,7 @@ func unifiedDiff(path string, before string, after string,
 		if out.Len()+len(part) > maxBytes {
 			out.WriteString(
 				"[diff truncated: output exceeded " +
-					formatBytes(maxBytes) + "]\n",
+					textutil.FormatBytes(maxBytes) + "]\n",
 			)
 
 			break

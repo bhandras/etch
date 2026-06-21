@@ -12,6 +12,7 @@ import (
 	"harness/internal/model"
 	"harness/internal/prompt"
 	"harness/internal/session"
+	"harness/internal/textutil"
 )
 
 // errNotEnoughHistory reports that a compaction request has no useful prefix.
@@ -761,9 +762,12 @@ func writeSummaryLine(out *strings.Builder, label string, text string) {
 
 // limitSummaryText caps large tool results before summarization.
 func limitSummaryText(text string) string {
-	if len(text) <= compactToolResultLimit {
-		return text
+	limited, truncated := textutil.TruncateUTF8Bytes(
+		text, compactToolResultLimit,
+	)
+	if truncated {
+		return limited + "\n[truncated]"
 	}
 
-	return text[:compactToolResultLimit] + "\n[truncated]"
+	return limited
 }

@@ -593,6 +593,7 @@ func TestRunTurnCompleteHookIncludesSteeringPrompts(t *testing.T) {
 // arguments before persistence and execution.
 func TestRunTurnAppliesPreToolUseHook(t *testing.T) {
 	dir := t.TempDir()
+	t.Chdir(dir)
 	requested := filepath.Join(dir, "requested.txt")
 	rewrite := filepath.Join(dir, "rewrite.txt")
 	writeFile(t, requested, "requested")

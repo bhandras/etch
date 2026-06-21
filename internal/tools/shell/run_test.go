@@ -62,3 +62,14 @@ func TestRunRejectsEmptyCommand(t *testing.T) {
 		t.Fatal("expected empty command error")
 	}
 }
+
+// TestCapTextPreservesUTF8 verifies shell output caps do not split runes.
+func TestCapTextPreservesUTF8(t *testing.T) {
+	got, truncated := capText("aé日b", 4)
+	if !truncated {
+		t.Fatal("expected truncation")
+	}
+	if got != "aé" {
+		t.Fatalf("unexpected capped text: %q", got)
+	}
+}

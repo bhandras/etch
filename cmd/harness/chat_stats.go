@@ -7,6 +7,7 @@ import (
 
 	"harness/internal/core"
 	"harness/internal/model"
+	"harness/internal/textutil"
 )
 
 // liveTurnStats stores compact per-turn counters for the footer.
@@ -77,8 +78,8 @@ func timingStatParts(timing core.TurnTiming) []string {
 			parts,
 			fmt.Sprintf(
 				"%s up · %s down",
-				formatBytes(timing.RequestBytes),
-				formatBytes(timing.ResponseBytes),
+				textutil.FormatBytes(timing.RequestBytes),
+				textutil.FormatBytes(timing.ResponseBytes),
 			),
 		)
 	}
@@ -95,18 +96,6 @@ func timingStatParts(timing core.TurnTiming) []string {
 	}
 
 	return parts
-}
-
-// formatBytes returns a compact byte count for provider payload metrics.
-func formatBytes(bytes int) string {
-	if bytes < 1024 {
-		return fmt.Sprintf("%dB", bytes)
-	}
-	if bytes < 1024*1024 {
-		return fmt.Sprintf("%.1fKB", float64(bytes)/1024)
-	}
-
-	return fmt.Sprintf("%.1fMB", float64(bytes)/(1024*1024))
 }
 
 // formatUsageStats returns compact provider token counters without a leading

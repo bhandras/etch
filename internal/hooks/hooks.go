@@ -7,12 +7,12 @@ import (
 	"fmt"
 	"os/exec"
 	"regexp"
-	"runtime"
 	"strings"
 	"time"
 
 	"harness/internal/config"
 	"harness/internal/model"
+	"harness/internal/platform"
 )
 
 const (
@@ -671,7 +671,7 @@ func runCommand(ctx context.Context, cwd string, hook config.HookConfig,
 	)
 	defer cancel()
 
-	name, args := shellCommand(hook.Command)
+	name, args := platform.ShellCommand(hook.Command)
 	cmd := exec.CommandContext(hookCtx, name, args...)
 	cmd.Dir = cwd
 	cmd.Stdin = bytes.NewReader(input)
@@ -694,13 +694,4 @@ func runCommand(ctx context.Context, cwd string, hook config.HookConfig,
 	}
 
 	return stdout.Bytes(), nil
-}
-
-// shellCommand returns the platform shell invocation for command.
-func shellCommand(command string) (string, []string) {
-	if runtime.GOOS == "windows" {
-		return "cmd", []string{"/C", command}
-	}
-
-	return "/bin/sh", []string{"-c", command}
 }
