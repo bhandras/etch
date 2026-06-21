@@ -55,6 +55,7 @@ type cliConfig struct {
 	jsonOutput          bool
 	sessionID           string
 	provider            string
+	providerExplicit    bool
 	model               string
 	baseURL             string
 	apiKey              string

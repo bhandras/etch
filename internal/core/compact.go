@@ -420,7 +420,7 @@ func compactionCutByTokens(events []session.Event, start int,
 	accumulated := 0
 	cut := valid[0]
 	for i := len(events) - 1; i >= start; i-- {
-		if !compactMessageEvent(events[i].Type) {
+		if !session.IsMessageEvent(events[i].Type) {
 			continue
 		}
 		accumulated += eventApproxTokens(events[i])
@@ -474,7 +474,7 @@ func compactionCutByMessages(events []session.Event, start int,
 	messageIndexes := make([]int, 0, len(events))
 	for i := start; i < len(events); i++ {
 		event := events[i]
-		if compactMessageEvent(event.Type) {
+		if session.IsMessageEvent(event.Type) {
 			messageIndexes = append(messageIndexes, i)
 		}
 	}
@@ -488,14 +488,6 @@ func compactionCutByMessages(events []session.Event, start int,
 	}
 
 	return keepStartMessage, events[keepStartMessage].ID, nil
-}
-
-// compactMessageEvent reports whether an event should count toward raw
-// recency retention.
-func compactMessageEvent(eventType string) bool {
-	return eventType == session.EventUserMessage ||
-		eventType == session.EventAssistantMessage ||
-		eventType == session.EventToolMessage
 }
 
 // summarizeEvents asks the model to summarize serialized session events.
@@ -564,7 +556,7 @@ func summarizationPrompt(plan compactionPlan, instructions string) string {
 func serializeEventsForSummary(events []session.Event) string {
 	var out strings.Builder
 	for _, event := range events {
-		if !compactMessageEvent(event.Type) {
+		if !session.IsMessageEvent(event.Type) {
 			continue
 		}
 
@@ -608,7 +600,7 @@ func serializeEventsForSummary(events []session.Event) string {
 
 // compactMessageData decodes a model-visible message event.
 func compactMessageData(event session.Event) (session.MessageData, bool) {
-	if !compactMessageEvent(event.Type) {
+	if !session.IsMessageEvent(event.Type) {
 		return session.MessageData{}, false
 	}
 	var message session.MessageData

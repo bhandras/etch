@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -83,7 +84,7 @@ type grepMatch struct {
 
 // grepStats stores skip and truncation notices for rendered output.
 type grepStats struct {
-	// SkippedDirs counts internal directories skipped during traversal.
+	// SkippedDirs counts directories skipped during traversal.
 	SkippedDirs int
 
 	// SkippedBinaryFiles counts files skipped because they look binary.
@@ -129,6 +130,16 @@ func grepFiles(ctx context.Context, root string) ([]string, int, error) {
 			skippedDirs++
 
 			return filepath.SkipDir
+		}
+		if path != root && entry.IsDir() &&
+			walkDepthExceeded(root, path) {
+
+			skippedDirs++
+
+			return filepath.SkipDir
+		}
+		if walkDepthExceeded(root, path) {
+			return nil
 		}
 		if entry.Type().IsRegular() {
 			files = append(files, path)
@@ -188,7 +199,14 @@ func grepMatches(ctx context.Context, root string, files []string,
 func grepFile(path string, root string, req GrepRequest) ([]grepMatch,
 	grepFileSkip, error) {
 
-	info, err := os.Stat(path)
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, grepFileSkip{}, fmt.Errorf("open search file: %w",
+			err)
+	}
+	defer file.Close()
+
+	info, err := file.Stat()
 	if err != nil {
 		return nil, grepFileSkip{}, fmt.Errorf("stat search file: %w",
 			err)
@@ -197,7 +215,7 @@ func grepFile(path string, root string, req GrepRequest) ([]grepMatch,
 		return nil, grepFileSkip{LargeFiles: 1}, nil
 	}
 
-	content, err := os.ReadFile(path)
+	content, err := io.ReadAll(file)
 	if err != nil {
 		return nil, grepFileSkip{}, fmt.Errorf("read search file: %w",
 			err)
@@ -221,17 +239,18 @@ type grepFileSkip struct {
 // grepContent returns every literal match from one file.
 func grepContent(path string, content string, req GrepRequest) []grepMatch {
 	pattern := req.Pattern
-	haystack := content
 	if req.IgnoreCase {
 		pattern = strings.ToLower(pattern)
-		haystack = strings.ToLower(haystack)
 	}
 
 	lines := strings.Split(content, "\n")
-	searchLines := strings.Split(haystack, "\n")
-	matches := make([]grepMatch, 0)
-	for i, line := range searchLines {
-		if strings.Contains(line, pattern) {
+	var matches []grepMatch
+	for i, line := range lines {
+		haystack := line
+		if req.IgnoreCase {
+			haystack = strings.ToLower(line)
+		}
+		if strings.Contains(haystack, pattern) {
 			matches = append(matches, grepMatch{
 				Path: path,
 				Line: i + 1,
@@ -277,7 +296,7 @@ func renderGrepResults(matches []grepMatch, stats grepStats) string {
 		"files by per-file match cap",
 	)
 	appendGrepNotice(
-		&out, stats.SkippedDirs, "skipped", "internal directories",
+		&out, stats.SkippedDirs, "skipped", "directories",
 	)
 	appendGrepNotice(
 		&out, stats.SkippedBinaryFiles, "skipped", "binary files",

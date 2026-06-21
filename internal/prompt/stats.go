@@ -52,7 +52,7 @@ func BuildStats(events []session.Event, systemText string) (Stats, error) {
 	var stats Stats
 	stats.EventCount = len(events)
 	for _, event := range events {
-		if isMessageEvent(event.Type) {
+		if session.IsMessageEvent(event.Type) {
 			stats.MessageEventCount++
 		}
 	}

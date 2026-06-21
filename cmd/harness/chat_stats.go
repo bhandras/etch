@@ -83,17 +83,6 @@ func timingStatParts(timing core.TurnTiming) []string {
 			),
 		)
 	}
-	if timing.TimeToHeaders > 0 {
-		parts = append(
-			parts, "headers "+formatElapsed(timing.TimeToHeaders),
-		)
-	}
-	if timing.TimeToFirstEvent > 0 {
-		parts = append(
-			parts,
-			"first event "+formatElapsed(timing.TimeToFirstEvent),
-		)
-	}
 
 	return parts
 }

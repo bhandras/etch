@@ -116,7 +116,7 @@ func printSessionStatus(path string, stdout io.Writer) error {
 // renderEvents renders model-visible session messages as transcript lines.
 func renderEvents(events []session.Event, stdout io.Writer) error {
 	for _, event := range events {
-		if !isMessageEvent(event.Type) {
+		if !session.IsMessageEvent(event.Type) {
 			continue
 		}
 		message, err := decodeMessage(event)
@@ -129,13 +129,6 @@ func renderEvents(events []session.Event, stdout io.Writer) error {
 	}
 
 	return nil
-}
-
-// isMessageEvent reports whether an event contains user-visible message text.
-func isMessageEvent(eventType string) bool {
-	return eventType == session.EventUserMessage ||
-		eventType == session.EventAssistantMessage ||
-		eventType == session.EventToolMessage
 }
 
 // decodeMessage unmarshals a message event payload into its typed shape.

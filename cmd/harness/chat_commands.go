@@ -25,9 +25,6 @@ func runChatCommandWithOutput(composer *terminalChatInput, cfg cliConfig,
 	nextPath := sessionPath
 	write := func() {
 		padded := chatCommandOutputPadded(line)
-		if padded {
-			fmt.Fprintln(stdout)
-		}
 		keepGoing, nextPath = handleChatCommand(
 			cfg, line, sessionPath, modelClient, registry, stdout,
 			stderr, hookRunner,

@@ -66,7 +66,9 @@ Harness currently has:
 
 The compiled default provider is an offline echo model, so the CLI can run
 without network access. Project config can change that default. Use the
-OpenAI-compatible provider explicitly when talking to a real model.
+OpenAI-compatible provider explicitly when talking to a real model. Implicit
+echo mode prints a warning; explicit `--provider echo` remains quiet for tests
+and fixtures.
 
 ## Commands
 

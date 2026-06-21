@@ -121,6 +121,7 @@ func configCLIConfigDefaults(cfg harnessconfig.Config) cliConfig {
 	return cliConfig{
 		sessionDir:        configSessionDir(cfg),
 		provider:          configProvider(cfg),
+		providerExplicit:  cfg.Provider.Name != "",
 		model:             cfg.Provider.Model,
 		baseURL:           configOpenAIBaseURL(cfg),
 		apiKey:            apiKeyFromEnv(),
@@ -141,74 +142,71 @@ func configCLIConfigDefaults(cfg harnessconfig.Config) cliConfig {
 
 // configSessionDir returns the configured session directory or the CLI default.
 func configSessionDir(cfg harnessconfig.Config) string {
-	if cfg.Session.Dir != "" {
-		return cfg.Session.Dir
-	}
-
-	return defaultSessionDir
+	return configOrDefault(cfg.Session.Dir, defaultSessionDir)
 }
 
 // configProvider returns the configured provider or the offline default.
 func configProvider(cfg harnessconfig.Config) string {
-	if cfg.Provider.Name != "" {
-		return cfg.Provider.Name
-	}
-
-	return providerEcho
+	return configOrDefault(cfg.Provider.Name, providerEcho)
 }
 
 // configOpenAIBaseURL returns the configured OpenAI endpoint or the default.
 func configOpenAIBaseURL(cfg harnessconfig.Config) string {
-	if cfg.OpenAI.BaseURL != "" {
-		return cfg.OpenAI.BaseURL
-	}
-
-	return openai.DefaultBaseURL
+	return configOrDefault(cfg.OpenAI.BaseURL, openai.DefaultBaseURL)
 }
 
 // configOpenAIAPI returns the configured OpenAI API shape or the default.
 func configOpenAIAPI(cfg harnessconfig.Config) string {
-	if cfg.OpenAI.API != "" {
-		return cfg.OpenAI.API
-	}
-
-	return openai.APIChatCompletions
+	return configOrDefault(cfg.OpenAI.API, openai.APIChatCompletions)
 }
 
 // configMaxToolRounds returns the configured tool-loop limit or the default.
 func configMaxToolRounds(cfg harnessconfig.Config) int {
-	if cfg.Session.MaxToolRounds > 0 {
-		return cfg.Session.MaxToolRounds
-	}
-
-	return core.DefaultMaxToolRounds
+	return positiveConfigOrDefault(
+		cfg.Session.MaxToolRounds, core.DefaultMaxToolRounds,
+	)
 }
 
 // configKeepMessages returns the configured compaction retention or default.
 func configKeepMessages(cfg harnessconfig.Config) int {
-	if cfg.Session.KeepMessages > 0 {
-		return cfg.Session.KeepMessages
-	}
-
-	return core.DefaultCompactKeepMessages
+	return positiveConfigOrDefault(
+		cfg.Session.KeepMessages, core.DefaultCompactKeepMessages,
+	)
 }
 
 // configKeepRecentTokens returns the configured raw retention token budget.
 func configKeepRecentTokens(cfg harnessconfig.Config) int {
-	if cfg.Context.KeepRecentTokens > 0 {
-		return cfg.Context.KeepRecentTokens
-	}
-
-	return core.DefaultCompactKeepRecentTokens
+	return positiveConfigOrDefault(
+		cfg.Context.KeepRecentTokens,
+		core.DefaultCompactKeepRecentTokens,
+	)
 }
 
 // configAutoCompactThreshold returns the configured auto-compaction threshold.
 func configAutoCompactThreshold(cfg harnessconfig.Config) int {
-	if cfg.Context.AutoCompactThresholdTokens > 0 {
-		return cfg.Context.AutoCompactThresholdTokens
+	return positiveConfigOrDefault(
+		cfg.Context.AutoCompactThresholdTokens,
+		core.DefaultAutoCompactThresholdTokens,
+	)
+}
+
+// configOrDefault returns value unless it is the type zero value.
+func configOrDefault[T comparable](value T, fallback T) T {
+	var zero T
+	if value != zero {
+		return value
 	}
 
-	return core.DefaultAutoCompactThresholdTokens
+	return fallback
+}
+
+// positiveConfigOrDefault returns value unless it is non-positive.
+func positiveConfigOrDefault(value int, fallback int) int {
+	if value > 0 {
+		return value
+	}
+
+	return fallback
 }
 
 // autoCompactThreshold returns the active auto-compaction threshold or zero.

@@ -88,6 +88,14 @@ func findInDirectory(ctx context.Context, root string, query string) ([]string,
 
 			return filepath.SkipDir
 		}
+		if entry.IsDir() && walkDepthExceeded(root, path) {
+			skipped++
+
+			return filepath.SkipDir
+		}
+		if walkDepthExceeded(root, path) {
+			return nil
+		}
 
 		rendered, err := relativeDisplayPath(root, path, entry.IsDir())
 		if err != nil {
@@ -181,7 +189,7 @@ func renderFindResults(paths []string, skipped int, limit int) string {
 	}
 	if skipped > 0 {
 		out.WriteByte('\n')
-		fmt.Fprintf(&out, "(skipped %d internal directories)", skipped)
+		fmt.Fprintf(&out, "(skipped %d directories)", skipped)
 	}
 
 	return out.String()

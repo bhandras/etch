@@ -652,16 +652,17 @@ The sixth operation is `find`, a recursive path discovery tool implemented in
 pure Go. It matches case-insensitive substrings against slash-separated relative
 paths, includes files and directories, skips internal directories such as
 `.git`, `.harness`, `bin`, `node_modules`, and `vendor`, sorts output
-deterministically, and emits explicit no-match, truncation, and
-skipped-directory notices.
+deterministically, caps recursive descent depth, and emits explicit no-match,
+truncation, and skipped-directory notices.
 
 The seventh operation is `grep`, a recursive literal text search tool
 implemented in pure Go. It returns compact `path:line:text` matches, skips
-internal directories, skips binary-looking files, skips unusually large files,
-caps total and per-file matches, and supports opt-in case-insensitive matching.
-The first version intentionally avoids regexp semantics; most agent discovery
-tasks need identifiers, error strings, TODOs, config keys, and neighboring line
-numbers before they need a full search language.
+internal directories, caps recursive descent depth, skips binary-looking files,
+skips unusually large files, caps total and per-file matches, and supports
+opt-in case-insensitive matching. The first version intentionally avoids regexp
+semantics; most agent discovery tasks need identifiers, error strings, TODOs,
+config keys, and neighboring line numbers before they need a full search
+language.
 
 The builtin tool registry lives under `internal/tool`. Registered tools wrap
 `internal/tools/fs` operations as model-callable functions, and the CLI exposes

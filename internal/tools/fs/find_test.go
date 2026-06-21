@@ -58,8 +58,34 @@ func TestFindSkipsInternalDirectories(t *testing.T) {
 
 		t.Fatalf("find included internal path: %q", got)
 	}
-	if !strings.Contains(got, "(skipped 5 internal directories)") {
+	if !strings.Contains(got, "(skipped 5 directories)") {
 		t.Fatalf("find missing skipped notice: %q", got)
+	}
+}
+
+// TestFindSkipsVeryDeepDirectories verifies recursive discovery has a simple
+// depth guard against pathological repository trees.
+func TestFindSkipsVeryDeepDirectories(t *testing.T) {
+	dir := t.TempDir()
+	deep := dir
+	for i := 0; i <= defaultWalkMaxDepth; i++ {
+		deep = filepath.Join(deep, "deep")
+	}
+	mkdir(t, deep)
+	writeFile(t, filepath.Join(deep, "needle.txt"), "")
+
+	got, err := Find(context.Background(), FindRequest{
+		Path:  dir,
+		Query: "needle",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(got, "needle.txt") {
+		t.Fatalf("find included too-deep file: %q", got)
+	}
+	if !strings.Contains(got, "(skipped 1 directories)") {
+		t.Fatalf("find missing depth skip notice: %q", got)
 	}
 }
 

@@ -7,20 +7,20 @@ import (
 	"strings"
 )
 
-// workspacePath resolves a caller path into an absolute workspace path.
-func workspacePath(path string) (string, error) {
+// workspacePath resolves a caller path and the active workspace root.
+func workspacePath(path string) (string, string, error) {
 	trimmed := strings.TrimSpace(path)
 	if trimmed == "" {
-		return "", fmt.Errorf("path is required")
+		return "", "", fmt.Errorf("path is required")
 	}
 
 	cwd, err := os.Getwd()
 	if err != nil {
-		return "", fmt.Errorf("get working directory: %w", err)
+		return "", "", fmt.Errorf("get working directory: %w", err)
 	}
 	cwd, err = filepath.Abs(cwd)
 	if err != nil {
-		return "", fmt.Errorf("resolve working directory: %w", err)
+		return "", "", fmt.Errorf("resolve working directory: %w", err)
 	}
 
 	candidate := filepath.Clean(trimmed)
@@ -29,25 +29,21 @@ func workspacePath(path string) (string, error) {
 	}
 	candidate, err = filepath.Abs(candidate)
 	if err != nil {
-		return "", fmt.Errorf("resolve path: %w", err)
+		return "", "", fmt.Errorf("resolve path: %w", err)
 	}
 
 	if err := requireUnderRoot(cwd, candidate); err != nil {
-		return "", err
+		return "", "", err
 	}
 
-	return candidate, nil
+	return candidate, cwd, nil
 }
 
 // readPath resolves a caller path into an absolute path safe for read tools.
 func readPath(path string) (string, error) {
-	candidate, err := workspacePath(path)
+	candidate, cwd, err := workspacePath(path)
 	if err != nil {
 		return "", err
-	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return "", fmt.Errorf("get working directory: %w", err)
 	}
 	if err := rejectInternalToolPath(cwd, candidate, "read"); err != nil {
 		return "", err
@@ -59,13 +55,9 @@ func readPath(path string) (string, error) {
 // mutationPath resolves a caller path into an absolute path that may be
 // modified by filesystem mutation tools.
 func mutationPath(path string) (string, error) {
-	candidate, err := workspacePath(path)
+	candidate, cwd, err := workspacePath(path)
 	if err != nil {
 		return "", err
-	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return "", fmt.Errorf("get working directory: %w", err)
 	}
 	if err := rejectInternalMutationPath(cwd, candidate); err != nil {
 		return "", err

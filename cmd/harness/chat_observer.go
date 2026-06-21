@@ -75,7 +75,7 @@ func (o *chatObserver) EventAppended(event session.Event) {
 	if event.Type == session.EventUserMessage {
 		return
 	}
-	if !isMessageEvent(event.Type) {
+	if !session.IsMessageEvent(event.Type) {
 		return
 	}
 

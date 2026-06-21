@@ -183,12 +183,7 @@ func (c *Client) newRequest(ctx context.Context, req model.Request) (
 	if err != nil {
 		return nil, fmt.Errorf("create openai request: %w", err)
 	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Accept", "text/event-stream")
 	c.addCommonHeaders(httpReq)
-	if c.APIKey != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+c.APIKey)
-	}
 
 	return httpReq, nil
 }
@@ -227,12 +222,7 @@ func (c *Client) newResponsesRequest(ctx context.Context, req model.Request) (
 		return nil, fmt.Errorf("create openai response request: %w",
 			err)
 	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Accept", "text/event-stream")
 	c.addCommonHeaders(httpReq)
-	if c.APIKey != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+c.APIKey)
-	}
 
 	return httpReq, nil
 }
@@ -274,8 +264,13 @@ func (c *Client) endpoint(path string) string {
 
 // addCommonHeaders applies optional headers shared by OpenAI request shapes.
 func (c *Client) addCommonHeaders(req *http.Request) {
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
 	if c.UserAgent != "" {
 		req.Header.Set("User-Agent", c.UserAgent)
+	}
+	if c.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.APIKey)
 	}
 }
 

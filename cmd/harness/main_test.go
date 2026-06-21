@@ -65,6 +65,36 @@ func TestRunUsesProjectConfigDefaults(t *testing.T) {
 	}
 }
 
+// TestRunWarnsForImplicitEchoProvider verifies the offline default is visible
+// when no provider flag or config selects a real model.
+func TestRunWarnsForImplicitEchoProvider(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"-p", "hello"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("run failed: code=%d stdout=%q stderr=%q", code,
+			stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "offline echo provider") {
+		t.Fatalf("missing echo warning: %q", stderr.String())
+	}
+}
+
+// TestRunSkipsWarningForExplicitEchoProvider verifies intentional fixture use
+// remains quiet.
+func TestRunSkipsWarningForExplicitEchoProvider(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run(
+		[]string{"--provider", "echo", "-p", "hello"}, &stdout, &stderr,
+	)
+	if code != 0 {
+		t.Fatalf("run failed: code=%d stdout=%q stderr=%q", code,
+			stdout.String(), stderr.String())
+	}
+	if strings.Contains(stderr.String(), "offline echo provider") {
+		t.Fatalf("unexpected echo warning: %q", stderr.String())
+	}
+}
+
 // TestTopLevelHelpExitsSuccessfully verifies no-argument and help invocations
 // print command discovery text without reporting an error.
 func TestTopLevelHelpExitsSuccessfully(t *testing.T) {

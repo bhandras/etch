@@ -267,4 +267,12 @@ func TestTitleFromPromptNormalizesWhitespace(t *testing.T) {
 	if long[len(long)-3:] != "..." {
 		t.Fatalf("expected ellipsis suffix, got %q", long)
 	}
+
+	unicode := TitleFromPrompt(strings.Repeat("é", titleLimit))
+	if !strings.HasSuffix(unicode, "...") {
+		t.Fatalf("expected unicode title ellipsis, got %q", unicode)
+	}
+	if len(unicode) > titleLimit {
+		t.Fatalf("unicode title exceeded byte limit: %d", len(unicode))
+	}
 }

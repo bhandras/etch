@@ -14,6 +14,8 @@ import (
 
 // runPrompt executes the default non-interactive prompt path.
 func runPrompt(cfg cliConfig, stdout io.Writer, stderr io.Writer) int {
+	warnImplicitEchoProvider(cfg, stderr)
+
 	cwd, err := os.Getwd()
 	if err != nil {
 		fmt.Fprintln(stderr, "error: get working directory:", err)
@@ -78,6 +80,17 @@ func runPrompt(cfg cliConfig, stdout io.Writer, stderr io.Writer) int {
 	renderPromptAssistant(stdout, result.AssistantText)
 
 	return 0
+}
+
+// warnImplicitEchoProvider tells users when the offline fixture is selected by
+// default.
+func warnImplicitEchoProvider(cfg cliConfig, stderr io.Writer) {
+	if cfg.provider == providerEcho && !cfg.providerExplicit {
+		fmt.Fprintln(
+			stderr, "warning: running offline echo provider; "+
+				"set --provider openai for a real model",
+		)
+	}
 }
 
 // renderPromptAssistant prints the non-JSON assistant response for prompt mode.

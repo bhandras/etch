@@ -94,7 +94,7 @@ func indexAfterSummary(events []session.Event, firstKeptID string) int {
 
 // messageFromEvent converts one durable message event into a model message.
 func messageFromEvent(event session.Event) (model.Message, bool, error) {
-	if !isMessageEvent(event.Type) {
+	if !session.IsMessageEvent(event.Type) {
 		return model.Message{}, false, nil
 	}
 
@@ -111,13 +111,6 @@ func messageFromEvent(event session.Event) (model.Message, bool, error) {
 		ToolCallID: data.ToolCallID,
 		Name:       data.Name,
 	}, true, nil
-}
-
-// isMessageEvent reports whether an event carries model-visible message data.
-func isMessageEvent(eventType string) bool {
-	return eventType == session.EventUserMessage ||
-		eventType == session.EventAssistantMessage ||
-		eventType == session.EventToolMessage
 }
 
 // messageText joins text content parts from a durable message.

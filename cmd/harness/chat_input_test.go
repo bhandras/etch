@@ -163,9 +163,9 @@ func TestTerminalChatInputPadsStatusAbovePrompt(t *testing.T) {
 	}
 }
 
-// TestTerminalChatInputSubmitPadsOnce verifies committed prompt islands leave
-// exactly one newline before subsequent transcript output.
-func TestTerminalChatInputSubmitPadsOnce(t *testing.T) {
+// TestTerminalChatInputSubmitPadsIsland verifies committed prompt islands leave
+// one blank transcript row after the shaded island.
+func TestTerminalChatInputSubmitPadsIsland(t *testing.T) {
 	t.Setenv("COLUMNS", "64")
 	var stdout bytes.Buffer
 	input := &terminalChatInput{
@@ -179,12 +179,42 @@ func TestTerminalChatInputSubmitPadsOnce(t *testing.T) {
 	stdout.Reset()
 	input.finishLocked()
 
-	if strings.HasSuffix(stdout.String(), "\n\n") {
-		t.Fatalf("submit left an extra blank line: %q", stdout.String())
+	got := stdout.String()
+	if strings.HasPrefix(got, "\n\n") {
+		t.Fatalf("submit owned an extra leading gap: %q", got)
 	}
-	if !strings.HasSuffix(stdout.String(), "\n") {
-		t.Fatalf("submit did not leave one trailing newline: %q",
-			stdout.String())
+	if !strings.HasSuffix(got, ansiReset+"\n\n") {
+		t.Fatalf("submit did not leave a trailing gap: %q", got)
+	}
+}
+
+// TestTerminalChatInputStacksSubmittedIslands verifies steering prompts do not
+// accumulate extra blank rows when submitted back-to-back.
+func TestTerminalChatInputStacksSubmittedIslands(t *testing.T) {
+	t.Setenv("COLUMNS", "64")
+	var stdout bytes.Buffer
+	input := &terminalChatInput{
+		stdout: &stdout,
+		input:  []rune("first"),
+	}
+
+	if err := input.renderLocked(); err != nil {
+		t.Fatalf("first render failed: %v", err)
+	}
+	stdout.Reset()
+	input.finishLocked()
+	input.input = []rune("second")
+	if err := input.renderLocked(); err != nil {
+		t.Fatalf("second render failed: %v", err)
+	}
+	input.finishLocked()
+
+	got := stdout.String()
+	if strings.Contains(got, ansiReset+"\n\n\n"+promptIslandStyle()) {
+		t.Fatalf("submitted islands had a double gap: %q", got)
+	}
+	if !strings.Contains(got, ansiReset+"\n\n\r"+promptIslandStyle()) {
+		t.Fatalf("submitted islands missing single gap: %q", got)
 	}
 }
 
@@ -280,11 +310,8 @@ func TestTerminalChatInputFinishCommitsPromptOnly(t *testing.T) {
 	if input.rendered {
 		t.Fatalf("composer stayed rendered after submit")
 	}
-	if strings.HasSuffix(got, ansiReset+"\n\n") {
-		t.Fatalf("submitted prompt left an extra spacer row: %q", got)
-	}
-	if !strings.HasSuffix(got, ansiReset+"\n") {
-		t.Fatalf("submitted prompt did not end cleanly: %q", got)
+	if !strings.HasSuffix(got, ansiReset+"\n\n") {
+		t.Fatalf("submitted prompt did not leave a spacer row: %q", got)
 	}
 }
 

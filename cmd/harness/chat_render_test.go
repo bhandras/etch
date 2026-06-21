@@ -606,8 +606,7 @@ func TestFormatTurnStatsSummarizesToolCounts(t *testing.T) {
 			TimeToFirstEvent: 2 * time.Second,
 		},
 	})
-	want = " · 2 requests · 1.5KB up · 768B down · headers 1s" +
-		" · first event 2s"
+	want = " · 2 requests · 1.5KB up · 768B down"
 	if got != want {
 		t.Fatalf("unexpected transport stats:\nwant %q\ngot  %q", want,
 			got)

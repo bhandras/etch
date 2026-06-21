@@ -48,6 +48,24 @@ func TestGrepCanIgnoreCase(t *testing.T) {
 	}
 }
 
+// TestGrepDefaultsToCaseSensitive verifies lowercase queries do not match
+// uppercase text unless IgnoreCase is requested.
+func TestGrepDefaultsToCaseSensitive(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "note.txt"), "Needle\n")
+
+	got, err := Grep(context.Background(), GrepRequest{
+		Path:    dir,
+		Pattern: "needle",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != NoGrepMatchesText {
+		t.Fatalf("case-sensitive grep matched unexpectedly: %q", got)
+	}
+}
+
 // TestGrepSkipsInternalAndBinaryFiles verifies that search avoids internal
 // directories and binary-looking files.
 func TestGrepSkipsInternalAndBinaryFiles(t *testing.T) {
@@ -78,11 +96,37 @@ func TestGrepSkipsInternalAndBinaryFiles(t *testing.T) {
 	if !strings.Contains(got, NoGrepMatchesText) {
 		t.Fatalf("grep missing no-match marker: %q", got)
 	}
-	if !strings.Contains(got, "(skipped 2 internal directories)") {
+	if !strings.Contains(got, "(skipped 2 directories)") {
 		t.Fatalf("grep missing internal skip notice: %q", got)
 	}
 	if !strings.Contains(got, "(skipped 1 binary files)") {
 		t.Fatalf("grep missing binary skip notice: %q", got)
+	}
+}
+
+// TestGrepSkipsVeryDeepDirectories verifies recursive search has a simple
+// depth guard against pathological repository trees.
+func TestGrepSkipsVeryDeepDirectories(t *testing.T) {
+	dir := t.TempDir()
+	deep := dir
+	for i := 0; i <= defaultWalkMaxDepth; i++ {
+		deep = filepath.Join(deep, "deep")
+	}
+	mkdir(t, deep)
+	writeFile(t, filepath.Join(deep, "note.txt"), "needle\n")
+
+	got, err := Grep(context.Background(), GrepRequest{
+		Path:    dir,
+		Pattern: "needle",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(got, "note.txt") {
+		t.Fatalf("grep included too-deep file: %q", got)
+	}
+	if !strings.Contains(got, "(skipped 1 directories)") {
+		t.Fatalf("grep missing depth skip notice: %q", got)
 	}
 }
 

@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"harness/internal/textutil"
 )
 
 const (
@@ -65,9 +67,12 @@ const (
 	// dirPermissions keeps session directories private by default.
 	dirPermissions = 0o700
 
-	// titleLimit is the maximum number of runes kept in a session index
+	// titleLimit is the maximum number of bytes kept in a session index
 	// title.
 	titleLimit = 60
+
+	// titleEllipsis marks titles shortened for session index display.
+	titleEllipsis = "..."
 )
 
 // Event is one durable JSONL record in a session log.
@@ -565,6 +570,13 @@ func ToolMessage(callID string, name string, text string) MessageData {
 	}
 }
 
+// IsMessageEvent reports whether an event type stores message payload data.
+func IsMessageEvent(eventType string) bool {
+	return eventType == EventUserMessage ||
+		eventType == EventAssistantMessage ||
+		eventType == EventToolMessage
+}
+
 // TitleFromPrompt creates the short title used in the session index.
 func TitleFromPrompt(prompt string) string {
 	title := strings.Join(strings.Fields(prompt), " ")
@@ -572,12 +584,14 @@ func TitleFromPrompt(prompt string) string {
 		return "untitled"
 	}
 
-	runes := []rune(title)
-	if len(runes) <= titleLimit {
+	truncated, ok := textutil.TruncateUTF8Bytes(
+		title, titleLimit-len(titleEllipsis),
+	)
+	if !ok {
 		return title
 	}
 
-	return string(runes[:titleLimit-3]) + "..."
+	return truncated + titleEllipsis
 }
 
 // NewID returns a random hex identifier suitable for session and event IDs.
@@ -612,6 +626,9 @@ func appendIndexEntry(dir string, entry IndexEntry) error {
 	}
 	if _, err := file.Write(append(encoded, '\n')); err != nil {
 		return fmt.Errorf("write session index entry: %w", err)
+	}
+	if err := file.Sync(); err != nil {
+		return fmt.Errorf("sync session index: %w", err)
 	}
 
 	return nil

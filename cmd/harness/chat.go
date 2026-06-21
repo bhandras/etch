@@ -13,6 +13,7 @@ func runChat(cfg cliConfig, stdin io.Reader, stdout io.Writer,
 	stderr io.Writer) int {
 
 	defer showTerminalCursor(stdout)
+	warnImplicitEchoProvider(cfg, stderr)
 
 	runtime, err := openChatRuntime(cfg)
 	if err != nil {

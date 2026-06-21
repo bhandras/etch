@@ -669,7 +669,7 @@ func (i *terminalChatInput) finishLocked() {
 	i.clearLocked(width)
 	fmt.Fprint(
 		i.stdout, promptIslandRows(i.stdout, inputRows), ansiReset,
-		"\n",
+		"\n\n",
 	)
 	i.clearRenderStateLocked()
 	i.input = i.input[:0]

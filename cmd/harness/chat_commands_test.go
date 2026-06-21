@@ -155,8 +155,8 @@ func TestRunChatCommandWithOutputRedrawsPrompt(t *testing.T) {
 	if helpAt < 0 {
 		t.Fatalf("help output missing: %q", got)
 	}
-	if !strings.Contains(got, "\n/exit /quit") {
-		t.Fatalf("slash output missing leading padding: %q", got)
+	if strings.HasPrefix(got, "\n\n") {
+		t.Fatalf("slash output had extra leading padding: %q", got)
 	}
 	if !strings.Contains(got, "/tools /help\n\n") {
 		t.Fatalf("slash output missing trailing padding: %q", got)

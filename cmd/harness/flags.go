@@ -420,6 +420,8 @@ func registerProviderFlags(fs *flag.FlagSet,
 func mergeExplicitProviderFlags(fs *flag.FlagSet, cfg *cliConfig,
 	values providerFlagValues) {
 
+	cfg.providerExplicit = cfg.providerExplicit ||
+		flagWasSet(fs, "provider")
 	cfg.baseURLExplicit = cfg.baseURLExplicit || flagWasSet(fs, "base-url")
 	cfg.openaiAPIExplicit = cfg.openaiAPIExplicit ||
 		flagWasSet(fs, "openai-api")
