@@ -34,6 +34,11 @@ const (
 	// EventUsage reports provider-counted token usage for one model call.
 	EventUsage = "usage"
 
+	// EventResponseInfo reports provider response identity for one model
+	// call. It is observational state for diagnostics and future
+	// continuation support.
+	EventResponseInfo = "response_info"
+
 	// EventMetrics reports transport-level measurements for one model call.
 	EventMetrics = "metrics"
 
@@ -90,11 +95,26 @@ type Event struct {
 	// Usage stores token counters for EventUsage events.
 	Usage Usage
 
+	// ResponseInfo stores provider identity for EventResponseInfo events.
+	ResponseInfo ResponseInfo
+
 	// Metrics stores transport counters for EventMetrics events.
 	Metrics Metrics
 
 	// Err stores a provider error message for EventError events.
 	Err string
+}
+
+// ResponseInfo stores provider response identity for continuation-aware APIs.
+type ResponseInfo struct {
+	// ProviderResponseID is the provider's stable response identifier when
+	// it exposes one.
+	ProviderResponseID string
+}
+
+// Empty reports whether response info contains no provider identity.
+func (r ResponseInfo) Empty() bool {
+	return r.ProviderResponseID == ""
 }
 
 // Usage stores provider-reported token counters for one model call.

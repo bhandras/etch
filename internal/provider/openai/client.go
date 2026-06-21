@@ -498,6 +498,9 @@ type responseStreamDecoder struct {
 
 	// activeItemRole is the role for active message items when present.
 	activeItemRole string
+
+	// responseID is the last provider response identifier emitted.
+	responseID string
 }
 
 // decode converts one Responses API stream event.
@@ -512,6 +515,9 @@ func (d *responseStreamDecoder) decode(payload []byte) []model.Event {
 	}
 
 	switch event.Type {
+	case "response.created":
+		return d.responseInfoEvents(event.Response.ID)
+
 	case "response.output_item.added":
 		d.activeItemType = event.Item.Type
 		d.activeItemRole = event.Item.Role
@@ -556,7 +562,7 @@ func (d *responseStreamDecoder) decode(payload []byte) []model.Event {
 		}}
 
 	case "response.completed":
-		var events []model.Event
+		events := d.responseInfoEvents(event.Response.ID)
 		if usage := event.Response.Usage.neutral(); !usage.Empty() {
 			events = append(events, model.Event{
 				Type:  model.EventUsage,
@@ -574,6 +580,21 @@ func (d *responseStreamDecoder) decode(payload []byte) []model.Event {
 	default:
 		return nil
 	}
+}
+
+// responseInfoEvents returns a response identity event when it has changed.
+func (d *responseStreamDecoder) responseInfoEvents(id string) []model.Event {
+	if id == "" || id == d.responseID {
+		return nil
+	}
+	d.responseID = id
+
+	return []model.Event{{
+		Type: model.EventResponseInfo,
+		ResponseInfo: model.ResponseInfo{
+			ProviderResponseID: id,
+		},
+	}}
 }
 
 // clearActiveItem forgets the Responses output item receiving deltas.
@@ -1030,6 +1051,9 @@ type responseOutputItem struct {
 
 // responseEventResponse stores failed or incomplete response state.
 type responseEventResponse struct {
+	// ID is the provider response identifier.
+	ID string `json:"id"`
+
 	// Error stores provider error details when present.
 	Error responseEventError `json:"error"`
 

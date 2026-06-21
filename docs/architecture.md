@@ -143,9 +143,10 @@ Events should include stable IDs and parent IDs so a session can branch:
 {"type":"message.tool","id":"01H...","parentId":"01H...","time":"...","data":{"toolCallId":"call_1","content":[{"type":"text","text":"..."}]}}
 ```
 
-The log should also store compaction events, model changes, permission
-decisions, plugin diagnostics, and context changes. If a fact shaped the model's
-next turn, it should be recoverable from the log.
+The log should also store compaction events, model usage, model response
+identity, model changes, permission decisions, plugin diagnostics, and context
+changes. If a fact shaped the model's next turn, it should be recoverable from
+the log.
 
 We should not start with a database. JSONL is easy to diff, repair, export,
 sync, and replay. A server or index can be built later as a projection over the
@@ -182,6 +183,7 @@ text start/delta/end
 reasoning start/delta/end
 tool-call start/delta/end
 usage
+response-info
 metrics
 error
 done
@@ -486,6 +488,13 @@ actual input, cached input, output, reasoning output, and total tokens across
 the session. These actual counters complement `/context` estimates: usage says
 what a completed provider call consumed, while context stats estimate what the
 next prompt projection contains.
+
+Model clients should also emit provider response identity when available. The
+core stores those identifiers as `model.response` JSONL events chained after the
+assistant message and any usage event for the same model pass. This is
+observational state for now: it makes sessions auditable and gives future
+continuation transports a durable provider response handle without changing
+current HTTP/SSE request behavior.
 
 ## OpenAI And Codex Auth
 

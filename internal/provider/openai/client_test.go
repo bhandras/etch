@@ -273,6 +273,11 @@ func TestClientStreamsResponsesAPI(t *testing.T) {
 			w.Header().Set("Content-Type", "text/event-stream")
 			fmt.Fprint(
 				w, "data: "+
+					"{\"type\":\"response.created\",\"respons"+
+					"e\":{\"id\":\"resp_123\"}}\n\n",
+			)
+			fmt.Fprint(
+				w, "data: "+
 					"{\"type\":\"response.output_item.added"+
 					"\",\"item\":{\"type\":\"reasoning\",\"id\":\""+
 					"rs_1\"}}\n\n",
@@ -305,11 +310,12 @@ func TestClientStreamsResponsesAPI(t *testing.T) {
 			fmt.Fprint(
 				w, "data: "+
 					"{\"type\":\"response.completed\",\"respo"+
-					"nse\":{\"usage\":{\"input_tokens\":20,\"o"+
-					"utput_tokens\":5,\"total_tokens\":25,\""+
-					"input_tokens_details\":{\"cached_toke"+
-					"ns\":12},\"output_tokens_details\":{\"r"+
-					"easoning_tokens\":2}}}}\n\n",
+					"nse\":{\"id\":\"resp_123\",\"usage\":{\"inp"+
+					"ut_tokens\":20,\"output_tokens\":5,\"to"+
+					"tal_tokens\":25,\"input_tokens_detail"+
+					"s\":{\"cached_tokens\":12},\"output_tok"+
+					"ens_details\":{\"reasoning_tokens\":2}"+
+					"}}}\n\n",
 			)
 		}),
 	)
@@ -362,40 +368,45 @@ func TestClientStreamsResponsesAPI(t *testing.T) {
 		t.Fatalf("unexpected reasoning config: %#v",
 			gotRequest.Reasoning)
 	}
-	if len(got) != 6 {
-		t.Fatalf("expected six events, got %#v", got)
+	if len(got) != 7 {
+		t.Fatalf("expected seven events, got %#v", got)
 	}
-	if got[0].Type != model.EventReasoningDelta ||
-		got[0].Text != "checking" {
+	if got[0].Type != model.EventResponseInfo ||
+		got[0].ResponseInfo.ProviderResponseID != "resp_123" {
 
-		t.Fatalf("unexpected reasoning event: %#v", got[0])
+		t.Fatalf("unexpected response info event: %#v", got[0])
 	}
-	if got[1].Type != model.EventTextDelta || got[1].Text != "hi" {
-		t.Fatalf("unexpected text event: %#v", got[1])
-	}
-	if got[2].Type != model.EventToolCall ||
-		got[2].ToolCall.ID != "call_1" ||
-		got[2].ToolCall.Name != "ls" {
+	if got[1].Type != model.EventReasoningDelta ||
+		got[1].Text != "checking" {
 
-		t.Fatalf("unexpected tool call: %#v", got[2])
+		t.Fatalf("unexpected reasoning event: %#v", got[1])
 	}
-	if got[3].Type != model.EventUsage ||
-		got[3].Usage.InputTokens != 20 ||
-		got[3].Usage.CachedInputTokens != 12 ||
-		got[3].Usage.OutputTokens != 5 ||
-		got[3].Usage.ReasoningOutputTokens != 2 ||
-		got[3].Usage.TotalTokens != 25 {
+	if got[2].Type != model.EventTextDelta || got[2].Text != "hi" {
+		t.Fatalf("unexpected text event: %#v", got[2])
+	}
+	if got[3].Type != model.EventToolCall ||
+		got[3].ToolCall.ID != "call_1" ||
+		got[3].ToolCall.Name != "ls" {
 
-		t.Fatalf("unexpected usage event: %#v", got[3])
+		t.Fatalf("unexpected tool call: %#v", got[3])
 	}
-	if got[4].Type != model.EventMetrics ||
-		got[4].Metrics.RequestBytes == 0 ||
-		got[4].Metrics.ResponseBytes == 0 {
+	if got[4].Type != model.EventUsage ||
+		got[4].Usage.InputTokens != 20 ||
+		got[4].Usage.CachedInputTokens != 12 ||
+		got[4].Usage.OutputTokens != 5 ||
+		got[4].Usage.ReasoningOutputTokens != 2 ||
+		got[4].Usage.TotalTokens != 25 {
 
-		t.Fatalf("unexpected metrics event: %#v", got[4])
+		t.Fatalf("unexpected usage event: %#v", got[4])
 	}
-	if got[5].Type != model.EventDone {
-		t.Fatalf("unexpected done event: %#v", got[5])
+	if got[5].Type != model.EventMetrics ||
+		got[5].Metrics.RequestBytes == 0 ||
+		got[5].Metrics.ResponseBytes == 0 {
+
+		t.Fatalf("unexpected metrics event: %#v", got[5])
+	}
+	if got[6].Type != model.EventDone {
+		t.Fatalf("unexpected done event: %#v", got[6])
 	}
 }
 

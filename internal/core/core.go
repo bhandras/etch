@@ -313,12 +313,21 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 				return nil, err
 			}
 			notifyEvent(req.Observer, assistant)
+			metadataParentID := assistant.ID
 			if usageEvent, err := appendModelUsage(
-				store, assistant.ID, response.Usage,
+				store, metadataParentID, response.Usage,
 			); err != nil {
 				return nil, err
 			} else if usageEvent != nil {
 				notifyEvent(req.Observer, usageEvent)
+				metadataParentID = usageEvent.ID
+			}
+			if responseEvent, err := appendModelResponse(
+				store, metadataParentID, response.ResponseInfo,
+			); err != nil {
+				return nil, err
+			} else if responseEvent != nil {
+				notifyEvent(req.Observer, responseEvent)
 			}
 			text = response.Text
 			finalReceived = true
@@ -349,14 +358,25 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 			return nil, err
 		}
 		notifyEvent(req.Observer, assistant)
+		metadataParentID := assistant.ID
 		usageEvent, err := appendModelUsage(
-			store, assistant.ID, response.Usage,
+			store, metadataParentID, response.Usage,
 		)
 		if err != nil {
 			return nil, err
 		}
 		if usageEvent != nil {
 			notifyEvent(req.Observer, usageEvent)
+			metadataParentID = usageEvent.ID
+		}
+		responseEvent, err := appendModelResponse(
+			store, metadataParentID, response.ResponseInfo,
+		)
+		if err != nil {
+			return nil, err
+		}
+		if responseEvent != nil {
+			notifyEvent(req.Observer, responseEvent)
 		}
 		messages = append(messages, model.Message{
 			Role:      model.RoleAssistant,
@@ -367,6 +387,9 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 		parentID = assistant.ID
 		if usageEvent != nil {
 			parentID = usageEvent.ID
+		}
+		if responseEvent != nil {
+			parentID = responseEvent.ID
 		}
 		for _, call := range toolCalls {
 			toolCallCount++
@@ -813,6 +836,9 @@ type modelResponse struct {
 	// Usage stores provider-reported token counters for this model pass.
 	Usage model.Usage
 
+	// ResponseInfo stores provider response identity for this model pass.
+	ResponseInfo model.ResponseInfo
+
 	// Metrics stores provider-reported transport counters for this pass.
 	Metrics model.Metrics
 }
@@ -849,6 +875,7 @@ func collectStream(ctx context.Context, stream <-chan model.Event,
 	var reasoning strings.Builder
 	var calls []model.ToolCall
 	var usage model.Usage
+	var responseInfo model.ResponseInfo
 	var metrics model.Metrics
 	for {
 		select {
@@ -858,11 +885,12 @@ func collectStream(ctx context.Context, stream <-chan model.Event,
 		case event, ok := <-stream:
 			if !ok {
 				return modelResponse{
-					Text:      text.String(),
-					Reasoning: reasoning.String(),
-					ToolCalls: calls,
-					Usage:     usage,
-					Metrics:   metrics,
+					Text:         text.String(),
+					Reasoning:    reasoning.String(),
+					ToolCalls:    calls,
+					Usage:        usage,
+					ResponseInfo: responseInfo,
+					Metrics:      metrics,
 				}, nil
 			}
 			switch event.Type {
@@ -880,16 +908,20 @@ func collectStream(ctx context.Context, stream <-chan model.Event,
 			case model.EventUsage:
 				usage = usage.Add(event.Usage)
 
+			case model.EventResponseInfo:
+				responseInfo = event.ResponseInfo
+
 			case model.EventMetrics:
 				metrics = metrics.Add(event.Metrics)
 
 			case model.EventDone:
 				return modelResponse{
-					Text:      text.String(),
-					Reasoning: reasoning.String(),
-					ToolCalls: calls,
-					Usage:     usage,
-					Metrics:   metrics,
+					Text:         text.String(),
+					Reasoning:    reasoning.String(),
+					ToolCalls:    calls,
+					Usage:        usage,
+					ResponseInfo: responseInfo,
+					Metrics:      metrics,
 				}, nil
 
 			case model.EventError:
@@ -922,6 +954,25 @@ func appendModelUsage(store *session.Store, parentID string,
 		})
 	if err != nil {
 		return nil, fmt.Errorf("append model usage: %w", err)
+	}
+
+	return event, nil
+}
+
+// appendModelResponse persists provider response identity when available.
+func appendModelResponse(store *session.Store, parentID string,
+	response model.ResponseInfo) (*session.Event, error) {
+
+	if response.Empty() {
+		return nil, nil
+	}
+
+	event, err := store.Append(session.EventModelResponse, parentID,
+		session.ResponseData{
+			ProviderResponseID: response.ProviderResponseID,
+		})
+	if err != nil {
+		return nil, fmt.Errorf("append model response: %w", err)
 	}
 
 	return event, nil

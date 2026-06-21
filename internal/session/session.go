@@ -38,6 +38,10 @@ const (
 	// call.
 	EventModelUsage = "model.usage"
 
+	// EventModelResponse records provider response identity for one model
+	// call.
+	EventModelResponse = "model.response"
+
 	// RoleUser identifies user messages in message event payloads.
 	RoleUser = "user"
 
@@ -175,6 +179,13 @@ type UsageData struct {
 
 	// TotalTokens is the provider-reported total token count.
 	TotalTokens int `json:"totalTokens"`
+}
+
+// ResponseData is provider-reported response identity for one model call.
+type ResponseData struct {
+	// ProviderResponseID is the provider's stable response identifier when
+	// it exposes one.
+	ProviderResponseID string `json:"providerResponseId"`
 }
 
 // Add returns the element-wise sum of two usage counters.

@@ -144,6 +144,9 @@ func TestRunTurnPersistsModelUsage(t *testing.T) {
 				ReasoningOutputTokens: 3,
 				TotalTokens:           112,
 			}},
+			{Type: model.EventResponseInfo, ResponseInfo: model.ResponseInfo{
+				ProviderResponseID: "resp_123",
+			}},
 			{
 				Type: model.EventDone,
 			},
@@ -164,8 +167,8 @@ func TestRunTurnPersistsModelUsage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(events) != 4 {
-		t.Fatalf("expected four events, got %#v", events)
+	if len(events) != 5 {
+		t.Fatalf("expected five events, got %#v", events)
 	}
 	if events[3].Type != session.EventModelUsage {
 		t.Fatalf("expected usage event, got %q", events[3].Type)
@@ -179,6 +182,19 @@ func TestRunTurnPersistsModelUsage(t *testing.T) {
 		usage.TotalTokens != 112 {
 
 		t.Fatalf("unexpected usage: %#v", usage)
+	}
+	if events[4].Type != session.EventModelResponse {
+		t.Fatalf("expected response event, got %q", events[4].Type)
+	}
+	if events[4].ParentID != events[3].ID {
+		t.Fatalf("response event parent mismatch: %#v", events)
+	}
+	var response session.ResponseData
+	if err := json.Unmarshal(events[4].Data, &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.ProviderResponseID != "resp_123" {
+		t.Fatalf("unexpected response identity: %#v", response)
 	}
 	if len(client.requests) != 1 {
 		t.Fatalf("expected one model request, got %#v", client.requests)
