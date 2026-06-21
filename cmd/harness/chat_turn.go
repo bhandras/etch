@@ -11,6 +11,7 @@ import (
 	"harness/internal/core"
 	"harness/internal/hooks"
 	"harness/internal/model"
+	"harness/internal/provider/openai"
 	"harness/internal/tool"
 )
 
@@ -65,8 +66,9 @@ func runChatTurnWithSteering(cfg cliConfig, line string, sessionPath string,
 	stdout io.Writer) (*core.TurnResult, error) {
 
 	observer := &chatObserver{
-		renderer: newLiveChatRenderer(stdout, true),
-		chrome:   chrome,
+		renderer:               newLiveChatRenderer(stdout, true),
+		chrome:                 chrome,
+		dynamicReasoningStatus: chatDynamicReasoningStatus(cfg),
 	}
 	observer.renderer.composer = composer
 	observer.renderer.startStatus("Working")
@@ -142,6 +144,15 @@ func runChatTurnWithSteering(cfg cliConfig, line string, sessionPath string,
 			}
 		}
 	}
+}
+
+// chatDynamicReasoningStatus reports whether reasoning summaries are reliable
+// enough to drive transient terminal status labels.
+func chatDynamicReasoningStatus(cfg cliConfig) bool {
+	return cfg.provider == openai.ProviderName &&
+		cfg.openaiAPI == openai.APIResponses &&
+		cfg.reasoningSummary != "" &&
+		(!cfg.baseURLExplicit || cfg.baseURL == openai.DefaultBaseURL)
 }
 
 // drainReadyBusyChatInput classifies submitted input already waiting locally.

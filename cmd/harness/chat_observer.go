@@ -31,8 +31,12 @@ type chatObserver struct {
 	// reasoningStatus stores streamed reasoning text for status extraction.
 	reasoningStatus strings.Builder
 
-	// dynamicStatus reports whether statusText came from model reasoning.
-	dynamicStatus bool
+	// dynamicReasoningStatus reports whether model summaries may label
+	// status.
+	dynamicReasoningStatus bool
+
+	// modelStatus reports whether statusText came from model reasoning.
+	modelStatus bool
 
 	// usage accumulates provider token counters reported during this turn.
 	usage model.Usage
@@ -134,23 +138,28 @@ func (o *chatObserver) ModelTextDelta(text string) {
 func (o *chatObserver) ModelReasoningDelta(text string) {
 	o.streamedReasoning = true
 	o.reasoningStatus.WriteString(text)
-	if status := reasoningStatusText(
-		o.reasoningStatus.String(),
-	); status != "" {
+	if o.dynamicReasoningStatus {
+		status := reasoningStatusText(o.reasoningStatus.String())
+		if status != "" {
+			o.modelStatus = true
+			o.renderer.updateStatus(status)
 
-		o.dynamicStatus = true
-		o.renderer.updateStatus(status)
-
-		return
+			return
+		}
 	}
 	o.updateCannedStatus("Thinking")
 }
 
 // ReasoningCompleted renders one model-provided thinking summary block.
 func (o *chatObserver) ReasoningCompleted(text string) {
-	if status := reasoningStatusText(text); status != "" {
-		o.dynamicStatus = true
-		o.renderer.updateStatus(status)
+	if o.dynamicReasoningStatus {
+		status := reasoningStatusText(text)
+		if status != "" {
+			o.modelStatus = true
+			o.renderer.updateStatus(status)
+		} else if o.streamedReasoning {
+			o.updateCannedStatus("Working")
+		}
 	} else if o.streamedReasoning {
 		o.updateCannedStatus("Working")
 	}
@@ -159,7 +168,7 @@ func (o *chatObserver) ReasoningCompleted(text string) {
 
 // updateCannedStatus changes status unless reasoning supplied a better label.
 func (o *chatObserver) updateCannedStatus(text string) {
-	if o.dynamicStatus {
+	if o.modelStatus {
 		return
 	}
 	o.renderer.updateStatus(text)

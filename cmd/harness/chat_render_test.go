@@ -187,6 +187,7 @@ func TestChatObserverBuffersReasoningDeltas(t *testing.T) {
 			stdout:       &stdout,
 			statusCancel: make(chan struct{}),
 		},
+		dynamicReasoningStatus: true,
 	}
 
 	observer.ModelReasoningDelta("**Thinking")
@@ -237,7 +238,8 @@ func TestReasoningStatusSurvivesToolRunner(t *testing.T) {
 		statusCancel: make(chan struct{}),
 	}
 	observer := &chatObserver{
-		renderer: renderer,
+		renderer:               renderer,
+		dynamicReasoningStatus: true,
 	}
 
 	observer.ModelReasoningDelta("**Summarizing project analysis**")
@@ -249,6 +251,33 @@ func TestReasoningStatusSurvivesToolRunner(t *testing.T) {
 
 	if renderer.statusText != "Summarizing project analysis" {
 		t.Fatalf("tool runner overwrote reasoning status: %q",
+			renderer.statusText)
+	}
+}
+
+// TestReasoningStatusDefaultsToCannedLabels verifies generic providers do not
+// turn streamed reasoning headings into terminal status labels.
+func TestReasoningStatusDefaultsToCannedLabels(t *testing.T) {
+	renderer := &liveChatRenderer{
+		stdout:       &bytes.Buffer{},
+		statusCancel: make(chan struct{}),
+	}
+	observer := &chatObserver{
+		renderer: renderer,
+	}
+
+	observer.ModelReasoningDelta("**Summarizing project analysis**")
+	if renderer.statusText != "Thinking" {
+		t.Fatalf("generic reasoning status = %q", renderer.statusText)
+	}
+
+	observer.ToolCallStarted(model.ToolCall{
+		ID:        "call_1",
+		Name:      "read",
+		Arguments: `{"path":"README.md"}`,
+	})
+	if renderer.statusText != "Running tools" {
+		t.Fatalf("generic reasoning blocked canned status: %q",
 			renderer.statusText)
 	}
 }
