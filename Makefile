@@ -9,6 +9,7 @@ LLFORMAT_PKG := github.com/bhandras/llformat/cmd/llformat
 LLFORMAT_BIN := $(CURDIR)/$(LLFORMAT_DIR)/bin/llformat
 GOLANGCI_LINT_PKG := github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
 EXAMPLE_PLUGIN_DIR := plugins/example
+GO_INTEL_PLUGIN_DIR := plugins/go-intel
 BINDIR ?= bin
 HARNESS_BIN ?= $(BINDIR)/harness
 
@@ -31,10 +32,12 @@ build:
 test:
 	$(GOCC) test ./...
 	cd $(EXAMPLE_PLUGIN_DIR); $(GOCC) test ./...
+	cd $(GO_INTEL_PLUGIN_DIR); $(GOCC) test ./...
 
 lint:
 	$(GOCC) run $(GOLANGCI_LINT_PKG) run ./...
 	cd $(EXAMPLE_PLUGIN_DIR); $(GOCC) run $(GOLANGCI_LINT_PKG) run ./...
+	cd $(GO_INTEL_PLUGIN_DIR); $(GOCC) run $(GOLANGCI_LINT_PKG) run ./...
 
 $(LLFORMAT_BIN): $(LLFORMAT_DIR)/go.mod $(LLFORMAT_DIR)/tools.go
 	@mkdir -p $(LLFORMAT_DIR)/bin

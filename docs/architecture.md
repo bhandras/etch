@@ -781,6 +781,18 @@ It is its own Go module, imports `harness/sdk`, and exposes two tools:
 - `project_files` summarizes file counts, byte size, extension buckets, and
   sample paths under a directory.
 
+The repository also carries a Go intelligence plugin under `plugins/go-intel`.
+It is deliberately a plugin rather than core behavior. The plugin uses only the
+Go standard library parser packages plus `harness/sdk` to expose symbol-listing
+and source-lookup tools (`go_list_symbols`, `go_package_symbols`,
+`go_file_symbols`, and `go_symbol`). This keeps language-specific intelligence
+behind the plugin boundary while giving the project a practical richer-plugin
+example. Because it is its own Go module, local configs should start it with a
+command such as `go run ./plugins/go-intel/main.go` rather than `go run
+./plugins/go-intel` from the root module. Naming the file keeps the plugin's
+working directory at the project root while avoiding Go's nested-module package
+resolution error.
+
 The implementation currently serializes calls to one plugin process. This keeps
 the first protocol client small and predictable. The request IDs are still part
 of the wire format so a later supervisor can add a read loop, a
