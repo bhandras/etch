@@ -65,6 +65,102 @@ func TestRunUsesProjectConfigDefaults(t *testing.T) {
 	}
 }
 
+// TestConfigCheckValidatesDiscoveredConfig verifies the config command reports
+// the nearest parseable project config.
+func TestConfigCheckValidatesDiscoveredConfig(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	if err := os.Mkdir(filepath.Join(root, ".harness"), 0o755); err != nil {
+		t.Fatalf("make config dir: %v", err)
+	}
+	writeFile(
+		t, filepath.Join(root, ".harness", "config.toml"),
+		"[provider]\nname = \"openai\"\n",
+	)
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"config", "check"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("config check failed: code=%d stdout=%q stderr=%q",
+			code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "config ok:") {
+		t.Fatalf("missing config ok output: %q", stdout.String())
+	}
+}
+
+// TestConfigShowEffectiveRendersMergedDefaults verifies effective config output
+// includes compiled defaults and project TOML values without credentials.
+func TestConfigShowEffectiveRendersMergedDefaults(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	if err := os.Mkdir(filepath.Join(root, ".harness"), 0o755); err != nil {
+		t.Fatalf("make config dir: %v", err)
+	}
+	writeFile(
+		t, filepath.Join(root, ".harness", "config.toml"),
+		"[provider]\nname = \"openai\"\nmodel = \"gpt-test\"\n",
+	)
+
+	var stdout, stderr bytes.Buffer
+	code := run(
+		[]string{"config", "show", "--effective"}, &stdout, &stderr,
+	)
+	if code != 0 {
+		t.Fatalf("config show failed: code=%d stdout=%q stderr=%q",
+			code, stdout.String(), stderr.String())
+	}
+	for _, want := range []string{
+		"Effective Config",
+		"- name: openai",
+		"- model: gpt-test",
+		"- dir: .harness/sessions",
+	} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("missing %q in effective config:\n%s", want,
+				stdout.String())
+		}
+	}
+}
+
+// TestConfigSchemaRendersSupportedFields verifies schema help is generated from
+// config metadata rather than hand-written command text.
+func TestConfigSchemaRendersSupportedFields(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"config", "schema"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("config schema failed: code=%d stdout=%q stderr=%q",
+			code, stdout.String(), stderr.String())
+	}
+	for _, want := range []string{
+		"Config Schema",
+		"[session]",
+		"- max_tool_rounds (positive integer):",
+		"[[plugins]]",
+		"- command (string):",
+	} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("missing %q in config schema:\n%s", want,
+				stdout.String())
+		}
+	}
+}
+
+// TestConfigEffectiveRequiresShow verifies the effective flag is scoped to the
+// command that renders merged defaults.
+func TestConfigEffectiveRequiresShow(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run(
+		[]string{"config", "schema", "--effective"}, &stdout, &stderr,
+	)
+	if code == 0 {
+		t.Fatalf("config schema --effective unexpectedly succeeded")
+	}
+	if !strings.Contains(stderr.String(), "--effective only applies") {
+		t.Fatalf("missing effective flag error: %q", stderr.String())
+	}
+}
+
 // TestRunWarnsForImplicitEchoProvider verifies the offline default is visible
 // when no provider flag or config selects a real model.
 func TestRunWarnsForImplicitEchoProvider(t *testing.T) {

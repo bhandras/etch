@@ -300,7 +300,9 @@ Project-local configuration lives at `.harness/config.toml`. The CLI discovers
 the nearest config file by walking from the current working directory toward the
 filesystem root. The supported TOML surface is intentionally small and parsed by
 `internal/config` with only the Go standard library: scalar assignments, normal
-tables, and hook array tables.
+tables, and hook/plugin array tables. A schema layer defines supported tables,
+keys, scalar types, descriptions, and assignment behavior in one place so
+runtime parsing, sample-config coverage, and CLI config references stay aligned.
 
 The precedence order is:
 
@@ -345,7 +347,10 @@ disabled = false
 
 `sample-config.toml` is the canonical human-readable inventory of supported
 keys. It should be updated in the same change that adds or removes config
-surface.
+surface. The CLI also exposes `harness config check`, `harness config show
+--effective`, and `harness config schema` so a user or agent can validate the
+discovered project config, inspect merged defaults, and see the model-neutral
+schema without reading the source.
 
 ## External Hooks
 

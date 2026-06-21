@@ -40,6 +40,9 @@ const (
 	// commandAuth manages local OpenAI OAuth credentials.
 	commandAuth = "auth"
 
+	// commandConfig inspects project-local harness configuration.
+	commandConfig = "config"
+
 	// commandHelp prints top-level or command-specific CLI help.
 	commandHelp = "help"
 
@@ -95,6 +98,8 @@ type cliConfig struct {
 	authIssuer          string
 	authClientID        string
 	authCodexBaseURL    string
+	configAction        string
+	configEffective     bool
 	hooks               []harnessconfig.HookConfig
 	plugins             []harnessconfig.PluginConfig
 }
@@ -152,6 +157,9 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	case commandAuth:
 		return runAuth(cfg, stdout, stderr)
 
+	case commandConfig:
+		return runConfig(cfg, stdout, stderr)
+
 	default:
 		fmt.Fprintf(stderr, "error: unknown command %q\n", cfg.command)
 
@@ -191,6 +199,7 @@ func printTopLevelHelp(stdout io.Writer) {
 	fmt.Fprintln(stdout, "  harness chat [flags]")
 	fmt.Fprintln(stdout, "  harness resume [flags] <session-id-prefix>")
 	fmt.Fprintln(stdout, "  harness auth <login|status|logout> [flags]")
+	fmt.Fprintln(stdout, "  harness config <check|show|schema> [flags]")
 	fmt.Fprintln(stdout, "  harness tool <name> [flags] [args]")
 	fmt.Fprintln(stdout, "  harness sessions [flags]")
 	fmt.Fprintln(stdout, "  harness show [flags] <session-id-prefix>")
@@ -201,6 +210,7 @@ func printTopLevelHelp(stdout io.Writer) {
 	fmt.Fprintln(stdout, "  chat      start an interactive chat session")
 	fmt.Fprintln(stdout, "  resume    continue an existing chat session")
 	fmt.Fprintln(stdout, "  auth      manage OpenAI OAuth credentials")
+	fmt.Fprintln(stdout, "  config    inspect project-local configuration")
 	fmt.Fprintln(stdout, "  tool      run a builtin tool directly")
 	fmt.Fprintln(stdout, "  sessions  list local JSONL sessions")
 	fmt.Fprintln(stdout, "  show      render one local session transcript")
@@ -258,6 +268,18 @@ func printCommandHelp(args []string, stdout io.Writer) error {
 
 		return nil
 
+	case commandConfig:
+		if len(args) == 2 {
+			_, err := parseConfigFlags(
+				[]string{args[1], "-h"}, stdout,
+			)
+
+			return ignoreHelpError(err)
+		}
+		printConfigHelp(stdout)
+
+		return nil
+
 	case commandTool:
 		if len(args) == 2 {
 			_, err := parseToolFlags(
@@ -273,6 +295,16 @@ func printCommandHelp(args []string, stdout io.Writer) error {
 	default:
 		return fmt.Errorf("unknown help command %q", command)
 	}
+}
+
+// printConfigHelp writes a compact config command overview.
+func printConfigHelp(stdout io.Writer) {
+	fmt.Fprintln(stdout, "Usage:")
+	fmt.Fprintln(stdout, "  harness config check")
+	fmt.Fprintln(stdout, "  harness config show [--effective]")
+	fmt.Fprintln(stdout, "  harness config schema")
+	fmt.Fprintln(stdout)
+	fmt.Fprintln(stdout, "Use \"harness help config show\" for show flags.")
 }
 
 // printAuthHelp writes a compact auth command overview.

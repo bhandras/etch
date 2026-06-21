@@ -36,6 +36,9 @@ func parseFlags(args []string, stderr io.Writer) (cliConfig, error) {
 
 		case commandAuth:
 			return parseAuthFlags(args[1:], stderr)
+
+		case commandConfig:
+			return parseConfigFlags(args[1:], stderr)
 		}
 		if !strings.HasPrefix(args[0], "-") {
 			return cliConfig{}, fmt.Errorf("unknown command %q; "+
@@ -45,6 +48,46 @@ func parseFlags(args []string, stderr io.Writer) (cliConfig, error) {
 	}
 
 	return parseRunFlags(args, stderr)
+}
+
+// parseConfigFlags converts config subcommands into inspection config.
+func parseConfigFlags(args []string, stderr io.Writer) (cliConfig, error) {
+	if len(args) == 0 {
+		return cliConfig{}, fmt.Errorf("config requires check, show, " +
+			"or schema")
+	}
+	cfg := cliConfig{
+		command:      commandConfig,
+		configAction: args[0],
+	}
+	fs := flag.NewFlagSet(
+		commandConfig+" "+cfg.configAction, flag.ContinueOnError,
+	)
+	fs.SetOutput(stderr)
+	fs.BoolVar(
+		&cfg.configEffective, "effective", false,
+		"show compiled defaults merged with project config",
+	)
+	if err := fs.Parse(args[1:]); err != nil {
+		return cliConfig{}, err
+	}
+	if fs.NArg() != 0 {
+		return cliConfig{}, fmt.Errorf("config %s accepts no "+
+			"positional arguments", cfg.configAction)
+	}
+	switch cfg.configAction {
+	case "check", "show", "schema":
+		if cfg.configEffective && cfg.configAction != "show" {
+			return cliConfig{}, fmt.Errorf("--effective only " +
+				"applies to config show")
+		}
+
+		return cfg, nil
+
+	default:
+		return cliConfig{}, fmt.Errorf("config requires check, show, " +
+			"or schema")
+	}
 }
 
 // parseAuthFlags converts auth subcommands into credential management config.

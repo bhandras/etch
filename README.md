@@ -196,6 +196,14 @@ cp sample-config.toml .harness/config.toml
 are defaults only: explicit CLI flags override them. Credential environment
 variables are read separately for API keys and access tokens.
 
+Inspect project configuration with:
+
+```bash
+go run ./cmd/harness config check
+go run ./cmd/harness config show --effective
+go run ./cmd/harness config schema
+```
+
 Hooks are external shell commands that inspect or mutate lifecycle events.
 Harness sends a JSON envelope on stdin and expects either empty stdout or an
 event-specific JSON object on stdout. Hooks run sequentially in config file
