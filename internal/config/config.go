@@ -282,10 +282,13 @@ func Parse(text string) (Config, error) {
 	var cfg Config
 	scope := configScope{cfg: &cfg}
 
-	lines := strings.Split(text, "\n")
-	for i, raw := range lines {
-		lineNumber := i + 1
-		line := strings.TrimSpace(stripComment(raw))
+	lines, err := configLogicalLines(text)
+	if err != nil {
+		return Config{}, err
+	}
+	for _, logical := range lines {
+		lineNumber := logical.line
+		line := strings.TrimSpace(stripComment(logical.text))
 		if line == "" {
 			continue
 		}
@@ -330,6 +333,91 @@ func Parse(text string) (Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// configLine stores one logical TOML line and its original start line number.
+type configLine struct {
+	// line is the one-indexed source line where text begins.
+	line int
+
+	// text is a parseable logical TOML statement.
+	text string
+}
+
+// configLogicalLines joins literal multiline string assignments.
+func configLogicalLines(text string) ([]configLine, error) {
+	rawLines := strings.Split(text, "\n")
+	lines := make([]configLine, 0, len(rawLines))
+	for i := 0; i < len(rawLines); i++ {
+		raw := rawLines[i]
+		lineNumber := i + 1
+		line := strings.TrimSpace(stripComment(raw))
+		if !assignmentStartsLiteralMultiline(line) {
+			lines = append(lines, configLine{
+				line: lineNumber,
+				text: raw,
+			})
+
+			continue
+		}
+		joined, next, err := collectLiteralMultiline(
+			rawLines, i,
+		)
+		if err != nil {
+			return nil, lineError(lineNumber, err)
+		}
+		lines = append(lines, configLine{
+			line: lineNumber,
+			text: joined,
+		})
+		i = next
+	}
+
+	return lines, nil
+}
+
+// assignmentStartsLiteralMultiline reports whether line begins a TOML literal
+// multiline string assignment.
+func assignmentStartsLiteralMultiline(line string) bool {
+	_, value, err := parseAssignment(line)
+	if err != nil {
+		return false
+	}
+
+	return strings.HasPrefix(value, "'''") && !strings.HasSuffix(
+		strings.TrimPrefix(value, "'''"),
+		"'''",
+	)
+}
+
+// collectLiteralMultiline joins one TOML literal multiline assignment.
+func collectLiteralMultiline(lines []string, start int) (string, int, error) {
+	key, value, err := parseAssignment(strings.TrimSpace(lines[start]))
+	if err != nil {
+		return "", start, err
+	}
+	body := strings.TrimPrefix(value, "'''")
+	var out strings.Builder
+	if body != "" {
+		out.WriteString(body)
+		out.WriteByte('\n')
+	}
+	for i := start + 1; i < len(lines); i++ {
+		line := lines[i]
+		if strings.TrimSpace(line) == "'''" {
+			return key + " = " + strconv.Quote(out.String()), i, nil
+		}
+		if strings.Contains(line, "'''") {
+			before, _, _ := strings.Cut(line, "'''")
+			out.WriteString(before)
+
+			return key + " = " + strconv.Quote(out.String()), i, nil
+		}
+		out.WriteString(line)
+		out.WriteByte('\n')
+	}
+
+	return "", start, fmt.Errorf("unterminated literal multiline string")
 }
 
 // parseArrayTable parses a TOML array table header.

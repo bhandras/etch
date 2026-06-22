@@ -119,7 +119,11 @@ model = "gpt-5.5"
 openai_api = "responses"
 reasoning_effort = "medium"
 reasoning_summary = "auto"
-system_prompt = "Review carefully."
+system_prompt = '''
+Review carefully.
+
+Return findings first.
+'''
 allowed_tools = ["ls", "read", "grep"]
 max_tool_rounds = 12
 auto_compact = true
@@ -150,7 +154,8 @@ disabled = true
 	if review.Name != "review" || review.Model != "gpt-5.5" ||
 		review.OpenAIAPI != "responses" ||
 		review.ReasoningSummary != "auto" ||
-		review.SystemPrompt != "Review carefully." {
+		review.SystemPrompt != "Review carefully.\n\n"+
+			"Return findings first.\n" {
 
 		t.Fatalf("unexpected review profile: %#v", review)
 	}
