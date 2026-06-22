@@ -178,6 +178,69 @@ func TestChatObserverTracksActiveSubagents(t *testing.T) {
 	}
 }
 
+// TestChatObserverAddsSubagentUsage verifies child-agent token counters appear
+// in the parent footer and final turn stats after a task result arrives.
+func TestChatObserverAddsSubagentUsage(t *testing.T) {
+	child, _, err := session.Create(t.TempDir(), ".", "child")
+	if err != nil {
+		t.Fatalf("create child session: %v", err)
+	}
+	if _, err := child.Append(
+		session.EventModelUsage, "", session.UsageData{
+			InputTokens:       100,
+			CachedInputTokens: 40,
+			OutputTokens:      20,
+			TotalTokens:       120,
+		},
+	); err != nil {
+
+		t.Fatalf("append child usage: %v", err)
+	}
+	if err := child.Close(); err != nil {
+		t.Fatalf("close child session: %v", err)
+	}
+
+	var stdout bytes.Buffer
+	composer := &terminalChatInput{stdout: &stdout}
+	chrome := newChatChrome(
+		cliConfig{
+			model: "gpt-test",
+		}, ".",
+		model.Usage{},
+	)
+	renderer := newLiveChatRenderer(&stdout, false)
+	renderer.composer = composer
+	observer := &chatObserver{
+		renderer: renderer,
+		chrome:   chrome,
+	}
+	observer.EventAppended(
+		messageEvent(
+			t, session.EventToolMessage, session.ToolMessage(
+				"call_1", tool.NameTask,
+				"Task review completed.\n\nProfile: review\n"+
+					"Session: child\nSession path: "+child.Path()+
+					"\nDuration: 1s\nModel calls: 1\n"+
+					"Tool calls: 0\n\nResult:\ndone\n",
+			),
+		),
+	)
+
+	if observer.usage.InputTokens != 100 ||
+		observer.usage.CachedInputTokens != 40 ||
+		observer.usage.OutputTokens != 20 {
+
+		t.Fatalf("subagent usage was not recorded: %#v", observer.usage)
+	}
+	if !strings.Contains(composer.footerText, "100 in") ||
+		!strings.Contains(composer.footerText, "40 cached") ||
+		!strings.Contains(composer.footerText, "20 out") {
+
+		t.Fatalf("subagent usage missing from footer: %q",
+			composer.footerText)
+	}
+}
+
 // messageEvent creates one durable message event for CLI rendering tests.
 func messageEvent(t *testing.T, eventType string,
 	message session.MessageData) session.Event {

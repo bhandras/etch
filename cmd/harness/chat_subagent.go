@@ -31,6 +31,9 @@ type subagentResultDisplay struct {
 	// SessionID is the durable child session identifier.
 	SessionID string
 
+	// SessionPath is the durable child JSONL path.
+	SessionPath string
+
 	// Duration is the child run duration formatted by the task tool.
 	Duration string
 
@@ -244,6 +247,9 @@ func parseSubagentResult(text string) (subagentResultDisplay, bool) {
 
 		case strings.HasPrefix(line, "Session:"):
 			display.SessionID = trimField(line, "Session:")
+
+		case strings.HasPrefix(line, "Session path:"):
+			display.SessionPath = trimField(line, "Session path:")
 
 		case strings.HasPrefix(line, "Duration:"):
 			display.Duration = trimField(line, "Duration:")

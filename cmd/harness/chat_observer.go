@@ -105,6 +105,7 @@ func (o *chatObserver) EventAppended(event session.Event) {
 
 	case session.RoleTool:
 		o.finishSubagentTool(message)
+		o.recordSubagentUsage(message)
 		o.renderer.renderToolResult(message)
 
 	default:
@@ -194,6 +195,29 @@ func (o *chatObserver) finishSubagentCall(callID string, name string) {
 	}
 	o.renderer.setActiveSubagents(len(o.activeSubagents))
 	o.renderer.removeSubagentStatus(removedID)
+}
+
+// recordSubagentUsage adds child-session usage to parent-visible counters.
+func (o *chatObserver) recordSubagentUsage(message session.MessageData) {
+	if message.Name != tool.NameTask {
+		return
+	}
+	display, ok := parseSubagentResult(render.MessageText(message))
+	if !ok || strings.TrimSpace(display.SessionPath) == "" {
+		return
+	}
+	status, err := readSessionStatus(display.SessionPath)
+	if err != nil {
+		return
+	}
+	usage := modelUsageFromSessionStatus(status)
+	if usage.Empty() {
+		return
+	}
+	o.usage = o.usage.Add(usage)
+	if o.renderer.composer != nil && o.chrome != nil {
+		o.renderer.composer.SetFooter(o.chrome.AddUsage(usage))
+	}
 }
 
 // ToolProgress updates live progress rows for long-running tools.

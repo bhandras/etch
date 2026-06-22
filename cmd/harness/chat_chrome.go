@@ -113,13 +113,19 @@ func chatSessionUsage(path string) (model.Usage, error) {
 		return model.Usage{}, fmt.Errorf("build session usage: %w", err)
 	}
 
+	return modelUsageFromSessionStatus(status), nil
+}
+
+// modelUsageFromSessionStatus converts durable session counters into footer
+// usage counters.
+func modelUsageFromSessionStatus(status session.Status) model.Usage {
 	return model.Usage{
 		InputTokens:           status.Usage.InputTokens,
 		CachedInputTokens:     status.Usage.CachedInputTokens,
 		OutputTokens:          status.Usage.OutputTokens,
 		ReasoningOutputTokens: status.Usage.ReasoningOutputTokens,
 		TotalTokens:           status.Usage.TotalTokens,
-	}, nil
+	}
 }
 
 // chatPromptHistory loads durable user prompts for interactive history.
