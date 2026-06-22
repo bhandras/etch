@@ -30,6 +30,7 @@ model = "gpt-5.5"
 [openai]
 base_url = "https://api.example.test/v1"
 api = "responses"
+transport = "auto"
 reasoning_effort = "minimal"
 reasoning_summary = "auto"
 
@@ -73,6 +74,7 @@ disabled = true
 		t.Fatalf("unexpected provider config: %#v", cfg.Provider)
 	}
 	if cfg.OpenAI.API != "responses" ||
+		cfg.OpenAI.Transport != "auto" ||
 		cfg.OpenAI.ReasoningSummary != "auto" {
 
 		t.Fatalf("unexpected openai config: %#v", cfg.OpenAI)
@@ -306,6 +308,11 @@ func TestParseRejectsInvalidSemanticConfig(t *testing.T) {
 			name: "openai api",
 			text: "[openai]\napi = \"mystery\"\n",
 			want: "openai.api must be one of",
+		},
+		{
+			name: "openai transport",
+			text: "[openai]\ntransport = \"pipe\"\n",
+			want: "openai.transport must be one of",
 		},
 		{
 			name: "reasoning effort",

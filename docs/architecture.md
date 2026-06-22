@@ -227,19 +227,20 @@ provider plugins later
 ```
 
 The first real provider is `internal/provider/openai`, a stdlib-only
-OpenAI-compatible streaming client. It uses plain `net/http` and server-sent
-event parsing, not an SDK. Chat Completions remains the default API shape for
-compatibility with local OpenAI-compatible endpoints. The same provider can use
-the Responses API when callers want OpenAI reasoning summaries or richer output
-items. It should measure the existing HTTP/SSE path before we consider a
-WebSocket transport: request body bytes, raw streamed response bytes, time to
-response headers, and time to the first meaningful stream event are reported as
+OpenAI-compatible streaming client. It uses the standard library rather than an
+SDK. Chat Completions remains the default API shape for compatibility with
+local OpenAI-compatible endpoints. The same provider can use the Responses API
+when callers want OpenAI reasoning summaries or richer output items. Responses
+supports two transports: HTTP/SSE as the portable baseline, and a minimal
+stdlib WebSocket client for providers that support connection-scoped Responses
+continuation. Request body bytes, raw streamed response bytes, time to response
+headers, and time to the first meaningful stream event are reported as
 provider-neutral `metrics` events and folded into turn timing. Metrics also
 capture request shape: total provider requests, continuation attempts,
 continuation fallbacks, the latest continuation fallback diagnostic,
 input-message count, delta-message count, tool-schema count, and serialized
 instruction/input/tool payload sizes. Those fields let sessions answer whether
-a stored-response transport is actually sending only the safe delta slice or
+a continuation transport is actually sending only the safe delta slice or
 falling back to full-context requests.
 
 The OpenAI stream parser is frame-oriented instead of `bufio.Scanner`-based. It
@@ -251,12 +252,14 @@ limits and making byte metrics reflect the real stream body.
 
 Pi's OpenAI Platform path generally consumes the OpenAI SDK's typed async stream
 events with `store:false`, while Pi's Codex path prefers a WebSocket transport
-with cached session state and falls back to HTTP/SSE. Harness intentionally
-starts without a WebSocket dependency: plain HTTP/SSE uses full-context
-Responses requests with `store:false` plus prompt-cache affinity, which keeps
-transport code small and inspectable. If WebSocket support becomes necessary
-later, it should arrive as a minimal provider transport swap behind the same
-model event stream, not as a new core concept.
+with cached session state and falls back to HTTP/SSE. Harness mirrors that
+boundary without adding a third-party WebSocket dependency. Plain HTTP/SSE uses
+full-context Responses requests with `store:false` plus prompt-cache affinity.
+The optional WebSocket transport sends the same Responses request shape as a
+`response.create` message, keeps one idle connection per session briefly
+reusable, and only sends `previous_response_id` plus `DeltaMessages` when that
+connection is reused. If the WebSocket handshake or first write fails in auto
+mode, Harness falls back to HTTP/SSE before emitting stream output.
 
 Responses API requests include the durable local session ID as
 `prompt_cache_key`, clamped to OpenAI's documented 64-character limit, so Codex
@@ -268,9 +271,11 @@ When a prior Responses call has a durable `model.response` provider ID, the
 core can offer `previous_response_id` plus only the new user/tool input since
 that response. The OpenAI HTTP client only uses that slice when an explicit
 stored-response mode is enabled, because ChatGPT/Codex OAuth requires
-`store:false` and plain HTTP continuation is not valid in that mode. The full
-context is still carried in the provider-neutral request so a stored-response
-transport can retry without continuation if the provider rejects the handle.
+`store:false` and plain HTTP continuation is not valid in that mode. The
+WebSocket client may use the slice with `store:false`, but only on a reused
+session connection where the backend has connection-scoped context. The full
+context is still carried in the provider-neutral request so transports can fall
+back without continuation when connection state is missing or rejected.
 Context-build hooks currently disable continuation hints because hooks can
 rewrite message lists in ways the core cannot safely slice.
 

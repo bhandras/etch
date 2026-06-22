@@ -64,8 +64,10 @@ func modelClient(cfg cliConfig) (model.Client, error) {
 		return &openai.Client{
 			BaseURL:          baseURL,
 			APIKey:           token,
+			AccountID:        creds.Tokens.AccountID,
 			Model:            cfg.model,
 			API:              apiMode,
+			Transport:        cfg.openaiTransport,
 			ReasoningEffort:  cfg.reasoningEffort,
 			ReasoningSummary: cfg.reasoningSummary,
 			UserAgent:        harnessUserAgent,
@@ -83,6 +85,7 @@ func openAIAPIKeyClient(cfg cliConfig) model.Client {
 		APIKey:           cfg.apiKey,
 		Model:            cfg.model,
 		API:              cfg.openaiAPI,
+		Transport:        cfg.openaiTransport,
 		ReasoningEffort:  cfg.reasoningEffort,
 		ReasoningSummary: cfg.reasoningSummary,
 		UserAgent:        harnessUserAgent,
@@ -127,6 +130,7 @@ func configCLIConfigDefaults(cfg harnessconfig.Config) cliConfig {
 		apiKey:            apiKeyFromEnv(),
 		openaiAPI:         configOpenAIAPI(cfg),
 		openaiAPIExplicit: cfg.OpenAI.API != "",
+		openaiTransport:   configOpenAITransport(cfg),
 		reasoningEffort:   cfg.OpenAI.ReasoningEffort,
 		reasoningSummary:  cfg.OpenAI.ReasoningSummary,
 		maxToolRounds:     configMaxToolRounds(cfg),
@@ -160,6 +164,11 @@ func configOpenAIBaseURL(cfg harnessconfig.Config) string {
 // configOpenAIAPI returns the configured OpenAI API shape or the default.
 func configOpenAIAPI(cfg harnessconfig.Config) string {
 	return configOrDefault(cfg.OpenAI.API, openai.APIChatCompletions)
+}
+
+// configOpenAITransport returns the configured transport or the HTTP default.
+func configOpenAITransport(cfg harnessconfig.Config) string {
+	return configOrDefault(cfg.OpenAI.Transport, openai.TransportHTTP)
 }
 
 // configMaxToolRounds returns the configured tool-loop limit or the default.

@@ -548,6 +548,10 @@ func addOpenAIFlags(fs *flag.FlagSet, cfg *cliConfig) {
 		"OpenAI API shape: chat or responses",
 	)
 	fs.StringVar(
+		&cfg.openaiTransport, "openai-transport", cfg.openaiTransport,
+		"OpenAI Responses transport: http, websocket, or auto",
+	)
+	fs.StringVar(
 		&cfg.reasoningEffort, "reasoning-effort", cfg.reasoningEffort,
 		"OpenAI reasoning effort: none, minimal, low, medium, "+
 			"high, or xhigh",

@@ -48,13 +48,16 @@ Harness currently has:
   and future stored-response transports
 - opaque OpenAI Responses reasoning ciphertext stored as `model.provider_item`
   events and replayed only to compatible Responses requests
-- durable provider transport metrics for OpenAI-compatible HTTP/SSE streams,
+- durable provider transport metrics for OpenAI-compatible HTTP/SSE and
+  Responses WebSocket streams,
   including request count, continuation attempts and fallbacks, payload sizes,
   response headers, first-event latency, input-message count, delta-message
   count, and tool-schema count
 - Responses API prompt cache affinity keyed by the durable local session ID;
   the default plain-HTTP Responses path keeps `store:false` and resends the
   current context instead of using `previous_response_id`
+- optional stdlib-only Responses WebSocket transport with cached session
+  connections for delta continuation requests
 - chat steering that lets prompts typed while a turn is running influence the
   next safe model-call boundary
 - session-backed prompt history for Up/Down navigation in interactive chat
@@ -192,6 +195,11 @@ fallback for Platform billing, OpenRouter, local proxies, and CI.
 OAuth mode defaults to the Codex backend and the Responses API shape. Explicit
 `--base-url`, `--openai-api`, or `.harness/config.toml` settings override those
 OAuth defaults.
+
+Responses API calls use HTTP/SSE by default. To try the session-reused
+WebSocket transport, set `--openai-transport auto` or configure
+`openai.transport = "auto"`. Auto mode attempts WebSocket first and falls back
+to HTTP/SSE before any stream output is emitted.
 
 ## Configuration, Hooks, and Plugins
 

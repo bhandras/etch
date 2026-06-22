@@ -42,6 +42,16 @@ const (
 	// APIResponses selects the Responses API request shape.
 	APIResponses = "responses"
 
+	// TransportHTTP selects plain HTTP/SSE for Responses API calls.
+	TransportHTTP = "http"
+
+	// TransportWebSocket selects the Responses WebSocket transport.
+	TransportWebSocket = "websocket"
+
+	// TransportAuto tries WebSocket first and falls back to HTTP/SSE before
+	// any stream events are emitted.
+	TransportAuto = "auto"
+
 	// promptCacheKeyMaxRunes is OpenAI's maximum prompt cache key length.
 	promptCacheKeyMaxRunes = 64
 
@@ -66,11 +76,19 @@ type Client struct {
 	// APIKey is sent as a Bearer token when non-empty.
 	APIKey string
 
+	// AccountID is sent to ChatGPT/Codex backends when OAuth credentials
+	// identify a workspace account.
+	AccountID string
+
 	// Model is the provider model name passed in each request.
 	Model string
 
 	// API selects the OpenAI API shape. Empty means APIChatCompletions.
 	API string
+
+	// Transport selects the Responses transport: http, websocket, or auto.
+	// Empty means http.
+	Transport string
 
 	// ReasoningEffort asks reasoning-capable models to adjust effort.
 	ReasoningEffort string
@@ -100,6 +118,17 @@ func (c *Client) Stream(ctx context.Context, req model.Request) (
 	}
 	if err := c.validateAPI(); err != nil {
 		return nil, err
+	}
+	if err := c.validateTransport(); err != nil {
+		return nil, err
+	}
+
+	if c.apiMode() == APIResponses && c.transportMode() != TransportHTTP {
+		events, err := c.streamResponsesWebSocket(ctx, req)
+		if err == nil || c.transportMode() == TransportWebSocket {
+			return events, err
+		}
+		req = requestWithoutContinuation(req)
 	}
 
 	httpReq, requestMetrics, err := c.newRequest(ctx, req)
@@ -251,9 +280,33 @@ func (c *Client) newRequest(ctx context.Context, req model.Request) (
 func (c *Client) newResponsesRequest(ctx context.Context, req model.Request) (
 	*http.Request, model.Metrics, error) {
 
+	body, metrics, err := c.responsesRequestBody(req, c.StoreResponses)
+	if err != nil {
+		return nil, model.Metrics{}, err
+	}
+
+	httpReq, err := http.NewRequestWithContext(
+		ctx, http.MethodPost, c.endpoint(responsesPath),
+		bytes.NewReader(body),
+	)
+	if err != nil {
+		return nil, model.Metrics{},
+			fmt.Errorf("create openai response request: %w", err)
+	}
+	c.addCommonHeaders(httpReq)
+	metrics.RequestBytes = requestContentLength(httpReq)
+
+	return httpReq, metrics, nil
+}
+
+// responsesRequestBody builds the serialized Responses body and request
+// metrics.
+func (c *Client) responsesRequestBody(req model.Request,
+	allowContinuation bool) ([]byte, model.Metrics, error) {
+
 	inputMessages := req.Messages
 	previousResponseID := ""
-	continued := c.StoreResponses && req.PreviousResponseID != "" &&
+	continued := allowContinuation && req.PreviousResponseID != "" &&
 		len(req.DeltaMessages) > 0
 	if continued {
 		inputMessages = req.DeltaMessages
@@ -283,19 +336,9 @@ func (c *Client) newResponsesRequest(ctx context.Context, req model.Request) (
 			fmt.Errorf("marshal openai response request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(
-		ctx, http.MethodPost, c.endpoint(responsesPath),
-		bytes.NewReader(body),
-	)
-	if err != nil {
-		return nil, model.Metrics{},
-			fmt.Errorf("create openai response request: %w", err)
-	}
-	c.addCommonHeaders(httpReq)
-
 	metrics := model.Metrics{
 		Requests:         1,
-		RequestBytes:     requestContentLength(httpReq),
+		RequestBytes:     len(body),
 		InputMessages:    len(inputMessages),
 		ToolCount:        len(req.Tools),
 		InstructionBytes: len(instructions),
@@ -307,7 +350,7 @@ func (c *Client) newResponsesRequest(ctx context.Context, req model.Request) (
 		metrics.DeltaMessages = len(req.DeltaMessages)
 	}
 
-	return httpReq, metrics, nil
+	return body, metrics, nil
 }
 
 // apiMode returns the configured OpenAI API shape.
@@ -332,6 +375,34 @@ func (c *Client) validateAPI() error {
 
 	default:
 		return fmt.Errorf("unknown openai api %q", c.API)
+	}
+}
+
+// validateTransport rejects unknown transport modes before making a request.
+func (c *Client) validateTransport() error {
+	switch c.transportMode() {
+	case TransportHTTP, TransportWebSocket, TransportAuto:
+		return nil
+
+	default:
+		return fmt.Errorf("unknown openai transport %q", c.Transport)
+	}
+}
+
+// transportMode returns the configured provider transport.
+func (c *Client) transportMode() string {
+	switch c.Transport {
+	case "", TransportHTTP:
+		return TransportHTTP
+
+	case TransportWebSocket:
+		return TransportWebSocket
+
+	case TransportAuto:
+		return TransportAuto
+
+	default:
+		return c.Transport
 	}
 }
 

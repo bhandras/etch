@@ -123,6 +123,10 @@ func formatEffectiveConfig(cfg harnessconfig.Config) string {
 	)
 	writeEffectiveString(&out, "api", defaults.openaiAPI, cfg.OpenAI.API)
 	writeEffectiveString(
+		&out, "transport", defaults.openaiTransport,
+		cfg.OpenAI.Transport,
+	)
+	writeEffectiveString(
 		&out, "reasoning effort", defaults.reasoningEffort,
 		cfg.OpenAI.ReasoningEffort,
 	)
@@ -205,6 +209,9 @@ func writeRawConfigSections(out *strings.Builder, cfg harnessconfig.Config) {
 	fmt.Fprintln(out, "OpenAI")
 	fmt.Fprintf(out, "- base url: %s\n", displayString(cfg.OpenAI.BaseURL))
 	fmt.Fprintf(out, "- api: %s\n", displayString(cfg.OpenAI.API))
+	fmt.Fprintf(
+		out, "- transport: %s\n", displayString(cfg.OpenAI.Transport),
+	)
 	fmt.Fprintf(
 		out, "- reasoning effort: %s\n",
 		displayString(cfg.OpenAI.ReasoningEffort),

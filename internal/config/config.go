@@ -90,6 +90,10 @@ type OpenAIConfig struct {
 	// API selects the provider API shape, such as "chat" or "responses".
 	API string
 
+	// Transport selects the provider transport, such as http, websocket, or
+	// auto.
+	Transport string
+
 	// ReasoningEffort requests a reasoning effort level when supported by
 	// the selected model.
 	ReasoningEffort string

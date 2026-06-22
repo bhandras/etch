@@ -220,6 +220,17 @@ func schemaTables() map[string]tableSchema {
 			},
 		},
 		{
+			key:  "transport",
+			kind: valueString,
+			description: "OpenAI Responses transport: http, " +
+				"websocket, or auto.",
+			apply: func(target *assignmentTarget,
+				value parsedValue) {
+
+				target.cfg.OpenAI.Transport = value.text
+			},
+		},
+		{
 			key:  "reasoning_effort",
 			kind: valueString,
 			description: "Reasoning effort requested for models that " +

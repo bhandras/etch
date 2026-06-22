@@ -55,6 +55,20 @@ func Validate(cfg Config) error {
 			),
 		)
 	}
+	if value := strings.TrimSpace(cfg.OpenAI.Transport); value != "" &&
+		!stringIn(value, validOpenAITransports()) {
+
+		errors = append(
+			errors,
+			fmt.Sprintf(
+				"openai.transport must be one of %s, got %q",
+				joinOptions(
+					validOpenAITransports(),
+				),
+				value,
+			),
+		)
+	}
 	if value := strings.TrimSpace(
 		cfg.OpenAI.ReasoningEffort,
 	); value != "" &&
@@ -379,6 +393,11 @@ func validProviders() []string {
 // validOpenAIAPIs returns OpenAI API modes accepted by project config.
 func validOpenAIAPIs() []string {
 	return []string{openAIAPIChat, openAIAPIResponses}
+}
+
+// validOpenAITransports returns OpenAI transport values accepted by config.
+func validOpenAITransports() []string {
+	return []string{"http", "websocket", "auto"}
 }
 
 // validReasoningEfforts returns reasoning effort values accepted by config.

@@ -44,6 +44,12 @@
 # API shape used by the bundled provider: "chat" or "responses".
 # api = "chat"
 
+# Responses transport: "http", "websocket", or "auto". HTTP is portable and
+# uses SSE. WebSocket can reuse a session connection for smaller continuation
+# requests. Auto tries WebSocket first and falls back to HTTP before any stream
+# output is emitted.
+# transport = "http"
+
 # Reasoning effort for models that support it: "none", "minimal", "low",
 # "medium", "high", or "xhigh".
 # reasoning_effort = "minimal"
