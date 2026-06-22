@@ -367,7 +367,7 @@ max_concurrent = 2
 [[subagents.profile]]
 name = "explore"
 description = "Read-only codebase exploration."
-allowed_tools = ["ls", "read", "find", "grep", "go_search_symbols", "go_symbol"]
+allowed_tools = ["ls", "read", "find", "grep", "go_search_symbols", "go_symbols", "go_symbol"]
 max_tool_rounds = 16
 auto_compact = true
 ```
@@ -776,7 +776,7 @@ openai_api = "responses"
 reasoning_effort = "medium"
 reasoning_summary = "auto"
 system_prompt_file = ".harness/subagents/review.md"
-allowed_tools = ["ls", "read", "find", "grep", "go_search_symbols", "go_package_symbols", "go_symbol"]
+allowed_tools = ["ls", "read", "find", "grep", "go_search_symbols", "go_symbols", "go_package_symbols", "go_symbol"]
 max_tool_rounds = 20
 auto_compact = true
 auto_compact_threshold_tokens = 80000
@@ -899,18 +899,19 @@ The repository also carries a Go intelligence plugin under `plugins/go-intel`.
 It is deliberately a plugin rather than core behavior. The plugin uses only the
 Go standard library parser packages plus `harness/sdk` to expose symbol-listing
 and source-lookup tools (`go_list_symbols`, `go_package_symbols`,
-`go_file_symbols`, `go_search_symbols`, and `go_symbol`). A useful inspection
-path is to use `go_search_symbols` for concept or name fragments,
-`go_package_symbols` or `go_file_symbols` for maps, and `go_symbol` for
-citation-ready godoc, signatures, line ranges, and declaration snippets.
-`go_symbol` can include the full declaration source when the caller needs
-implementation context. This keeps language-specific intelligence behind the
-plugin boundary while giving the project a practical richer-plugin example.
-Because it is its own Go module, local configs should start it with a command
-such as `go run ./plugins/go-intel/main.go` rather than `go run
-./plugins/go-intel` from the root module. Naming the file keeps the plugin's
-working directory at the project root while avoiding Go's nested-module package
-resolution error.
+`go_file_symbols`, `go_search_symbols`, `go_symbol`, and `go_symbols`). A
+useful inspection path is to use `go_search_symbols` for concept or name
+fragments, `go_package_symbols` or `go_file_symbols` for maps, `go_symbols` for
+a small citation-ready batch, and `go_symbol` for one focused follow-up.
+`go_symbols` defaults to signature-sized detail so agents can collect several
+godoc/signature/line-range references without pulling every function body;
+callers can request full declarations when implementation context is necessary.
+This keeps language-specific intelligence behind the plugin boundary while
+giving the project a practical richer-plugin example. Because it is its own Go
+module, local configs should start it with a command such as `go run
+./plugins/go-intel/main.go` rather than `go run ./plugins/go-intel` from the
+root module. Naming the file keeps the plugin's working directory at the project
+root while avoiding Go's nested-module package resolution error.
 
 The implementation currently serializes calls to one plugin process. This keeps
 the first protocol client small and predictable. The request IDs are still part

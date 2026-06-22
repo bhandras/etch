@@ -201,6 +201,105 @@ func TestRunGoSymbolReportsAmbiguousMatches(t *testing.T) {
 	}
 }
 
+// TestRunGoSymbolsReturnsBatchSignatures verifies batched lookups parse once
+// and default to signature-sized detail instead of full declarations.
+func TestRunGoSymbolsReturnsBatchSignatures(t *testing.T) {
+	dir := goFixture(t)
+	text, err := runGoSymbols(json.RawMessage(
+		`{"path":` + jsonQuote(dir) +
+			`,"names":["Widget","NewWidget","NameText"]}`,
+	))
+	if err != nil {
+		t.Fatalf("lookup go symbols: %v", err)
+	}
+	for _, want := range []string{
+		"symbols requested: 3",
+		"symbols resolved: 3",
+		"declaration: signature",
+		"symbol: Widget",
+		"symbol: NewWidget",
+		"func NewWidget(name string) Widget",
+		"symbol: Widget.NameText",
+		"func (w Widget) NameText() string",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("missing %q in output:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "return Widget{Name: name}") {
+		t.Fatalf("batch default leaked full declaration:\n%s", text)
+	}
+}
+
+// TestRunGoSymbolsReportsPartialResults verifies missing and ambiguous names do
+// not discard successful symbol details from the same batch.
+func TestRunGoSymbolsReportsPartialResults(t *testing.T) {
+	dir := goFixture(t)
+	text, err := runGoSymbols(json.RawMessage(
+		`{"path":` + jsonQuote(dir) +
+			`,"names":["NewWidget","Missing","Duplicate"]}`,
+	))
+	if err != nil {
+		t.Fatalf("lookup partial go symbols: %v", err)
+	}
+	for _, want := range []string{
+		"symbols requested: 3",
+		"symbols resolved: 1",
+		"missing:\n- Missing",
+		"ambiguous:\n- Duplicate",
+		"  - func Duplicate other/other.go:4",
+		"  - func Duplicate sample/extra.go:7",
+		"symbol: NewWidget",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("missing %q in output:\n%s", want, text)
+		}
+	}
+}
+
+// TestRunGoSymbolsFullModeIncludesDeclarations verifies callers can explicitly
+// request full declaration bodies for a focused batch.
+func TestRunGoSymbolsFullModeIncludesDeclarations(t *testing.T) {
+	dir := goFixture(t)
+	text, err := runGoSymbols(json.RawMessage(
+		`{"path":` + jsonQuote(dir) +
+			`,"names":["NewWidget"],"declaration":"full"}`,
+	))
+	if err != nil {
+		t.Fatalf("lookup full go symbols: %v", err)
+	}
+	if !strings.Contains(text, "return Widget{Name: name}") {
+		t.Fatalf("full mode omitted declaration body:\n%s", text)
+	}
+}
+
+// TestRunGoSymbolsRequiresNames verifies empty batches fail before parsing the
+// project.
+func TestRunGoSymbolsRequiresNames(t *testing.T) {
+	if _, err := runGoSymbols(
+		json.RawMessage(`{"names":[" ",""]}`),
+	); err == nil {
+
+		t.Fatal("expected empty name batch to fail")
+	}
+}
+
+// TestRunGoSymbolsLimitsBatchSize verifies a single detail call cannot request
+// an unbounded number of symbols.
+func TestRunGoSymbolsLimitsBatchSize(t *testing.T) {
+	names := make([]string, maxBatchSymbolNames+1)
+	for i := range names {
+		names[i] = "Widget"
+	}
+	raw, err := json.Marshal(symbolsArgs{Names: names})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runGoSymbols(raw); err == nil {
+		t.Fatal("expected oversized name batch to fail")
+	}
+}
+
 // goFixture creates a small multi-package Go tree for plugin tests.
 func goFixture(t *testing.T) string {
 	t.Helper()

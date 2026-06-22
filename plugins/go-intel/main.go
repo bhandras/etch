@@ -38,12 +38,20 @@ const (
 	// toolGoSymbol returns the doc comment and source for one Go symbol.
 	toolGoSymbol = "go_symbol"
 
+	// toolGoSymbols returns details for several Go symbols in one parse
+	// pass.
+	toolGoSymbols = "go_symbols"
+
 	// defaultSymbolLimit bounds list output when no caller limit is
 	// supplied.
 	defaultSymbolLimit = 200
 
 	// maxSymbolLimit prevents accidental giant symbol listings.
 	maxSymbolLimit = 2000
+
+	// maxBatchSymbolNames prevents one batch detail request from flooding
+	// context.
+	maxBatchSymbolNames = 32
 
 	// declarationFull renders a symbol's full source declaration.
 	declarationFull = "full"
@@ -155,6 +163,32 @@ type symbolArgs struct {
 	Declaration string `json:"declaration"`
 }
 
+// symbolsArgs stores arguments for a batched Go symbol lookup.
+type symbolsArgs struct {
+	// Path is a Go file or directory to inspect. Empty means current
+	// directory.
+	Path string `json:"path"`
+
+	// Names are symbol names to find, such as Config and Store.Append.
+	Names []string `json:"names"`
+
+	// Package optionally narrows every lookup by package name or relative
+	// dir.
+	Package string `json:"package"`
+
+	// File optionally narrows every lookup by file path or relative file
+	// path.
+	File string `json:"file"`
+
+	// IncludeUnexported permits matching lowercase package symbols when
+	// true.
+	IncludeUnexported bool `json:"includeUnexported"`
+
+	// Declaration controls how much source is returned: full, signature, or
+	// none. Empty defaults to signature for batched lookups.
+	Declaration string `json:"declaration"`
+}
+
 // packageInfo stores parsed Go package metadata and symbols.
 type packageInfo struct {
 	dir     string
@@ -197,6 +231,7 @@ func main() {
 			goFileSymbolsSpec(),
 			goSearchSymbolsSpec(),
 			goSymbolSpec(),
+			goSymbolsSpec(),
 		},
 	}); err != nil {
 
@@ -228,7 +263,9 @@ func goListSymbolsSpec() sdk.Tool {
 						"or var.",
 				),
 				"includeUnexported": boolSchema(
-					"Include lowercase package symbols.",
+					"Include lowercase package " +
+						"symbols. Set true when " +
+						"inspecting package internals.",
 				),
 				"limit": integerSchema(
 					"Maximum symbols to render. " +
@@ -265,7 +302,9 @@ func goPackageSymbolsSpec() sdk.Tool {
 						"or var.",
 				),
 				"includeUnexported": boolSchema(
-					"Include lowercase package symbols.",
+					"Include lowercase package " +
+						"symbols. Set true when " +
+						"inspecting package internals.",
 				),
 				"limit": integerSchema(
 					"Maximum symbols to render. " +
@@ -299,7 +338,9 @@ func goFileSymbolsSpec() sdk.Tool {
 						"or var.",
 				),
 				"includeUnexported": boolSchema(
-					"Include lowercase package symbols.",
+					"Include lowercase package " +
+						"symbols. Set true when " +
+						"inspecting package internals.",
 				),
 				"limit": integerSchema(
 					"Maximum symbols to render. " +
@@ -322,8 +363,9 @@ func goSearchSymbolsSpec() sdk.Tool {
 		Description: "Search Go symbols by name, file, package, " +
 			"signature, or godoc substring. Use this before grep " +
 			"when you know a concept or name fragment but not the " +
-			"exact symbol; follow with go_symbol for citation-ready " +
-			"details.",
+			"exact symbol; follow with go_symbols for batched " +
+			"citation-ready details or go_symbol for one focused " +
+			"lookup.",
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -343,7 +385,9 @@ func goSearchSymbolsSpec() sdk.Tool {
 						"or var.",
 				),
 				"includeUnexported": boolSchema(
-					"Include lowercase package symbols.",
+					"Include lowercase package " +
+						"symbols. Set true when " +
+						"inspecting package internals.",
 				),
 				"limit": integerSchema(
 					"Maximum symbols to render. " +
@@ -366,7 +410,8 @@ func goSymbolSpec() sdk.Tool {
 		Description: "Return structured godoc, function signatures, " +
 			"and optional source declaration for one Go symbol. Use " +
 			"instead of read+grep when you know the function, type, " +
-			"method, const, or var name.",
+			"method, const, or var name; use go_symbols when you " +
+			"need details for several known symbols.",
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -388,7 +433,9 @@ func goSymbolSpec() sdk.Tool {
 						"file path filter.",
 				),
 				"includeUnexported": boolSchema(
-					"Permit lowercase package symbols.",
+					"Permit lowercase package symbols. " +
+						"Set true when inspecting " +
+						"package internals.",
 				),
 				"declaration": stringSchema(
 					"Declaration detail: full, " +
@@ -404,9 +451,72 @@ func goSymbolSpec() sdk.Tool {
 	}
 }
 
+// goSymbolsSpec returns the schema for batched symbol source lookup.
+func goSymbolsSpec() sdk.Tool {
+	return sdk.Tool{
+		Name: toolGoSymbols,
+		Description: "Return structured godoc, signatures, line ranges, " +
+			"and optional declarations for several known Go symbols " +
+			"in one call. Use after go_search_symbols when you need " +
+			"citation-ready evidence for a small set of functions, " +
+			"types, methods, consts, or vars.",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"path": stringSchema(
+					"Go file or directory to inspect. " +
+						"Defaults to .",
+				),
+				"names": arrayStringSchema(
+					"Symbol names, such as Config and " +
+						"Store.Append. Keep " +
+						"batches focused; at most " +
+						"32 names are accepted.",
+				),
+				"package": stringSchema(
+					"Optional package name or relative " +
+						"directory filter applied " +
+						"to every name.",
+				),
+				"file": stringSchema(
+					"Optional file path or relative " +
+						"file path filter applied " +
+						"to every name.",
+				),
+				"includeUnexported": boolSchema(
+					"Permit lowercase package symbols. " +
+						"Set true when inspecting " +
+						"package internals.",
+				),
+				"declaration": stringSchema(
+					"Declaration detail: signature, " +
+						"none, or full. Defaults " +
+						"to signature; use full " +
+						"only when bodies are needed.",
+				),
+			},
+			"required": []string{
+				"names",
+			},
+		},
+		Handler: handleGoSymbols,
+	}
+}
+
 // stringSchema returns a JSON schema property for a string argument.
 func stringSchema(description string) map[string]any {
 	return map[string]any{"type": "string", "description": description}
+}
+
+// arrayStringSchema returns a JSON schema property for a string array argument.
+func arrayStringSchema(description string) map[string]any {
+	return map[string]any{
+		"type":        "array",
+		"description": description,
+		"items": map[string]any{
+			"type": "string",
+		},
+	}
 }
 
 // boolSchema returns a JSON schema property for a boolean argument.
@@ -487,6 +597,21 @@ func handleGoSymbol(ctx context.Context,
 		return sdk.ToolResult{}, err
 	}
 	text, err := runGoSymbol(call.Arguments)
+	if err != nil {
+		return sdk.ToolResult{}, err
+	}
+
+	return sdk.TextResult(text), nil
+}
+
+// handleGoSymbols executes go_symbols through the SDK handler.
+func handleGoSymbols(ctx context.Context,
+	call sdk.ToolCall) (sdk.ToolResult, error) {
+
+	if err := ctx.Err(); err != nil {
+		return sdk.ToolResult{}, err
+	}
+	text, err := runGoSymbols(call.Arguments)
 	if err != nil {
 		return sdk.ToolResult{}, err
 	}
@@ -600,6 +725,33 @@ func runGoSearchSymbols(raw json.RawMessage) (string, error) {
 	), nil
 }
 
+// runGoSymbols returns source and documentation for several specific symbols.
+func runGoSymbols(raw json.RawMessage) (string, error) {
+	var args symbolsArgs
+	if err := decodeArguments(raw, &args); err != nil {
+		return "", err
+	}
+	names, err := normalizeBatchNames(args.Names)
+	if err != nil {
+		return "", err
+	}
+	declarationMode, err := normalizeBatchDeclarationMode(args.Declaration)
+	if err != nil {
+		return "", err
+	}
+	path := defaultPath(args.Path)
+	packages, err := parsePackages(path)
+	if err != nil {
+		return "", err
+	}
+	filter := symbolFilter{includeUnexported: args.IncludeUnexported}
+	symbols := filterSymbols(allSymbols(packages), filter)
+
+	return formatBatchSymbols(
+		names, symbols, args, declarationMode,
+	), nil
+}
+
 // runGoSymbol returns source and documentation for a specific symbol.
 func runGoSymbol(raw json.RawMessage) (string, error) {
 	var args symbolArgs
@@ -634,6 +786,38 @@ func runGoSymbol(raw json.RawMessage) (string, error) {
 	}
 
 	return formatSymbolDetail(matches[0], declarationMode), nil
+}
+
+// normalizeBatchNames returns trimmed lookup names for a batched request.
+func normalizeBatchNames(names []string) ([]string, error) {
+	var normalized []string
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		normalized = append(normalized, name)
+	}
+	if len(normalized) == 0 {
+		return nil, fmt.Errorf("names must contain at least one symbol")
+	}
+	if len(normalized) > maxBatchSymbolNames {
+		return nil, fmt.Errorf("names must contain at most %d symbols",
+			maxBatchSymbolNames)
+	}
+
+	return normalized, nil
+}
+
+// normalizeBatchDeclarationMode returns the source rendering mode for batched
+// lookups.
+func normalizeBatchDeclarationMode(mode string) (string, error) {
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	if mode == "" {
+		return declarationSignature, nil
+	}
+
+	return normalizeDeclarationMode(mode)
 }
 
 // decodeArguments unmarshals a possibly empty JSON object into out.
@@ -1184,6 +1368,74 @@ func formatSymbolSearch(root string, packages []packageInfo,
 	return strings.TrimRight(builder.String(), "\n")
 }
 
+// formatBatchSymbols renders lookup results, missing names, and ambiguous
+// names for one batched symbol request.
+func formatBatchSymbols(names []string, symbols []symbolInfo, args symbolsArgs,
+	declarationMode string) string {
+
+	var builder strings.Builder
+	resolved := 0
+	missing := make([]string, 0)
+	ambiguous := make(map[string][]symbolInfo)
+	var sections []string
+	for _, name := range names {
+		matches := matchSymbols(symbols, symbolArgs{
+			Name:              name,
+			Package:           args.Package,
+			File:              args.File,
+			IncludeUnexported: args.IncludeUnexported,
+		})
+		switch len(matches) {
+		case 0:
+			missing = append(missing, name)
+
+		case 1:
+			resolved++
+			sections = append(
+				sections,
+				formatSymbolDetail(matches[0], declarationMode),
+			)
+
+		default:
+			ambiguous[name] = matches
+		}
+	}
+
+	fmt.Fprintf(&builder, "symbols requested: %d\n", len(names))
+	fmt.Fprintf(&builder, "symbols resolved: %d\n", resolved)
+	fmt.Fprintf(&builder, "declaration: %s\n", declarationMode)
+	if len(missing) > 0 {
+		fmt.Fprintln(&builder, "\nmissing:")
+		for _, name := range missing {
+			fmt.Fprintf(&builder, "- %s\n", name)
+		}
+	}
+	if len(ambiguous) > 0 {
+		writeAmbiguousBatchSymbols(&builder, names, ambiguous)
+	}
+	for _, section := range sections {
+		fmt.Fprintf(&builder, "\n---\n%s\n", section)
+	}
+
+	return strings.TrimRight(builder.String(), "\n")
+}
+
+// writeAmbiguousBatchSymbols renders ambiguous lookup candidates in request
+// order.
+func writeAmbiguousBatchSymbols(builder *strings.Builder, names []string,
+	ambiguous map[string][]symbolInfo) {
+
+	fmt.Fprintln(builder, "\nambiguous:")
+	for _, name := range names {
+		matches, ok := ambiguous[name]
+		if !ok {
+			continue
+		}
+		fmt.Fprintf(builder, "- %s\n", name)
+		writeIndentedSymbolRows(builder, matches)
+	}
+}
+
 // formatSymbolList renders symbols in the requested grouping.
 func formatSymbolList(root string, packages []packageInfo, symbols []symbolInfo,
 	groupBy string, limit int) string {
@@ -1250,6 +1502,16 @@ func writeSymbolRows(builder *strings.Builder, symbols []symbolInfo) {
 	for _, symbol := range symbols {
 		fmt.Fprintf(
 			builder, "- %s %s %s:%d\n", symbol.kind, symbol.name,
+			symbol.relFile, symbol.line,
+		)
+	}
+}
+
+// writeIndentedSymbolRows renders compact symbol rows under another list item.
+func writeIndentedSymbolRows(builder *strings.Builder, symbols []symbolInfo) {
+	for _, symbol := range symbols {
+		fmt.Fprintf(
+			builder, "  - %s %s %s:%d\n", symbol.kind, symbol.name,
 			symbol.relFile, symbol.line,
 		)
 	}

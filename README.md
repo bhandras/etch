@@ -269,10 +269,10 @@ go run ./cmd/harness tool project_files --args '{"path":".","limit":200}'
 
 The repository also includes a standard-library-only Go intelligence plugin at
 `plugins/go-intel`. It is intentionally a plugin, not core harness behavior. It
-uses `go/parser`, `go/ast`, and `go/token` to list symbols by package or file
-to search symbols by name, file, package, signature, or godoc, and to return a
-specific symbol's structured godoc, function or method signature, and optional
-declaration source:
+uses `go/parser`, `go/ast`, and `go/token` to list symbols by package or file,
+search symbols by name, file, package, signature, or godoc, and return
+structured godoc, function or method signatures, and optional declaration
+source for one or more symbols:
 
 ```toml
 [[plugins]]
@@ -286,6 +286,7 @@ go run ./cmd/harness tool go_list_symbols --args '{"path":"internal/session","gr
 go run ./cmd/harness tool go_package_symbols --args '{"path":"internal","package":"session"}'
 go run ./cmd/harness tool go_file_symbols --args '{"path":"internal/session/session.go"}'
 go run ./cmd/harness tool go_search_symbols --args '{"path":"internal/session","query":"append"}'
+go run ./cmd/harness tool go_symbols --args '{"path":"internal/session","names":["Store.Append","Store.ReadAll"],"declaration":"signature"}'
 go run ./cmd/harness tool go_symbol --args '{"path":"internal/session","name":"Store.Append"}'
 go run ./cmd/harness tool go_symbol --args '{"path":"internal/session","name":"Store.Append","declaration":"signature"}'
 ```
@@ -308,7 +309,7 @@ max_concurrent = 2
 name = "explore"
 description = "Read-only exploration for finding relevant files and likely causes."
 system_prompt = "Explore independently and return concise findings for the parent."
-allowed_tools = ["ls", "read", "find", "grep", "go_search_symbols", "go_package_symbols", "go_symbol"]
+allowed_tools = ["ls", "read", "find", "grep", "go_search_symbols", "go_symbols", "go_package_symbols", "go_symbol"]
 max_tool_rounds = 16
 auto_compact = true
 ```
