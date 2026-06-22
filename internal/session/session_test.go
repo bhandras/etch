@@ -42,6 +42,37 @@ func TestCreateWritesSessionStart(t *testing.T) {
 	}
 }
 
+// TestCreateWithOptionsWritesRelationshipMetadata verifies child sessions keep
+// enough durable metadata to be traced back to their parent task call.
+func TestCreateWithOptionsWritesRelationshipMetadata(t *testing.T) {
+	store, _, err := CreateWithOptions(t.TempDir(), CreateOptions{
+		CWD:              "/work/project",
+		Title:            "inspect parser",
+		ParentSessionID:  "parent_session",
+		ParentToolCallID: "call_task",
+		SubagentProfile:  "review",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	events, err := ReadAll(store.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var data StartedData
+	if err := json.Unmarshal(events[0].Data, &data); err != nil {
+		t.Fatal(err)
+	}
+	if data.ParentSessionID != "parent_session" ||
+		data.ParentToolCallID != "call_task" ||
+		data.SubagentProfile != "review" {
+
+		t.Fatalf("unexpected start metadata: %#v", data)
+	}
+}
+
 // TestAppendChainsMessageParents verifies that appended messages can form a
 // parent-linked turn chain.
 func TestAppendChainsMessageParents(t *testing.T) {

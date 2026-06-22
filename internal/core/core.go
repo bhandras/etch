@@ -41,6 +41,17 @@ type TurnRequest struct {
 	// CWD records the working directory associated with the session.
 	CWD string
 
+	// ParentSessionID links child-agent sessions to their parent session.
+	ParentSessionID string
+
+	// ParentToolCallID links child-agent sessions to the parent tool call
+	// that created them.
+	ParentToolCallID string
+
+	// SubagentProfile records the configured child-agent profile name when
+	// this turn belongs to a child agent.
+	SubagentProfile string
+
 	// SystemText stores optional system instructions for the model context.
 	SystemText string
 
@@ -395,7 +406,18 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 					Text: blockedToolText(reason),
 				}
 			} else {
-				result, err = executeTool(ctx, req.Tools, call)
+				toolCtx := tool.WithExecutionContext(
+					ctx,
+					tool.ExecutionContext{
+						SessionID:        store.ID(),
+						SessionPath:      store.Path(),
+						AssistantEventID: assistant.ID,
+						ToolCallID:       call.ID,
+					},
+				)
+				result, err = executeTool(
+					toolCtx, req.Tools, call,
+				)
 				if err != nil {
 					if errors.Is(err, context.Canceled) ||
 						errors.Is(
@@ -811,8 +833,15 @@ func openTurnStore(req TurnRequest) (*session.Store, []session.Event, error) {
 		return store, events, nil
 	}
 
-	store, started, err := session.Create(
-		req.SessionDir, req.CWD, req.Prompt,
+	store, started, err := session.CreateWithOptions(
+		req.SessionDir,
+		session.CreateOptions{
+			CWD:              req.CWD,
+			Title:            req.Prompt,
+			ParentSessionID:  req.ParentSessionID,
+			ParentToolCallID: req.ParentToolCallID,
+			SubagentProfile:  req.SubagentProfile,
+		},
 	)
 	if err != nil {
 		return nil, nil, err

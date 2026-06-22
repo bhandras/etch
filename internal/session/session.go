@@ -102,6 +102,17 @@ type Event struct {
 type StartedData struct {
 	// CWD records the working directory active when the session began.
 	CWD string `json:"cwd"`
+
+	// ParentSessionID links child-agent sessions to the parent session that
+	// delegated work.
+	ParentSessionID string `json:"parentSessionId,omitempty"`
+
+	// ParentToolCallID links child-agent sessions to the parent tool call
+	// that created them.
+	ParentToolCallID string `json:"parentToolCallId,omitempty"`
+
+	// SubagentProfile records the configured child-agent profile name.
+	SubagentProfile string `json:"subagentProfile,omitempty"`
 }
 
 // ContentPart is one typed piece of message content.
@@ -246,6 +257,24 @@ type IndexEntry struct {
 	Title string `json:"title"`
 }
 
+// CreateOptions carries optional metadata for a newly created session.
+type CreateOptions struct {
+	// CWD records the working directory active when the session begins.
+	CWD string
+
+	// Title is the prompt-derived title written to the local index.
+	Title string
+
+	// ParentSessionID links a child session back to its parent session.
+	ParentSessionID string
+
+	// ParentToolCallID links a child session back to the parent tool call.
+	ParentToolCallID string
+
+	// SubagentProfile records the configured child-agent profile name.
+	SubagentProfile string
+}
+
 // Store appends events to one session file and tracks the current leaf event.
 // It is safe for concurrent Append, LastID, and Close calls.
 type Store struct {
@@ -260,6 +289,15 @@ type Store struct {
 // Create opens a new session log in dir, writes its session.started event, and
 // appends a summary row to the local index.
 func Create(dir string, cwd string, title string) (*Store, *Event, error) {
+	return CreateWithOptions(dir, CreateOptions{
+		CWD:   cwd,
+		Title: title,
+	})
+}
+
+// CreateWithOptions opens a new session log with optional relationship
+// metadata and appends a summary row to the local index.
+func CreateWithOptions(dir string, opts CreateOptions) (*Store, *Event, error) {
 	if err := os.MkdirAll(dir, dirPermissions); err != nil {
 		return nil, nil, fmt.Errorf("create session dir: %w", err)
 	}
@@ -285,7 +323,10 @@ func Create(dir string, cwd string, title string) (*Store, *Event, error) {
 		file: file,
 	}
 	event, err := store.Append(EventSessionStarted, "", StartedData{
-		CWD: cwd,
+		CWD:              opts.CWD,
+		ParentSessionID:  opts.ParentSessionID,
+		ParentToolCallID: opts.ParentToolCallID,
+		SubagentProfile:  opts.SubagentProfile,
 	})
 	if err != nil {
 		closeErr := file.Close()
@@ -301,8 +342,8 @@ func Create(dir string, cwd string, title string) (*Store, *Event, error) {
 		ID:        sessionID,
 		Path:      path,
 		CreatedAt: event.Time,
-		CWD:       cwd,
-		Title:     TitleFromPrompt(title),
+		CWD:       opts.CWD,
+		Title:     TitleFromPrompt(opts.Title),
 	}
 	if err := appendIndexEntry(dir, entry); err != nil {
 		closeErr := file.Close()

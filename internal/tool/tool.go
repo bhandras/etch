@@ -42,6 +42,24 @@ type Result struct {
 	Text string `json:"text"`
 }
 
+// ExecutionContext describes the session and parent call around a tool run.
+type ExecutionContext struct {
+	// SessionID is the durable session currently executing the tool.
+	SessionID string
+
+	// SessionPath is the JSONL log path for the current session.
+	SessionPath string
+
+	// AssistantEventID is the assistant event that requested this tool.
+	AssistantEventID string
+
+	// ToolCallID is the provider-assigned tool call identifier.
+	ToolCallID string
+}
+
+// executionContextKey stores ExecutionContext values in context.Context.
+type executionContextKey struct{}
+
 // Tool executes one model-callable builtin operation.
 type Tool interface {
 	// Spec returns the model-facing tool schema.
@@ -49,6 +67,20 @@ type Tool interface {
 
 	// Execute runs the tool with raw JSON arguments.
 	Execute(ctx context.Context, arguments string) (Result, error)
+}
+
+// WithExecutionContext returns ctx annotated with tool execution metadata.
+func WithExecutionContext(ctx context.Context,
+	meta ExecutionContext) context.Context {
+
+	return context.WithValue(ctx, executionContextKey{}, meta)
+}
+
+// ExecutionContextFrom returns tool execution metadata from ctx when present.
+func ExecutionContextFrom(ctx context.Context) (ExecutionContext, bool) {
+	meta, ok := ctx.Value(executionContextKey{}).(ExecutionContext)
+
+	return meta, ok
 }
 
 // CallExecutor executes a tool with access to the complete model call.

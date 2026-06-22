@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -406,6 +407,58 @@ func TestRunTurnExecutesToolCalls(t *testing.T) {
 	}
 	if events[4].Type != session.EventToolMessage {
 		t.Fatalf("expected tool message event, got %q", events[4].Type)
+	}
+}
+
+// TestRunTurnProvidesToolExecutionContext verifies stateful tools can observe
+// the durable parent session and tool-call metadata around their execution.
+func TestRunTurnProvidesToolExecutionContext(t *testing.T) {
+	recording := &contextRecordingTool{}
+	registry := tool.NewRegistry()
+	registry.Register(recording)
+	client := &scriptedToolClient{
+		events: [][]model.Event{
+			{
+				{
+					Type: model.EventToolCall,
+					ToolCall: model.ToolCall{
+						ID:        "call_context",
+						Name:      "record_context",
+						Arguments: `{}`,
+					},
+				},
+				{
+					Type: model.EventDone,
+				},
+			},
+			{
+				{
+					Type: model.EventTextDelta,
+					Text: "done",
+				},
+				{
+					Type: model.EventDone,
+				},
+			},
+		},
+	}
+
+	result, err := RunTurn(context.Background(), TurnRequest{
+		Prompt:     "record context",
+		SessionDir: t.TempDir(),
+		CWD:        "/work/project",
+		Model:      client,
+		Tools:      registry,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recording.meta.SessionID != result.SessionID ||
+		recording.meta.SessionPath != result.SessionPath ||
+		recording.meta.ToolCallID != "call_context" ||
+		recording.meta.AssistantEventID == "" {
+
+		t.Fatalf("unexpected execution context: %#v", recording.meta)
 	}
 }
 
@@ -1141,6 +1194,34 @@ type scriptedToolClient struct {
 
 	// requests stores the model requests received by the fake client.
 	requests []model.Request
+}
+
+// contextRecordingTool captures the tool execution context supplied by core.
+type contextRecordingTool struct {
+	// meta stores the last context metadata observed by Execute.
+	meta tool.ExecutionContext
+}
+
+// Spec returns the schema for the context-recording test tool.
+func (t *contextRecordingTool) Spec() model.ToolSpec {
+	return model.ToolSpec{
+		Name:        "record_context",
+		Description: "Record the execution context.",
+		Parameters:  json.RawMessage(`{"type":"object"}`),
+	}
+}
+
+// Execute stores the execution context attached by the core dispatcher.
+func (t *contextRecordingTool) Execute(ctx context.Context, arguments string) (
+	tool.Result, error) {
+
+	meta, ok := tool.ExecutionContextFrom(ctx)
+	if !ok {
+		return tool.Result{}, fmt.Errorf("missing execution context")
+	}
+	t.meta = meta
+
+	return tool.Result{Text: "recorded"}, nil
 }
 
 // Stream returns the next scripted event stream.
