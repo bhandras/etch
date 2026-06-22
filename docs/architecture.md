@@ -346,6 +346,18 @@ name = "example"
 command = "go run ./plugins/example/main.go"
 timeout_seconds = 30
 disabled = false
+
+[subagents]
+enabled = false
+max_per_turn = 4
+max_concurrent = 2
+
+[[subagents.profile]]
+name = "explore"
+description = "Read-only codebase exploration."
+allowed_tools = ["ls", "read", "find", "grep"]
+max_tool_rounds = 16
+auto_compact = true
 ```
 
 `sample-config.toml` is the canonical human-readable inventory of supported
@@ -727,6 +739,64 @@ MCP-imported tool
 Internally each tool should still carry its source, timeout, permission policy,
 and output limits.
 
+## Subagents
+
+Subagents are configured child-agent profiles exposed to the parent model
+through the `task` tool. They are not plugins and they are not extra threads in
+the parent context. A subagent is another ordinary core turn running in a child
+JSONL session with its own provider/model settings, system instructions, tool
+allowlist, tool-loop limit, and compaction settings.
+
+Profiles live in `.harness/config.toml`:
+
+```toml
+[subagents]
+enabled = true
+max_per_turn = 4
+max_concurrent = 2
+
+[[subagents.profile]]
+name = "review"
+description = "Read-only reviewer for correctness bugs and missing tests."
+provider = "openai"
+model = "gpt-5.5"
+openai_api = "responses"
+reasoning_effort = "medium"
+reasoning_summary = "auto"
+system_prompt_file = ".harness/subagents/review.md"
+allowed_tools = ["ls", "read", "find", "grep", "go_package_symbols"]
+max_tool_rounds = 20
+auto_compact = true
+auto_compact_threshold_tokens = 80000
+```
+
+The parent model sees the configured profile names and descriptions in the
+`task` tool schema. A task call includes a profile name, a concrete task, and
+optional focused context. The child prompt is admitted into a new session and
+the child result is returned to the parent as one compact tool result containing
+the child session id, duration, model/tool counts, final answer, and copyable
+inspection commands.
+
+Child sessions extend `session.started` with optional `parentSessionId`,
+`parentToolCallId`, and `subagentProfile` fields. This keeps subagent work
+inspectable without mixing the full child transcript into the parent context.
+The parent session stores the compact `message.tool` result; the child session
+stores the full exploration, tool calls, reasoning summaries, usage, and
+compaction events.
+
+Tool access is allowlist-based. A profile can allow built-in tools and
+configured plugin tools by model-facing name. The first implementation removes
+`task` from child allowlists, so subagents do not spawn nested subagents even if
+the profile lists it. Runtime task arguments may lower `maxToolRounds`, but
+cannot raise the configured profile limit.
+
+The terminal presentation should stay compact. The parent UI renders `task` as
+a normal tool call and appends the compact task result. Full child output stays
+in the child JSONL session and can be inspected with `harness show <child-id>`
+or continued with `harness resume <child-id>`. A richer future terminal can show
+live per-subagent status rows, but it should still avoid streaming every child
+event into the parent transcript by default.
+
 ## Plugins
 
 Plugins are native extensions of the agent runtime. The first implemented slice
@@ -956,7 +1026,7 @@ same model and session interfaces instead of shaping the kernel.
 These features are useful, but they should begin outside the kernel:
 
 ```text
-subagents
+nested subagents
 plan mode
 browser automation
 MCP server management

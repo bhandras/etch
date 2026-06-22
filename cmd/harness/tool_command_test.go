@@ -2,11 +2,14 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"harness/internal/session"
 )
 
 // TestToolLSRunsDirectly verifies the manual builtin tool smoke path.
@@ -288,4 +291,91 @@ func TestToolPluginRunsDirectly(t *testing.T) {
 	if strings.TrimSpace(stdout.String()) != "plugin direct" {
 		t.Fatalf("unexpected plugin output: %q", stdout.String())
 	}
+}
+
+// TestToolTaskRunsConfiguredSubagentDirectly verifies the task tool can launch
+// a configured child session through the direct tool smoke path.
+func TestToolTaskRunsConfiguredSubagentDirectly(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	if err := os.Mkdir(filepath.Join(root, ".harness"), 0o755); err != nil {
+		t.Fatalf("make config dir: %v", err)
+	}
+	writeFile(
+		t, filepath.Join(root, ".harness", "config.toml"),
+		`
+[provider]
+name = "echo"
+
+[subagents]
+enabled = true
+max_per_turn = 2
+
+[[subagents.profile]]
+name = "explore"
+description = "Echo-backed test profile."
+system_prompt = "Return the delegated task."
+allowed_tools = ["ls"]
+max_tool_rounds = 3
+`,
+	)
+
+	var stdout, stderr bytes.Buffer
+	code := run(
+		[]string{
+			"tool",
+			"task",
+			"--args",
+			`{"profile":"explore","task":"say hello"}`,
+		},
+		&stdout,
+		&stderr,
+	)
+	if code != 0 {
+		t.Fatalf("task tool failed: code=%d stdout=%q stderr=%q", code,
+			stdout.String(), stderr.String())
+	}
+	got := stdout.String()
+	for _, want := range []string{
+		"Task explore completed.",
+		"Result:",
+		"say hello",
+		"Inspect: harness show ",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("task output missing %q:\n%s", want, got)
+		}
+	}
+	sessionID := taskOutputSessionID(t, got)
+	events, err := session.ReadAll(
+		filepath.Join(
+			root, ".harness", "sessions", sessionID+".jsonl",
+		),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var started session.StartedData
+	if err := json.Unmarshal(events[0].Data, &started); err != nil {
+		t.Fatal(err)
+	}
+	if started.SubagentProfile != "explore" ||
+		started.ParentToolCallID != "manual" {
+
+		t.Fatalf("unexpected child session metadata: %#v", started)
+	}
+}
+
+// taskOutputSessionID extracts the child session id from task output.
+func taskOutputSessionID(t *testing.T, output string) string {
+	t.Helper()
+	for _, line := range strings.Split(output, "\n") {
+		value, ok := strings.CutPrefix(line, "Session: ")
+		if ok {
+			return strings.TrimSpace(value)
+		}
+	}
+	t.Fatalf("task output missing session id:\n%s", output)
+
+	return ""
 }

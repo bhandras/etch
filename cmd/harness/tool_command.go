@@ -22,6 +22,9 @@ func configuredToolRegistry(ctx context.Context, cfg cliConfig, cwd string) (
 	if err != nil {
 		return nil, nil, err
 	}
+	if len(activeSubagentProfiles(cfg.subagents)) > 0 {
+		registry.Register(newTaskTool(cfg, cwd, registry))
+	}
 	closePlugins := func() {
 		for _, client := range clients {
 			_ = client.Close()

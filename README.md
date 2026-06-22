@@ -56,6 +56,8 @@ Harness currently has:
 - external process hooks for session, turn, prompt, context, tool, and
   compaction events
 - explicit config-based stdio plugin tools over a small JSONL protocol
+- config-defined subagent profiles exposed through the `task` delegation tool,
+  with child runs stored as separate JSONL sessions
 - streaming terminal feedback with an animated working line, grouped tool-call
   batches, compact tool output, and line-numbered colored live diffs for file
   edits and replacements
@@ -285,6 +287,46 @@ go run ./cmd/harness tool go_file_symbols --args '{"path":"internal/session/sess
 go run ./cmd/harness tool go_symbol --args '{"path":"internal/session","name":"Store.Append"}'
 go run ./cmd/harness tool go_symbol --args '{"path":"internal/session","name":"Store.Append","declaration":"signature"}'
 ```
+
+## Subagents
+
+Subagents are configured child-agent profiles. When enabled, Harness registers a
+model-callable `task` tool. The parent model sees the configured profile names
+and descriptions, then delegates isolated work to one of them. Each delegated
+task runs through the same core turn loop as the parent, but writes its own JSONL
+child session and returns only a compact result to the parent.
+
+```toml
+[subagents]
+enabled = true
+max_per_turn = 4
+max_concurrent = 2
+
+[[subagents.profile]]
+name = "explore"
+description = "Read-only exploration for finding relevant files and likely causes."
+system_prompt = "Explore independently and return concise findings for the parent."
+allowed_tools = ["ls", "read", "find", "grep", "go_package_symbols", "go_symbol"]
+max_tool_rounds = 16
+auto_compact = true
+```
+
+Profiles can override provider, model, OpenAI API mode, reasoning settings,
+system prompt, allowed tools, and child compaction limits. Empty provider fields
+inherit from the parent chat configuration. The tool allowlist can include
+built-ins and configured plugin tools; `task` itself is removed from child
+allowlists so subagents do not nest in the first implementation.
+
+The direct tool path is useful for smoke testing a profile without waiting for a
+parent model to choose it:
+
+```bash
+go run ./cmd/harness tool task \
+  --args '{"profile":"explore","task":"Find where config validation lives."}'
+```
+
+The parent-visible task result includes the child session id plus `harness show`
+and `harness resume` commands for inspecting or continuing the child transcript.
 
 ## Sessions and Chat Commands
 

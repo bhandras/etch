@@ -102,6 +102,8 @@ type cliConfig struct {
 	configEffective     bool
 	hooks               []harnessconfig.HookConfig
 	plugins             []harnessconfig.PluginConfig
+	subagents           harnessconfig.SubagentConfig
+	configPath          string
 }
 
 // main runs the command and exits with the returned status code.

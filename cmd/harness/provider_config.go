@@ -137,6 +137,8 @@ func configCLIConfigDefaults(cfg harnessconfig.Config) cliConfig {
 		baseURLExplicit:   cfg.OpenAI.BaseURL != "",
 		hooks:             cfg.Hooks,
 		plugins:           cfg.Plugins,
+		subagents:         cfg.Subagents,
+		configPath:        cfg.Path,
 	}
 }
 

@@ -132,6 +132,8 @@ func formatEffectiveConfig(cfg harnessconfig.Config) string {
 	)
 	fmt.Fprintln(&out)
 	writeHooksAndPlugins(&out, cfg.Hooks, cfg.Plugins)
+	fmt.Fprintln(&out)
+	writeSubagents(&out, cfg.Subagents)
 
 	return strings.TrimRight(out.String(), "\n")
 }
@@ -162,6 +164,11 @@ func formatConfigCheck(cfg harnessconfig.Config) string {
 	fmt.Fprintf(
 		&out, "- plugins: %d enabled, %d disabled",
 		enabledPlugins(cfg.Plugins), disabledPlugins(cfg.Plugins),
+	)
+	fmt.Fprintf(
+		&out, "\n- subagents: %d enabled, %d disabled",
+		enabledSubagentProfiles(cfg.Subagents),
+		disabledSubagentProfiles(cfg.Subagents),
 	)
 
 	return out.String()
@@ -208,6 +215,8 @@ func writeRawConfigSections(out *strings.Builder, cfg harnessconfig.Config) {
 	)
 	fmt.Fprintln(out)
 	writeHooksAndPlugins(out, cfg.Hooks, cfg.Plugins)
+	fmt.Fprintln(out)
+	writeSubagents(out, cfg.Subagents)
 }
 
 // writeConfigPath renders the source path or an explicit missing marker.
@@ -248,6 +257,34 @@ func writeHooksAndPlugins(out *strings.Builder,
 			out, "- %d: %s %s%s\n", i+1, displayString(plugin.Name),
 			displayString(plugin.Command),
 			disabledSuffix(plugin.Disabled),
+		)
+	}
+}
+
+// writeSubagents renders configured child-agent profiles.
+func writeSubagents(out *strings.Builder,
+	subagents harnessconfig.SubagentConfig) {
+
+	fmt.Fprintln(out, "Subagents")
+	fmt.Fprintf(out, "- enabled: %t\n", subagents.Enabled)
+	fmt.Fprintf(
+		out, "- max per turn: %s\n", displayInt(subagents.MaxPerTurn),
+	)
+	fmt.Fprintf(
+		out, "- max concurrent: %s\n",
+		displayInt(subagents.MaxConcurrent),
+	)
+	fmt.Fprintf(
+		out, "- profiles: %d (%d enabled, %d disabled)\n",
+		len(subagents.Profiles), enabledSubagentProfiles(subagents),
+		disabledSubagentProfiles(subagents),
+	)
+	for i, profile := range subagents.Profiles {
+		fmt.Fprintf(
+			out, "- %d: %s %s%s\n", i+1,
+			displayString(profile.Name),
+			displayString(profile.Description),
+			disabledSuffix(profile.Disabled),
 		)
 	}
 }
@@ -333,6 +370,27 @@ func disabledPlugins(plugins []harnessconfig.PluginConfig) int {
 	return count
 }
 
+// enabledSubagentProfiles counts configured profiles advertised to the model.
+func enabledSubagentProfiles(subagents harnessconfig.SubagentConfig) int {
+	if !subagents.Enabled {
+		return 0
+	}
+
+	return len(subagents.Profiles) - disabledSubagentProfiles(subagents)
+}
+
+// disabledSubagentProfiles counts hidden subagent profiles.
+func disabledSubagentProfiles(subagents harnessconfig.SubagentConfig) int {
+	count := 0
+	for _, profile := range subagents.Profiles {
+		if profile.Disabled {
+			count++
+		}
+	}
+
+	return count
+}
+
 // displayString returns a printable value marker for optional strings.
 func displayString(value string) string {
 	if strings.TrimSpace(value) == "" {
@@ -390,7 +448,7 @@ func fieldsByTable(
 func configSchemaTableOrder() []string {
 	return []string{
 		"session", "context", "provider", "openai", "hooks",
-		"plugins",
+		"plugins", "subagents", "subagents.profile",
 	}
 }
 
@@ -398,6 +456,9 @@ func configSchemaTableOrder() []string {
 func configSchemaHeader(table string) string {
 	switch table {
 	case "hooks", "plugins":
+		return "[[" + table + "]]"
+
+	case "subagents.profile":
 		return "[[" + table + "]]"
 
 	default:

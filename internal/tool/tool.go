@@ -34,6 +34,9 @@ const (
 
 	// NameBash is the model-facing name for bounded bash command execution.
 	NameBash = "bash"
+
+	// NameTask is the model-facing name for configured subagent delegation.
+	NameTask = "task"
 )
 
 // Result is the text returned by a builtin tool execution.
@@ -125,6 +128,34 @@ func (r *Registry) Has(name string) bool {
 	_, ok := r.tools[name]
 
 	return ok
+}
+
+// Subset returns a registry containing only the requested existing tool names.
+func (r *Registry) Subset(names []string) (*Registry, []string) {
+	subset := NewRegistry()
+	var missing []string
+	for _, name := range names {
+		registered, ok := r.tools[name]
+		if !ok {
+			missing = append(missing, name)
+
+			continue
+		}
+		subset.Register(registered)
+	}
+
+	return subset, missing
+}
+
+// Names returns deterministic model-facing tool names in the registry.
+func (r *Registry) Names() []string {
+	names := make([]string, 0, len(r.tools))
+	for name := range r.tools {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	return names
 }
 
 // Specs returns deterministic model-facing tool schemas.

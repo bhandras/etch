@@ -151,11 +151,9 @@ func parseToolFlags(args []string, stderr io.Writer) (cliConfig, error) {
 	if err != nil {
 		return cliConfig{}, err
 	}
-	cfg := cliConfig{
-		command:  commandTool,
-		toolName: args[0],
-		plugins:  defaults.Plugins,
-	}
+	cfg := configCLIConfigDefaults(defaults)
+	cfg.command = commandTool
+	cfg.toolName = args[0]
 	fs := flag.NewFlagSet(
 		commandTool+" "+cfg.toolName, flag.ContinueOnError,
 	)
