@@ -178,6 +178,25 @@ func TestLiveStatusShowsEscapeCancelHint(t *testing.T) {
 	}
 }
 
+// TestStatusTextWithSubagentsAddsActivitySuffix verifies child-agent activity
+// is visible without replacing the main working status label.
+func TestStatusTextWithSubagentsAddsActivitySuffix(t *testing.T) {
+	tests := map[int]string{
+		0: "Working",
+		1: "Working · 1 subagent",
+		2: "Working · 2 subagents",
+	}
+	for count, want := range tests {
+		if got := statusTextWithSubagents(
+			"Working", count,
+		); got != want {
+
+			t.Fatalf("status mismatch for %d:\nwant %q\ngot  %q",
+				count, want, got)
+		}
+	}
+}
+
 // TestChatObserverBuffersReasoningDeltas verifies reasoning deltas only update
 // status until the completed summary can be rendered as one markdown block.
 func TestChatObserverBuffersReasoningDeltas(t *testing.T) {

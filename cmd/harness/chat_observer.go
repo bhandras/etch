@@ -9,6 +9,7 @@ import (
 	"harness/internal/model"
 	"harness/internal/render"
 	"harness/internal/session"
+	"harness/internal/tool"
 )
 
 // chatObserver renders appended assistant and tool messages during a turn.
@@ -24,6 +25,9 @@ type chatObserver struct {
 
 	// batchedCalls stores tool IDs already shown in a batch summary.
 	batchedCalls map[string]bool
+
+	// activeSubagents stores child-agent task calls that have not returned.
+	activeSubagents map[string]bool
 
 	// streamedReasoning reports whether reasoning deltas were received.
 	streamedReasoning bool
@@ -95,6 +99,7 @@ func (o *chatObserver) EventAppended(event session.Event) {
 		o.renderer.renderAssistant(render.MessageText(message))
 
 	case session.RoleTool:
+		o.finishSubagentTool(message)
 		o.renderer.renderToolResult(message)
 
 	default:
@@ -120,11 +125,41 @@ func (o *chatObserver) ToolBatchStarted(calls []model.ToolCall) {
 // ToolCallStarted renders one live tool call immediately before execution.
 func (o *chatObserver) ToolCallStarted(call model.ToolCall) {
 	o.toolCalls++
+	o.startSubagentTool(call)
 	o.updateCannedStatus("Running tools")
 	if o.batchedCalls[call.ID] {
 		return
 	}
 	o.renderer.renderToolCall(call)
+}
+
+// startSubagentTool records a running child-agent task for status display.
+func (o *chatObserver) startSubagentTool(call model.ToolCall) {
+	if call.Name != tool.NameTask {
+		return
+	}
+	if o.activeSubagents == nil {
+		o.activeSubagents = make(map[string]bool)
+	}
+	o.activeSubagents[call.ID] = true
+	o.renderer.setActiveSubagents(len(o.activeSubagents))
+}
+
+// finishSubagentTool clears a completed child-agent task from status display.
+func (o *chatObserver) finishSubagentTool(message session.MessageData) {
+	if message.Name != tool.NameTask || len(o.activeSubagents) == 0 {
+		return
+	}
+	if message.ToolCallID != "" {
+		delete(o.activeSubagents, message.ToolCallID)
+	} else {
+		for id := range o.activeSubagents {
+			delete(o.activeSubagents, id)
+
+			break
+		}
+	}
+	o.renderer.setActiveSubagents(len(o.activeSubagents))
 }
 
 // ModelTextDelta records assistant stream progress without rendering raw

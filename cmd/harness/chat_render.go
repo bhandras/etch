@@ -115,6 +115,9 @@ type liveChatRenderer struct {
 	// statusText is the current canned working status label.
 	statusText string
 
+	// activeSubagents is the number of child-agent tasks still running.
+	activeSubagents int
+
 	// statusFrame is the current pulsing-dot animation frame index.
 	statusFrame int
 
@@ -385,7 +388,7 @@ func (r *liveChatRenderer) startStatus(text string) {
 	if r.statusCancel != nil {
 		r.statusText = text
 		if r.composer != nil {
-			r.composer.SetStatus(text)
+			r.composer.SetStatus(r.statusTextWithActivityLocked())
 
 			return
 		}
@@ -399,7 +402,7 @@ func (r *liveChatRenderer) startStatus(text string) {
 	r.statusCancel = make(chan struct{})
 	r.statusDone = make(chan struct{})
 	if r.composer != nil {
-		r.composer.SetStatus(text)
+		r.composer.SetStatus(r.statusTextWithActivityLocked())
 		go r.runStatusTicker(r.statusCancel, r.statusDone)
 
 		return
@@ -423,7 +426,27 @@ func (r *liveChatRenderer) updateStatus(text string) {
 		return
 	}
 	if r.composer != nil {
-		r.composer.SetStatus(text)
+		r.composer.SetStatus(r.statusTextWithActivityLocked())
+
+		return
+	}
+	r.redrawStatusLocked()
+}
+
+// setActiveSubagents updates the running child-agent count in the status row.
+func (r *liveChatRenderer) setActiveSubagents(count int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if count < 0 {
+		count = 0
+	}
+	r.activeSubagents = count
+	if r.statusCancel == nil || !r.style.enabled {
+		return
+	}
+	if r.composer != nil {
+		r.composer.SetStatus(r.statusTextWithActivityLocked())
 
 		return
 	}
@@ -437,6 +460,7 @@ func (r *liveChatRenderer) stopStatus() {
 	done := r.statusDone
 	r.statusCancel = nil
 	r.statusDone = nil
+	r.activeSubagents = 0
 	if r.composer != nil {
 		r.composer.ClearStatus()
 	} else {
@@ -528,17 +552,36 @@ func (r *liveChatRenderer) redrawStatusLocked() {
 	}
 	frame := statusPulseDot(r.statusFrame)
 	elapsed := formatElapsed(time.Since(r.statusStartedAt))
+	statusText := r.statusTextWithActivityLocked()
 	if !r.statusVisible {
 		fmt.Fprint(r.stdout, "\n")
 	}
 	fmt.Fprintf(
 		r.stdout, "\r%s%s%s %s (%s • ESC to cancel)%s", ansiClearLine,
-		ansiDim, frame, r.statusText, elapsed, ansiReset,
+		ansiDim, frame, statusText, elapsed, ansiReset,
 	)
 	if !r.statusVisible {
 		fmt.Fprint(r.stdout, "\n", ansiMoveUpOne)
 	}
 	r.statusVisible = true
+}
+
+// statusTextWithActivityLocked appends quiet child-agent activity to status.
+func (r *liveChatRenderer) statusTextWithActivityLocked() string {
+	return statusTextWithSubagents(r.statusText, r.activeSubagents)
+}
+
+// statusTextWithSubagents appends a compact subagent count to status text.
+func statusTextWithSubagents(text string, count int) string {
+	if count <= 0 {
+		return text
+	}
+	noun := "subagents"
+	if count == 1 {
+		noun = "subagent"
+	}
+
+	return fmt.Sprintf("%s · %d %s", text, count, noun)
 }
 
 // statusPulseDot returns one stable dot with frame-dependent intensity.

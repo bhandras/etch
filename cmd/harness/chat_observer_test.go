@@ -112,6 +112,53 @@ func TestChatObserverRendersFinalAfterNoiseOnlyDeltas(t *testing.T) {
 	}
 }
 
+// TestChatObserverTracksActiveSubagents verifies task calls update the quiet
+// working-status activity counter until matching tool results arrive.
+func TestChatObserverTracksActiveSubagents(t *testing.T) {
+	var stdout bytes.Buffer
+	renderer := newLiveChatRenderer(&stdout, false)
+	observer := &chatObserver{
+		renderer: renderer,
+	}
+
+	observer.ToolCallStarted(model.ToolCall{
+		ID:        "call_1",
+		Name:      "task",
+		Arguments: `{"profile":"explore","task":"map the repo"}`,
+	})
+	observer.ToolCallStarted(model.ToolCall{
+		ID:        "call_2",
+		Name:      "task",
+		Arguments: `{"profile":"review","task":"review the diff"}`,
+	})
+	if renderer.activeSubagents != 2 {
+		t.Fatalf("active subagents after starts = %d",
+			renderer.activeSubagents)
+	}
+
+	observer.EventAppended(
+		messageEvent(
+			t, session.EventToolMessage,
+			session.ToolMessage("call_1", "task", "Task done."),
+		),
+	)
+	if renderer.activeSubagents != 1 {
+		t.Fatalf("active subagents after first result = %d",
+			renderer.activeSubagents)
+	}
+
+	observer.EventAppended(
+		messageEvent(
+			t, session.EventToolMessage,
+			session.ToolMessage("call_2", "task", "Task done."),
+		),
+	)
+	if renderer.activeSubagents != 0 {
+		t.Fatalf("active subagents after all results = %d",
+			renderer.activeSubagents)
+	}
+}
+
 // messageEvent creates one durable message event for CLI rendering tests.
 func messageEvent(t *testing.T, eventType string,
 	message session.MessageData) session.Event {
