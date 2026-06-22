@@ -94,6 +94,18 @@ func indexAfterSummary(events []session.Event, firstKeptID string) int {
 
 // messageFromEvent converts one durable message event into a model message.
 func messageFromEvent(event session.Event) (model.Message, bool, error) {
+	if event.Type == session.EventModelProviderItem {
+		item, err := providerItemFromEvent(event)
+		if err != nil {
+			return model.Message{}, false, err
+		}
+
+		return model.Message{
+			ProviderItems: []model.ProviderItem{
+				item,
+			},
+		}, true, nil
+	}
 	if !session.IsMessageEvent(event.Type) {
 		return model.Message{}, false, nil
 	}
@@ -111,6 +123,22 @@ func messageFromEvent(event session.Event) (model.Message, bool, error) {
 		ToolCallID: data.ToolCallID,
 		Name:       data.Name,
 	}, true, nil
+}
+
+// providerItemFromEvent converts one durable provider item into model history.
+func providerItemFromEvent(event session.Event) (model.ProviderItem, error) {
+	var data session.ProviderItemData
+	if err := json.Unmarshal(event.Data, &data); err != nil {
+		return model.ProviderItem{}, fmt.Errorf("decode provider item "+
+			"%s: %w", event.ID, err)
+	}
+
+	return model.ProviderItem{
+		Provider:         data.Provider,
+		Type:             data.Type,
+		ID:               data.ID,
+		EncryptedContent: data.EncryptedContent,
+	}, nil
 }
 
 // messageText joins text content parts from a durable message.

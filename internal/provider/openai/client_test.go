@@ -400,6 +400,13 @@ func TestClientStreamsResponsesAPI(t *testing.T) {
 			)
 			fmt.Fprint(
 				w, "data: "+
+					"{\"type\":\"response.output_item.done\""+
+					",\"item\":{\"type\":\"reasoning\",\"id\":\"r"+
+					"s_1\",\"encrypted_content\":\"opaque\"}}"+
+					"\n\n",
+			)
+			fmt.Fprint(
+				w, "data: "+
 					"{\"type\":\"response.output_item.added"+
 					"\",\"item\":{\"type\":\"message\",\"id\":\"ms"+
 					"g_1\",\"role\":\"assistant\"}}\n\n",
@@ -493,8 +500,13 @@ func TestClientStreamsResponsesAPI(t *testing.T) {
 		t.Fatalf("unexpected reasoning config: %#v",
 			gotRequest.Reasoning)
 	}
-	if len(got) != 7 {
-		t.Fatalf("expected seven events, got %#v", got)
+	if len(gotRequest.Include) != 1 ||
+		gotRequest.Include[0] != "reasoning.encrypted_content" {
+
+		t.Fatalf("unexpected include config: %#v", gotRequest.Include)
+	}
+	if len(got) != 8 {
+		t.Fatalf("expected eight events, got %#v", got)
 	}
 	if got[0].Type != model.EventResponseInfo ||
 		got[0].ResponseInfo.ProviderResponseID != "resp_123" {
@@ -506,40 +518,48 @@ func TestClientStreamsResponsesAPI(t *testing.T) {
 
 		t.Fatalf("unexpected reasoning event: %#v", got[1])
 	}
-	if got[2].Type != model.EventTextDelta || got[2].Text != "hi" {
+	if got[2].Type != model.EventProviderItem ||
+		got[2].ProviderItem.Provider != "openai" ||
+		got[2].ProviderItem.Type != "reasoning" ||
+		got[2].ProviderItem.ID != "rs_1" ||
+		got[2].ProviderItem.EncryptedContent != "opaque" {
+
+		t.Fatalf("unexpected provider item event: %#v", got[2])
+	}
+	if got[3].Type != model.EventTextDelta || got[3].Text != "hi" {
 		t.Fatalf("unexpected text event: %#v", got[2])
 	}
-	if got[3].Type != model.EventToolCall ||
-		got[3].ToolCall.ID != "call_1" ||
-		got[3].ToolCall.Name != "ls" {
+	if got[4].Type != model.EventToolCall ||
+		got[4].ToolCall.ID != "call_1" ||
+		got[4].ToolCall.Name != "ls" {
 
-		t.Fatalf("unexpected tool call: %#v", got[3])
+		t.Fatalf("unexpected tool call: %#v", got[4])
 	}
-	if got[4].Type != model.EventUsage ||
-		got[4].Usage.InputTokens != 20 ||
-		got[4].Usage.CachedInputTokens != 12 ||
-		got[4].Usage.OutputTokens != 5 ||
-		got[4].Usage.ReasoningOutputTokens != 2 ||
-		got[4].Usage.TotalTokens != 25 {
+	if got[5].Type != model.EventUsage ||
+		got[5].Usage.InputTokens != 20 ||
+		got[5].Usage.CachedInputTokens != 12 ||
+		got[5].Usage.OutputTokens != 5 ||
+		got[5].Usage.ReasoningOutputTokens != 2 ||
+		got[5].Usage.TotalTokens != 25 {
 
-		t.Fatalf("unexpected usage event: %#v", got[4])
+		t.Fatalf("unexpected usage event: %#v", got[5])
 	}
-	if got[5].Type != model.EventMetrics ||
-		got[5].Metrics.Requests != 1 ||
-		got[5].Metrics.ContinuationRequests != 0 ||
-		got[5].Metrics.RequestBytes == 0 ||
-		got[5].Metrics.ResponseBytes == 0 ||
-		got[5].Metrics.InputMessages != 2 ||
-		got[5].Metrics.DeltaMessages != 0 ||
-		got[5].Metrics.ToolCount != 1 ||
-		got[5].Metrics.InstructionBytes != len("rules") ||
-		got[5].Metrics.InputBytes == 0 ||
-		got[5].Metrics.ToolBytes == 0 {
+	if got[6].Type != model.EventMetrics ||
+		got[6].Metrics.Requests != 1 ||
+		got[6].Metrics.ContinuationRequests != 0 ||
+		got[6].Metrics.RequestBytes == 0 ||
+		got[6].Metrics.ResponseBytes == 0 ||
+		got[6].Metrics.InputMessages != 2 ||
+		got[6].Metrics.DeltaMessages != 0 ||
+		got[6].Metrics.ToolCount != 1 ||
+		got[6].Metrics.InstructionBytes != len("rules") ||
+		got[6].Metrics.InputBytes == 0 ||
+		got[6].Metrics.ToolBytes == 0 {
 
-		t.Fatalf("unexpected metrics event: %#v", got[5])
+		t.Fatalf("unexpected metrics event: %#v", got[6])
 	}
-	if got[6].Type != model.EventDone {
-		t.Fatalf("unexpected done event: %#v", got[6])
+	if got[7].Type != model.EventDone {
+		t.Fatalf("unexpected done event: %#v", got[7])
 	}
 }
 
@@ -622,6 +642,43 @@ func TestPromptCacheKeyClampsRunes(t *testing.T) {
 	}
 	if got := promptCacheKey(""); got != "" {
 		t.Fatalf("unexpected empty key: %q", got)
+	}
+}
+
+// TestResponseInputReplaysOpenAIProviderItems verifies encrypted reasoning is
+// replayed as a provider-native Responses item instead of plain text.
+func TestResponseInputReplaysOpenAIProviderItems(t *testing.T) {
+	input := responseInput([]model.Message{{
+		ProviderItems: []model.ProviderItem{{
+			Provider:         "openai",
+			Type:             "reasoning",
+			ID:               "rs_1",
+			EncryptedContent: "opaque",
+		}},
+	}})
+
+	if len(input) != 1 ||
+		input[0].Type != "reasoning" ||
+		input[0].ID != "rs_1" ||
+		input[0].EncryptedContent != "opaque" {
+
+		t.Fatalf("unexpected replay item: %#v", input)
+	}
+}
+
+// TestResponseInputIgnoresForeignProviderItems verifies opaque state from
+// unknown providers does not leak into OpenAI requests.
+func TestResponseInputIgnoresForeignProviderItems(t *testing.T) {
+	input := responseInput([]model.Message{{
+		ProviderItems: []model.ProviderItem{{
+			Provider:         "other",
+			Type:             "reasoning",
+			EncryptedContent: "opaque",
+		}},
+	}})
+
+	if len(input) != 0 {
+		t.Fatalf("foreign provider item leaked: %#v", input)
 	}
 }
 

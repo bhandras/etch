@@ -52,6 +52,10 @@ const (
 	// call.
 	EventModelResponse = "model.response"
 
+	// EventModelProviderItem records opaque provider-native history for one
+	// model call.
+	EventModelProviderItem = "model.provider_item"
+
 	// EventModelMetrics records transport and request-shape measurements
 	// for one model call.
 	EventModelMetrics = "model.metrics"
@@ -227,6 +231,22 @@ type ResponseData struct {
 	// ProviderResponseID is the provider's stable response identifier when
 	// it exposes one.
 	ProviderResponseID string `json:"providerResponseId"`
+}
+
+// ProviderItemData stores opaque provider-native history that can be replayed
+// only by compatible provider clients.
+type ProviderItemData struct {
+	// Provider identifies the model backend that produced the item.
+	Provider string `json:"provider"`
+
+	// Type is the provider-native item type, such as reasoning.
+	Type string `json:"type"`
+
+	// ID is the provider item identifier when supplied by the backend.
+	ID string `json:"id,omitempty"`
+
+	// EncryptedContent stores opaque provider ciphertext for replay.
+	EncryptedContent string `json:"encryptedContent,omitempty"`
 }
 
 // MetricsData is provider transport and request-shape metadata for one model

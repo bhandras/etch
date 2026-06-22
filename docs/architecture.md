@@ -579,6 +579,14 @@ transcript when the local session history is still a safe suffix of that
 response. The default HTTP/SSE Responses path does not use those IDs for
 continuation while it sends `store:false`.
 
+Model clients may emit opaque provider-native replay items when the backend
+returns state that is safe to persist but not meaningful text. The OpenAI
+Responses client requests `reasoning.encrypted_content` whenever reasoning is
+configured, stores returned reasoning ciphertext as `model.provider_item`, and
+projects it back only into OpenAI Responses requests as a native `reasoning`
+input item. Chat Completions and other providers ignore these events, so opaque
+backend state does not leak into prompts as plain text.
+
 Model clients should emit transport and request-shape metrics when available.
 The core stores those counters as `model.metrics` JSONL events chained after the
 assistant message and other metadata for the same model pass. New status output

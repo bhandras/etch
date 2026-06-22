@@ -100,6 +100,47 @@ func TestBuildHistoryMessagesUsesLatestSummary(t *testing.T) {
 	}
 }
 
+// TestBuildHistoryMessagesReplaysProviderItems verifies opaque provider state
+// remains in history without becoming ordinary assistant text.
+func TestBuildHistoryMessagesReplaysProviderItems(t *testing.T) {
+	events := []session.Event{
+		messageEvent(
+			t, "1", session.EventUserMessage, session.TextMessage(
+				session.RoleUser, "hello",
+			),
+		),
+		providerItemEvent(t, "2", session.ProviderItemData{
+			Provider:         "openai",
+			Type:             "reasoning",
+			ID:               "rs_1",
+			EncryptedContent: "opaque",
+		}),
+		messageEvent(
+			t, "3", session.EventAssistantMessage,
+			session.TextMessage(
+				session.RoleAssistant, "hi",
+			),
+		),
+	}
+
+	messages, err := BuildHistoryMessages(HistoryRequest{
+		Events: events,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(messages) != 3 {
+		t.Fatalf("unexpected messages: %#v", messages)
+	}
+	if len(messages[1].ProviderItems) != 1 ||
+		messages[1].ProviderItems[0].EncryptedContent != "opaque" ||
+		messages[1].Content != "" {
+
+		t.Fatalf("provider item was not replayed opaquely: %#v",
+			messages[1])
+	}
+}
+
 // messageEvent creates one durable message event for prompt tests.
 func messageEvent(t *testing.T, id string, eventType string,
 	data session.MessageData) session.Event {
@@ -132,6 +173,23 @@ func summaryEvent(t *testing.T, id string,
 		Type: session.EventContextSummary,
 		ID:   id,
 		Time: time.Now().UTC(),
+		Data: raw,
+	}
+}
+
+// providerItemEvent returns a durable provider item event for history tests.
+func providerItemEvent(t *testing.T, id string,
+	data session.ProviderItemData) session.Event {
+
+	t.Helper()
+	raw, err := json.Marshal(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return session.Event{
+		ID:   id,
+		Type: session.EventModelProviderItem,
 		Data: raw,
 	}
 }

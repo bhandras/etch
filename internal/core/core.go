@@ -356,6 +356,12 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 		if err != nil {
 			return nil, err
 		}
+		parentID, err = appendModelProviderItems(
+			store, parentID, response.ProviderItems, req.Observer,
+		)
+		if err != nil {
+			return nil, err
+		}
 		notifyReasoningCompleted(req.Observer, response.Reasoning)
 		if len(response.ToolCalls) == 0 {
 			assistant, err = store.Append(
@@ -1060,6 +1066,7 @@ func metadataEvent(eventType string) bool {
 	return eventType == session.EventModelReasoning ||
 		eventType == session.EventModelUsage ||
 		eventType == session.EventModelResponse ||
+		eventType == session.EventModelProviderItem ||
 		eventType == session.EventModelMetrics
 }
 
@@ -1128,6 +1135,10 @@ type modelResponse struct {
 	// ResponseInfo stores provider response identity for this model pass.
 	ResponseInfo model.ResponseInfo
 
+	// ProviderItems stores opaque provider-native history for this model
+	// pass.
+	ProviderItems []model.ProviderItem
+
 	// Metrics stores provider-reported transport counters for this pass.
 	Metrics model.Metrics
 }
@@ -1168,6 +1179,7 @@ func collectStream(ctx context.Context, stream <-chan model.Event,
 	var calls []model.ToolCall
 	var usage model.Usage
 	var responseInfo model.ResponseInfo
+	var providerItems []model.ProviderItem
 	var metrics model.Metrics
 	for {
 		select {
@@ -1177,12 +1189,13 @@ func collectStream(ctx context.Context, stream <-chan model.Event,
 		case event, ok := <-stream:
 			if !ok {
 				return modelResponse{
-					Text:         text.String(),
-					Reasoning:    reasoning.String(),
-					ToolCalls:    calls,
-					Usage:        usage,
-					ResponseInfo: responseInfo,
-					Metrics:      metrics,
+					Text:          text.String(),
+					Reasoning:     reasoning.String(),
+					ToolCalls:     calls,
+					Usage:         usage,
+					ResponseInfo:  responseInfo,
+					ProviderItems: providerItems,
+					Metrics:       metrics,
 				}, nil
 			}
 			switch event.Type {
@@ -1203,17 +1216,26 @@ func collectStream(ctx context.Context, stream <-chan model.Event,
 			case model.EventResponseInfo:
 				responseInfo = event.ResponseInfo
 
+			case model.EventProviderItem:
+				if !event.ProviderItem.Empty() {
+					providerItems = append(
+						providerItems,
+						event.ProviderItem,
+					)
+				}
+
 			case model.EventMetrics:
 				metrics = metrics.Add(event.Metrics)
 
 			case model.EventDone:
 				return modelResponse{
-					Text:         text.String(),
-					Reasoning:    reasoning.String(),
-					ToolCalls:    calls,
-					Usage:        usage,
-					ResponseInfo: responseInfo,
-					Metrics:      metrics,
+					Text:          text.String(),
+					Reasoning:     reasoning.String(),
+					ToolCalls:     calls,
+					Usage:         usage,
+					ResponseInfo:  responseInfo,
+					ProviderItems: providerItems,
+					Metrics:       metrics,
 				}, nil
 
 			case model.EventError:
@@ -1247,6 +1269,32 @@ func appendModelReasoning(store *session.Store, parentID string,
 	notifyEvent(observer, event)
 
 	return event.ID, nil
+}
+
+// appendModelProviderItems persists opaque provider-native replay items.
+func appendModelProviderItems(store *session.Store, parentID string,
+	items []model.ProviderItem, observer Observer) (string, error) {
+
+	for _, item := range items {
+		if item.Empty() {
+			continue
+		}
+		event, err := store.Append(session.EventModelProviderItem,
+			parentID, session.ProviderItemData{
+				Provider:         item.Provider,
+				Type:             item.Type,
+				ID:               item.ID,
+				EncryptedContent: item.EncryptedContent,
+			})
+		if err != nil {
+			return "", fmt.Errorf("append model provider item: %w",
+				err)
+		}
+		notifyEvent(observer, event)
+		parentID = event.ID
+	}
+
+	return parentID, nil
 }
 
 // appendModelMetadata persists usage and response identity after a model pass.

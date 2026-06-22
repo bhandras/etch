@@ -24,6 +24,10 @@ const (
 	// ProviderName identifies the OpenAI-compatible provider in CLI flags.
 	ProviderName = "openai"
 
+	// openaiProviderItemName labels opaque provider items emitted by this
+	// package in model-neutral streams.
+	openaiProviderItemName = "openai"
+
 	// chatCompletionsPath is the endpoint used for streaming chat
 	// responses.
 	chatCompletionsPath = "/chat/completions"
@@ -268,6 +272,9 @@ func (c *Client) newResponsesRequest(ctx context.Context, req model.Request) (
 		Input:              input,
 		Tools:              tools,
 		Reasoning: responseReasoningConfig(
+			c.ReasoningEffort, c.ReasoningSummary,
+		),
+		Include: responseIncludeConfig(
 			c.ReasoningEffort, c.ReasoningSummary,
 		),
 	})
@@ -808,6 +815,9 @@ type responseStreamDecoder struct {
 	// activeItemRole is the role for active message items when present.
 	activeItemRole string
 
+	// activeItemID is the identifier for the current Responses item.
+	activeItemID string
+
 	// responseID is the last provider response identifier emitted.
 	responseID string
 }
@@ -830,6 +840,7 @@ func (d *responseStreamDecoder) decode(payload []byte) []model.Event {
 	case "response.output_item.added":
 		d.activeItemType = event.Item.Type
 		d.activeItemRole = event.Item.Role
+		d.activeItemID = event.Item.ID
 
 		return nil
 
@@ -857,6 +868,19 @@ func (d *responseStreamDecoder) decode(payload []byte) []model.Event {
 
 	case "response.output_item.done":
 		defer d.clearActiveItem()
+		if event.Item.Type == "reasoning" &&
+			event.Item.EncryptedContent != "" {
+			return []model.Event{{
+				Type: model.EventProviderItem,
+				ProviderItem: model.ProviderItem{
+					Provider: openaiProviderItemName,
+					Type:     "reasoning",
+					ID:       event.Item.ID,
+					EncryptedContent: event.Item.
+						EncryptedContent,
+				},
+			}}
+		}
 		if event.Item.Type != "function_call" {
 			return nil
 		}
@@ -910,6 +934,7 @@ func (d *responseStreamDecoder) responseInfoEvents(id string) []model.Event {
 func (d *responseStreamDecoder) clearActiveItem() {
 	d.activeItemType = ""
 	d.activeItemRole = ""
+	d.activeItemID = ""
 }
 
 // responseErrorText returns a concise message from a Responses error event.
@@ -1006,6 +1031,25 @@ func responseInstructions(messages []model.Message) string {
 func responseInput(messages []model.Message) []responseInputItem {
 	var out []responseInputItem
 	for _, message := range messages {
+		for _, item := range message.ProviderItems {
+			if item.Provider != openaiProviderItemName ||
+				item.Type != "reasoning" ||
+				item.EncryptedContent == "" {
+
+				continue
+			}
+			out = append(out, responseInputItem{
+				Type:             "reasoning",
+				ID:               item.ID,
+				EncryptedContent: item.EncryptedContent,
+			})
+		}
+		if len(message.ProviderItems) > 0 &&
+			message.Content == "" &&
+			len(message.ToolCalls) == 0 {
+
+			continue
+		}
 		if message.Role == model.RoleSystem {
 			continue
 		}
@@ -1062,6 +1106,15 @@ func responseReasoningConfig(effort string, summary string) *responseReasoning {
 		Effort:  effort,
 		Summary: summary,
 	}
+}
+
+// responseIncludeConfig requests opaque provider items needed for safe replay.
+func responseIncludeConfig(effort string, summary string) []string {
+	if responseReasoningConfig(effort, summary) == nil {
+		return nil
+	}
+
+	return []string{"reasoning.encrypted_content"}
 }
 
 // decodedChunk stores neutral events extracted from one OpenAI stream chunk.
@@ -1177,12 +1230,19 @@ type responseRequest struct {
 
 	// Reasoning configures reasoning effort and summary output.
 	Reasoning *responseReasoning `json:"reasoning,omitempty"`
+
+	// Include asks Responses to include opaque output fields needed for
+	// replay.
+	Include []string `json:"include,omitempty"`
 }
 
 // responseInputItem is one Responses API input item.
 type responseInputItem struct {
 	// Type identifies function call items. Empty means message input.
 	Type string `json:"type,omitempty"`
+
+	// ID is the provider item identifier when replaying opaque items.
+	ID string `json:"id,omitempty"`
 
 	// Role identifies message speakers for ordinary input messages.
 	Role string `json:"role,omitempty"`
@@ -1201,6 +1261,10 @@ type responseInputItem struct {
 
 	// Output stores function-call result text.
 	Output string `json:"output,omitempty"`
+
+	// EncryptedContent stores opaque provider ciphertext for reasoning
+	// replay.
+	EncryptedContent string `json:"encrypted_content,omitempty"`
 }
 
 // responseReasoning configures reasoning-capable model behavior.
@@ -1345,6 +1409,9 @@ type responseStreamEvent struct {
 
 // responseOutputItem stores one completed Responses output item.
 type responseOutputItem struct {
+	// ID is the provider output item identifier.
+	ID string `json:"id"`
+
 	// Type identifies the output item kind.
 	Type string `json:"type"`
 
@@ -1359,6 +1426,10 @@ type responseOutputItem struct {
 
 	// Arguments stores raw JSON function arguments.
 	Arguments string `json:"arguments"`
+
+	// EncryptedContent stores opaque provider ciphertext for reasoning
+	// replay.
+	EncryptedContent string `json:"encrypted_content"`
 }
 
 // responseEventResponse stores failed or incomplete response state.

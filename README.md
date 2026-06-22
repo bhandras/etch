@@ -46,6 +46,8 @@ Harness currently has:
   streams
 - durable OpenAI Responses IDs stored as `model.response` events for inspection
   and future stored-response transports
+- opaque OpenAI Responses reasoning ciphertext stored as `model.provider_item`
+  events and replayed only to compatible Responses requests
 - durable provider transport metrics for OpenAI-compatible HTTP/SSE streams,
   including request count, continuation attempts and fallbacks, payload sizes,
   response headers, first-event latency, input-message count, delta-message

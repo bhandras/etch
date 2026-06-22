@@ -39,6 +39,10 @@ const (
 	// continuation support.
 	EventResponseInfo = "response_info"
 
+	// EventProviderItem reports an opaque provider-native item that should
+	// be durably replayed only by compatible provider clients.
+	EventProviderItem = "provider_item"
+
 	// EventMetrics reports transport-level measurements for one model call.
 	EventMetrics = "metrics"
 
@@ -66,6 +70,10 @@ type Message struct {
 
 	// Name records the tool name for tool-result messages.
 	Name string
+
+	// ProviderItems stores opaque provider-native history items that are
+	// not ordinary model-visible text.
+	ProviderItems []ProviderItem
 }
 
 // Request is the provider-neutral input passed to a model client.
@@ -107,6 +115,10 @@ type Event struct {
 	// ResponseInfo stores provider identity for EventResponseInfo events.
 	ResponseInfo ResponseInfo
 
+	// ProviderItem stores opaque provider-native data for EventProviderItem
+	// events.
+	ProviderItem ProviderItem
+
 	// Metrics stores transport counters for EventMetrics events.
 	Metrics Metrics
 
@@ -124,6 +136,28 @@ type ResponseInfo struct {
 // Empty reports whether response info contains no provider identity.
 func (r ResponseInfo) Empty() bool {
 	return r.ProviderResponseID == ""
+}
+
+// ProviderItem stores opaque provider-native history that a compatible client
+// can replay without exposing it as plain text to unrelated providers.
+type ProviderItem struct {
+	// Provider identifies the model backend that produced the item.
+	Provider string
+
+	// Type is the provider-native item type, such as reasoning.
+	Type string
+
+	// ID is the provider item identifier when supplied by the backend.
+	ID string
+
+	// EncryptedContent stores opaque provider ciphertext for replay.
+	EncryptedContent string
+}
+
+// Empty reports whether the provider item has no replayable content.
+func (p ProviderItem) Empty() bool {
+	return p.Provider == "" && p.Type == "" && p.ID == "" &&
+		p.EncryptedContent == ""
 }
 
 // Usage stores provider-reported token counters for one model call.
