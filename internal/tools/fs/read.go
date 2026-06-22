@@ -32,6 +32,10 @@ type ReadRequest struct {
 	// truncation limit is considered. Non-positive values use
 	// DefaultReadMaxLines.
 	Limit int
+
+	// LineNumbers controls whether output lines are prefixed with their
+	// 1-indexed source line number. The zero value enables line numbers.
+	LineNumbers *bool `json:"lineNumbers,omitempty"`
 }
 
 // Read returns a model-friendly text slice from a file.
@@ -94,7 +98,8 @@ func renderReadContent(content string, req ReadRequest) (string, error) {
 		selected = selected[:limit]
 	}
 
-	truncated := truncateLines(selected, DefaultReadMaxBytes)
+	numbered := formatReadLines(selected, start, lineNumbersEnabled(req))
+	truncated := truncateLines(numbered, DefaultReadMaxBytes)
 	endLine := start + truncated.OutputLines - 1
 	output := truncated.Text
 	if truncated.FirstLineExceedsLimit {
@@ -129,6 +134,28 @@ func renderReadContent(content string, req ReadRequest) (string, error) {
 	}
 
 	return output, nil
+}
+
+// lineNumbersEnabled reports whether read output should include source lines.
+func lineNumbersEnabled(req ReadRequest) bool {
+	return req.LineNumbers == nil || *req.LineNumbers
+}
+
+// formatReadLines renders selected lines with optional source line numbers.
+func formatReadLines(lines []string, start int, lineNumbers bool) []string {
+	if !lineNumbers {
+		return lines
+	}
+	width := len(fmt.Sprintf("%d", start+len(lines)-1))
+	formatted := make([]string, 0, len(lines))
+	for i, line := range lines {
+		formatted = append(
+			formatted,
+			fmt.Sprintf("%*d | %s", width, start+i, line),
+		)
+	}
+
+	return formatted
 }
 
 // truncatedText describes the result of byte-bound line rendering.

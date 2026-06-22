@@ -314,10 +314,10 @@ auto_compact = true
 Profiles can override provider, model, OpenAI API mode, reasoning settings,
 system prompt, allowed tools, child tool-loop limits, and child compaction
 limits. Empty provider fields inherit from the parent chat configuration. The
-tool allowlist can include built-ins and configured plugin tools; `task` itself
-is removed from child allowlists so subagents do not nest in the first
-implementation. The parent model cannot override a profile's `max_tool_rounds`
-at runtime; subagent loop budgets are owned by config.
+tool allowlist can include built-ins and configured plugin tools. If a profile
+explicitly includes `task`, nested subagents inherit a registry capped by the
+parent profile's allowlist. The parent model cannot override a profile's
+`max_tool_rounds` at runtime; subagent loop budgets are owned by config.
 
 The direct tool path is useful for smoke testing a profile without waiting for a
 parent model to choose it:

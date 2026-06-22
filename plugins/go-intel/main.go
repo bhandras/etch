@@ -150,6 +150,8 @@ type symbolInfo struct {
 	file        string
 	relFile     string
 	line        int
+	endLine     int
+	sourceLine  int
 	doc         string
 	signature   string
 	declaration string
@@ -824,6 +826,11 @@ func newSymbolInfo(fset *token.FileSet, root string, file string,
 	node ast.Node, doc *ast.CommentGroup) symbolInfo {
 
 	position := fset.Position(node.Pos())
+	sourceLine := position.Line
+	if doc != nil {
+		sourceLine = fset.Position(doc.Pos()).Line
+	}
+	endLine := fset.Position(node.End()).Line
 
 	return symbolInfo{
 		name:        name,
@@ -834,6 +841,8 @@ func newSymbolInfo(fset *token.FileSet, root string, file string,
 		file:        file,
 		relFile:     relativePath(root, file),
 		line:        position.Line,
+		endLine:     endLine,
+		sourceLine:  sourceLine,
 		doc:         docText(doc),
 		declaration: sourceForNode(fset, content, node, doc),
 	}
@@ -1090,7 +1099,11 @@ func formatSymbolDetail(symbol symbolInfo, declarationMode string) string {
 		&builder, "package: %s (%s)\n", symbol.packageName,
 		symbol.relDir,
 	)
-	fmt.Fprintf(&builder, "file: %s:%d\n", symbol.relFile, symbol.line)
+	fmt.Fprintf(&builder, "file: %s:%d", symbol.relFile, symbol.line)
+	if symbol.endLine > symbol.line {
+		fmt.Fprintf(&builder, "-%d", symbol.endLine)
+	}
+	fmt.Fprintln(&builder)
 	if symbol.signature != "" {
 		fmt.Fprintf(
 			&builder, "\nsignature:\n```go\n%s\n```\n",
@@ -1103,11 +1116,23 @@ func formatSymbolDetail(symbol symbolInfo, declarationMode string) string {
 	if declarationMode == declarationFull && symbol.declaration != "" {
 		fmt.Fprintf(
 			&builder, "\ndeclaration:\n```go\n%s\n```",
-			symbol.declaration,
+			numberedDeclaration(symbol),
 		)
 	}
 
 	return strings.TrimRight(builder.String(), "\n")
+}
+
+// numberedDeclaration renders a symbol declaration with source line prefixes.
+func numberedDeclaration(symbol symbolInfo) string {
+	lines := strings.Split(symbol.declaration, "\n")
+	width := len(fmt.Sprintf("%d", symbol.sourceLine+len(lines)-1))
+	for i, line := range lines {
+		lines[i] = fmt.Sprintf("%*d | %s", width, symbol.sourceLine+i,
+			line)
+	}
+
+	return strings.Join(lines, "\n")
 }
 
 // formatAmbiguousSymbol renders candidate symbols for an ambiguous lookup.

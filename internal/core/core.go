@@ -189,6 +189,14 @@ type ToolCallObserver interface {
 	ToolCallFinished(call model.ToolCall)
 }
 
+// ToolResultObserver receives tool outputs as soon as local execution finishes.
+type ToolResultObserver interface {
+	// ToolResultCompleted receives a result before it is necessarily
+	// appended to the durable session log. Parallel groups may complete
+	// out of order, so observers must treat this as terminal-only progress.
+	ToolResultCompleted(call model.ToolCall, result tool.Result)
+}
+
 // ToolBatchObserver receives one model-requested batch before execution.
 type ToolBatchObserver interface {
 	// ToolBatchStarted receives all tool calls requested by one model pass
@@ -714,6 +722,20 @@ func notifyToolCallFinished(observer Observer, call model.ToolCall) {
 	toolObserver, ok := observer.(ToolCallObserver)
 	if ok {
 		toolObserver.ToolCallFinished(call)
+	}
+}
+
+// notifyToolResultCompleted sends live tool output to observers that support
+// it.
+func notifyToolResultCompleted(observer Observer, call model.ToolCall,
+	result tool.Result) {
+
+	if observer == nil {
+		return
+	}
+	resultObserver, ok := observer.(ToolResultObserver)
+	if ok {
+		resultObserver.ToolResultCompleted(call, result)
 	}
 }
 
@@ -1453,6 +1475,11 @@ func executeToolGroup(ctx context.Context, req TurnRequest,
 				ctx, req, store, assistantID, blockedCalls,
 				call,
 			)
+			if errs[i] == nil {
+				notifyToolResultCompleted(
+					req.Observer, call, results[i].Result,
+				)
+			}
 		}()
 	}
 	wg.Wait()

@@ -186,6 +186,53 @@ func TestChatObserverTracksActiveSubagents(t *testing.T) {
 	}
 }
 
+// TestChatObserverRendersPartialSubagentResultOnce verifies a completed child
+// result can appear before ordered durable replay without duplicate output.
+func TestChatObserverRendersPartialSubagentResultOnce(t *testing.T) {
+	var stdout bytes.Buffer
+	observer := &chatObserver{
+		renderer: newLiveChatRenderer(&stdout, false),
+	}
+	result := tool.Result{Text: strings.Join(
+		[]string{
+			"Task review completed.",
+			"",
+			"Profile: review",
+			"Session: child-1",
+			"Duration: 2s",
+			"Model calls: 3",
+			"Tool calls: 5",
+			"",
+			"Result:",
+			"Found a concrete issue.",
+		}, "\n",
+	)}
+
+	observer.ToolResultCompleted(
+		model.ToolCall{
+			ID:   "call_1",
+			Name: tool.NameTask,
+		},
+		result,
+	)
+	observer.EventAppended(
+		messageEvent(
+			t, session.EventToolMessage, session.ToolMessage(
+				"call_1", tool.NameTask, result.Text,
+			),
+		),
+	)
+
+	got := stdout.String()
+	if count := strings.Count(got, "Subagent "); count != 1 {
+		t.Fatalf("expected one rendered subagent result, got %d:\n%s",
+			count, got)
+	}
+	if !strings.Contains(got, "Found a concrete issue.") {
+		t.Fatalf("partial subagent result was not rendered:\n%s", got)
+	}
+}
+
 // TestChatObserverAddsSubagentUsage verifies child-agent token counters appear
 // in the parent footer and final turn stats after a task result arrives.
 func TestChatObserverAddsSubagentUsage(t *testing.T) {

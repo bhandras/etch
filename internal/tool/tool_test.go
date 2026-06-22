@@ -47,7 +47,7 @@ func TestDefaultRegistryExecutesRead(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(result.Text, "alpha\n\n[") {
+	if !strings.HasPrefix(result.Text, "1 | alpha\n\n[") {
 		t.Fatalf("unexpected read result: %q", result.Text)
 	}
 }

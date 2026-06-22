@@ -314,6 +314,10 @@ func (readTool) Spec() model.ToolSpec {
 				"limit":{
 					"type":"integer",
 					"description":"Maximum lines to return before the default truncation limit is considered."
+				},
+				"lineNumbers":{
+					"type":"boolean",
+					"description":"Whether to prefix each returned line with its source line number. Defaults to true."
 				}
 			},
 			"required":["path"]

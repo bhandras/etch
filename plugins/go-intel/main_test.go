@@ -64,9 +64,11 @@ func TestRunGoSymbolReturnsDocAndDeclaration(t *testing.T) {
 		t.Fatalf("lookup go symbol: %v", err)
 	}
 	for _, want := range []string{
+		"file: sample/sample.go:7-9",
 		"godoc:\nWidget stores a display name.",
-		"type Widget struct",
-		"Name string",
+		"6 | // Widget stores a display name.",
+		"7 | type Widget struct",
+		"8 | \tName string",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("missing %q in output:\n%s", want, text)

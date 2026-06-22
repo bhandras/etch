@@ -34,6 +34,10 @@ type chatObserver struct {
 	// activeSubagents stores child-agent task calls that have not returned.
 	activeSubagents map[string]bool
 
+	// partialSubagentResults stores task results already rendered from
+	// terminal-only parallel completion callbacks.
+	partialSubagentResults map[string]bool
+
 	// streamedReasoning reports whether reasoning deltas were received.
 	streamedReasoning bool
 
@@ -72,12 +76,7 @@ func (o *chatObserver) EventAppended(event session.Event) {
 			ReasoningOutputTokens: usage.ReasoningOutputTokens,
 			TotalTokens:           usage.TotalTokens,
 		}
-		o.usage = o.usage.Add(eventUsage)
-		if o.renderer.composer != nil && o.chrome != nil {
-			o.renderer.composer.SetFooter(
-				o.chrome.AddUsage(eventUsage),
-			)
-		}
+		o.addUsage(eventUsage)
 
 		return
 	}
@@ -104,6 +103,9 @@ func (o *chatObserver) EventAppended(event session.Event) {
 		o.renderer.renderAssistant(render.MessageText(message))
 
 	case session.RoleTool:
+		if o.skipPartialSubagentResult(message) {
+			return
+		}
 		o.finishSubagentTool(message)
 		o.recordSubagentUsage(message)
 		o.renderer.renderToolResult(message)
@@ -143,6 +145,28 @@ func (o *chatObserver) ToolCallStarted(call model.ToolCall) {
 // durable result is appended to the transcript.
 func (o *chatObserver) ToolCallFinished(call model.ToolCall) {
 	o.finishSubagentCall(call.ID, call.Name)
+}
+
+// ToolResultCompleted renders task results that finish before their ordered
+// durable tool event can be appended to the parent session.
+func (o *chatObserver) ToolResultCompleted(call model.ToolCall,
+	result tool.Result) {
+
+	if call.Name != tool.NameTask {
+		return
+	}
+	message := session.ToolMessage(call.ID, call.Name, result.Text)
+	o.finishSubagentTool(message)
+	o.recordSubagentUsage(message)
+	o.renderer.renderToolResult(message)
+
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	if o.partialSubagentResults == nil {
+		o.partialSubagentResults = make(map[string]bool)
+	}
+	o.partialSubagentResults[call.ID] = true
 }
 
 // startSubagentTool records a running child-agent task for status display.
@@ -197,6 +221,25 @@ func (o *chatObserver) finishSubagentCall(callID string, name string) {
 	o.renderer.removeSubagentStatus(removedID)
 }
 
+// skipPartialSubagentResult reports whether a durable task result was already
+// rendered through a terminal-only completion callback.
+func (o *chatObserver) skipPartialSubagentResult(
+	message session.MessageData) bool {
+
+	if message.Name != tool.NameTask || message.ToolCallID == "" {
+		return false
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	if !o.partialSubagentResults[message.ToolCallID] {
+		return false
+	}
+	delete(o.partialSubagentResults, message.ToolCallID)
+
+	return true
+}
+
 // recordSubagentUsage adds child-session usage to parent-visible counters.
 func (o *chatObserver) recordSubagentUsage(message session.MessageData) {
 	if message.Name != tool.NameTask {
@@ -214,6 +257,14 @@ func (o *chatObserver) recordSubagentUsage(message session.MessageData) {
 	if usage.Empty() {
 		return
 	}
+	o.addUsage(usage)
+}
+
+// addUsage records provider usage and refreshes the prompt footer totals.
+func (o *chatObserver) addUsage(usage model.Usage) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
 	o.usage = o.usage.Add(usage)
 	if o.renderer.composer != nil && o.chrome != nil {
 		o.renderer.composer.SetFooter(o.chrome.AddUsage(usage))

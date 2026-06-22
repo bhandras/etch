@@ -652,11 +652,11 @@ empty-directory notices.
 
 The second operation is `read`, also implemented in pure Go under
 `internal/tools/fs`. It reads text files with Pi-style `offset` and `limit`
-arguments, uses 1-indexed line offsets, caps default output at 2000 lines or
-50KB, and appends continuation hints when more content remains. Image support is
-intentionally left out for now because it needs MIME detection, resizing, and
-model multimodal content handling that should not bloat the first core tool
-slice.
+arguments, uses 1-indexed line offsets, prefixes returned lines with source
+line numbers by default, caps default output at 2000 lines or 50KB, and appends
+continuation hints when more content remains. Image support is intentionally
+left out for now because it needs MIME detection, resizing, and model
+multimodal content handling that should not bloat the first core tool slice.
 
 The third operation is `write`, a whole-file create or overwrite tool. It
 creates parent directories, writes through a temporary file in the same
@@ -808,13 +808,15 @@ lower or raise `max_tool_rounds` at runtime.
 
 The terminal presentation should stay compact while making delegation legible.
 The parent UI renders each `task` start as a subagent activity block containing
-the full delegated task and optional context, then appends the compact task
-result when the child finishes. The working status line also includes a quiet
-count of active subagents and bounded ephemeral rows for each child agent's
-current activity, such as its latest reasoning status or tool call. These rows
-are live UI hints, not durable parent transcript events, and they are cleared
-from live tool-completion callbacks rather than waiting for parent transcript
-append order. Each visible child gets a deterministic terminal-only codename so
+the full delegated task and optional context. Parallel child completions may be
+rendered immediately as terminal-only progress, while durable parent
+`message.tool` events are still appended in the provider-requested order once
+the tool group is complete. The working status line also includes a quiet count
+of active subagents and bounded ephemeral rows for each child agent's current
+activity, such as its latest reasoning status or tool call. These rows are live
+UI hints, not durable parent transcript events, and they are cleared from live
+tool-completion callbacks rather than waiting for parent transcript append
+order. Each visible child gets a deterministic terminal-only codename so
 parallel work is easier to scan, for example `Ada / explore: map plugins =>
 read sdk/plugins.go`. Full child output stays in the child JSONL session and
 can be inspected with `harness show <child-id>` or continued with `harness

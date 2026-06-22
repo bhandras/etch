@@ -19,8 +19,9 @@ func TestReadReturnsWholeFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != "alpha\nbeta" {
-		t.Fatalf("read mismatch:\nwant %q\ngot  %q", "alpha\nbeta", got)
+	want := "1 | alpha\n2 | beta"
+	if got != want {
+		t.Fatalf("read mismatch:\nwant %q\ngot  %q", want, got)
 	}
 }
 
@@ -40,9 +41,30 @@ func TestReadHonorsOffsetAndLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	want := "two\nthree\n\n[1 more line in file. Use offset=4 to continue.]"
+	want := "2 | two\n3 | three\n\n" +
+		"[1 more line in file. Use offset=4 to continue.]"
 	if got != want {
 		t.Fatalf("read mismatch:\nwant %q\ngot  %q", want, got)
+	}
+}
+
+// TestReadCanDisableLineNumbers verifies callers can request raw slices when
+// line prefixes would be undesirable.
+func TestReadCanDisableLineNumbers(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	writeFile(t, filepath.Join(root, "note.txt"), "alpha\nbeta")
+	lineNumbers := false
+
+	got, err := Read(context.Background(), ReadRequest{
+		Path:        "note.txt",
+		LineNumbers: &lineNumbers,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "alpha\nbeta" {
+		t.Fatalf("read mismatch:\nwant %q\ngot  %q", "alpha\nbeta", got)
 	}
 }
 
