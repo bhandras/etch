@@ -62,9 +62,6 @@ type taskArguments struct {
 
 	// Context gives the child optional focused constraints or background.
 	Context string `json:"context,omitempty"`
-
-	// MaxToolRounds optionally lowers the configured child tool-loop limit.
-	MaxToolRounds int `json:"maxToolRounds,omitempty"`
 }
 
 // newTaskTool creates a stateful delegation tool for configured profiles.
@@ -192,7 +189,7 @@ func (t *taskTool) runChild(ctx context.Context, callID string,
 	meta tool.ExecutionContext, profile harnessconfig.SubagentProfileConfig,
 	args taskArguments) (subagentRunResult, error) {
 
-	childCfg := t.childConfig(profile, args)
+	childCfg := t.childConfig(profile)
 	client, err := modelClient(childCfg)
 	if err != nil {
 		return subagentRunResult{}, err
@@ -211,16 +208,14 @@ func (t *taskTool) runChild(ctx context.Context, callID string,
 	}
 
 	turn, err := core.RunTurn(ctx, core.TurnRequest{
-		Prompt:     childPrompt(args),
-		SessionDir: childCfg.sessionDir,
-		CWD:        t.cwd,
-		SystemText: systemText,
-		Model:      client,
-		ModelName:  childCfg.model,
-		Tools:      childRegistry,
-		MaxToolRounds: childMaxToolRounds(
-			childCfg.maxToolRounds, args.MaxToolRounds,
-		),
+		Prompt:                      childPrompt(args),
+		SessionDir:                  childCfg.sessionDir,
+		CWD:                         t.cwd,
+		SystemText:                  systemText,
+		Model:                       client,
+		ModelName:                   childCfg.model,
+		Tools:                       childRegistry,
+		MaxToolRounds:               childCfg.maxToolRounds,
 		AutoCompactThresholdTokens:  autoCompactThreshold(childCfg),
 		AutoCompactKeepMessages:     childCfg.keepMessages,
 		AutoCompactKeepRecentTokens: childCfg.keepRecentTokens,
@@ -249,8 +244,8 @@ func (t *taskTool) runChild(ctx context.Context, callID string,
 }
 
 // childConfig returns parent configuration with profile overrides applied.
-func (t *taskTool) childConfig(profile harnessconfig.SubagentProfileConfig,
-	args taskArguments) cliConfig {
+func (t *taskTool) childConfig(
+	profile harnessconfig.SubagentProfileConfig) cliConfig {
 
 	child := t.cfg
 	if profile.Provider != "" {
@@ -276,12 +271,6 @@ func (t *taskTool) childConfig(profile harnessconfig.SubagentProfileConfig,
 	}
 	if profile.MaxToolRounds > 0 {
 		child.maxToolRounds = profile.MaxToolRounds
-	}
-	if args.MaxToolRounds > 0 &&
-		(child.maxToolRounds == 0 ||
-			args.MaxToolRounds < child.maxToolRounds) {
-
-		child.maxToolRounds = args.MaxToolRounds
 	}
 	if profile.AutoCompactThresholdTokens > 0 {
 		child.autoCompactLimit = profile.AutoCompactThresholdTokens
@@ -418,15 +407,6 @@ Do not spawn further subagents.
 `)
 }
 
-// childMaxToolRounds applies a downward runtime override to profile limits.
-func childMaxToolRounds(configured int, requested int) int {
-	if requested > 0 && (configured == 0 || requested < configured) {
-		return requested
-	}
-
-	return configured
-}
-
 // activeSubagentProfiles returns enabled profiles advertised to the parent.
 func activeSubagentProfiles(
 	config harnessconfig.SubagentConfig) []harnessconfig.SubagentProfileConfig {
@@ -480,11 +460,6 @@ func taskParametersSchema(profileNames []string) json.RawMessage {
 				"type": "string",
 				"description": "Optional focused context, files, " +
 					"constraints, or assumptions.",
-			},
-			"maxToolRounds": map[string]any{
-				"type": "integer",
-				"description": "Optional lower child tool-loop " +
-					"limit. Cannot exceed profile config.",
 			},
 		},
 		"required": []string{

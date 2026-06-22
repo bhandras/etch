@@ -787,8 +787,9 @@ compaction events.
 Tool access is allowlist-based. A profile can allow built-in tools and
 configured plugin tools by model-facing name. The first implementation removes
 `task` from child allowlists, so subagents do not spawn nested subagents even if
-the profile lists it. Runtime task arguments may lower `maxToolRounds`, but
-cannot raise the configured profile limit.
+the profile lists it. Subagent tool-loop budgets are config-owned: the parent
+model can choose the profile and task, but it cannot lower or raise
+`max_tool_rounds` at runtime.
 
 The terminal presentation should stay compact. The parent UI renders `task` as
 a normal tool call and appends the compact task result. Full child output stays

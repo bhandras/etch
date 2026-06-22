@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	harnessconfig "harness/internal/config"
 	"harness/internal/session"
 )
 
@@ -363,6 +364,27 @@ max_tool_rounds = 3
 		started.ParentToolCallID != "manual" {
 
 		t.Fatalf("unexpected child session metadata: %#v", started)
+	}
+}
+
+// TestTaskToolSchemaHidesRuntimeToolLimit verifies the parent model cannot
+// override subagent tool-loop limits, which are intentionally config-owned.
+func TestTaskToolSchemaHidesRuntimeToolLimit(t *testing.T) {
+	tool := newTaskTool(cliConfig{
+		subagents: harnessconfig.SubagentConfig{
+			Enabled: true,
+			Profiles: []harnessconfig.SubagentProfileConfig{{
+				Name:         "explore",
+				Description:  "Explore code.",
+				AllowedTools: []string{"ls"},
+			}},
+		},
+	}, ".", nil)
+
+	spec := tool.Spec()
+	if strings.Contains(string(spec.Parameters), "maxToolRounds") {
+		t.Fatalf("task schema exposes runtime tool limit: %s",
+			string(spec.Parameters))
 	}
 }
 

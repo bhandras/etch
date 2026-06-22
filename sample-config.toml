@@ -335,8 +335,8 @@
 # Subagent profiles are named child-agent flavors. The parent model sees the
 # names and descriptions in the task tool schema, then chooses which profile to
 # spawn for a delegated task. Empty provider/model/OpenAI fields inherit from
-# the parent chat configuration. Runtime task calls may lower max_tool_rounds
-# but cannot raise the configured profile limit.
+# the parent chat configuration. The parent model cannot override
+# max_tool_rounds at runtime; subagent loop budgets are owned by config.
 #
 # Each subagent runs in its own JSONL child session. The parent receives only a
 # compact task result plus the child session id; the full child transcript can be
