@@ -106,4 +106,6 @@ match the edit. For documentation-only changes, run the commit-message linter
 against any message file you changed or intend to use. For Go code, run
 `make fmt`, `make lint`, and add or run focused tests before broader test
 suites. Use `make test` before committing changes that touch shared behavior,
-cross-package contracts, CLI flows, or plugin SDK/protocol behavior.
+cross-package contracts, CLI flows, or plugin SDK/protocol behavior. Use
+`make test-race` for changes that touch concurrent execution, terminal input,
+observers, session writes, plugin process management, or subagent scheduling.

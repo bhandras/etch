@@ -92,6 +92,9 @@ jobs:
       - name: Run tests
         run: make test
 
+      - name: Run race tests
+        run: make test-race
+
       - name: Build harness
         run: make build
 

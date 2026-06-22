@@ -210,7 +210,7 @@ func TestResumeCommandContinuesSession(t *testing.T) {
 		t.Fatalf("parse resume flags: %v", err)
 	}
 
-	var chatOut, chatErr bytes.Buffer
+	var chatOut, chatErr lockedBuffer
 	code = runChat(
 		cfg, strings.NewReader("follow-up\n/exit\n"), &chatOut,
 		&chatErr,

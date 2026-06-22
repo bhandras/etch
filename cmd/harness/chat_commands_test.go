@@ -15,7 +15,7 @@ func TestRunChatListsTools(t *testing.T) {
 		sessionDir: filepath.Join(t.TempDir(), "sessions"),
 		provider:   providerEcho,
 	}
-	var stdout, stderr bytes.Buffer
+	var stdout, stderr lockedBuffer
 	code := runChat(
 		cfg, strings.NewReader("/tools\n/exit\n"), &stdout, &stderr,
 	)
@@ -38,7 +38,7 @@ func TestRunChatShowsToolSchema(t *testing.T) {
 		sessionDir: filepath.Join(t.TempDir(), "sessions"),
 		provider:   providerEcho,
 	}
-	var stdout, stderr bytes.Buffer
+	var stdout, stderr lockedBuffer
 	code := runChat(
 		cfg, strings.NewReader("/tool grep\n/exit\n"), &stdout, &stderr,
 	)
@@ -69,7 +69,7 @@ func TestRunChatContextAndCompactCommands(t *testing.T) {
 		provider:     providerEcho,
 		keepMessages: 1,
 	}
-	var stdout, stderr bytes.Buffer
+	var stdout, stderr lockedBuffer
 	code := runChat(
 		cfg, strings.NewReader(
 			"one\ntwo\n/context\n/compact\n/context\n/exit\n",
@@ -105,7 +105,7 @@ func TestRunChatAutoCompactsLargeContext(t *testing.T) {
 	}
 	prompt := strings.Repeat("alpha ", 60) + "\n" +
 		strings.Repeat("beta ", 60) + "\n/status\n/exit\n"
-	var stdout, stderr bytes.Buffer
+	var stdout, stderr lockedBuffer
 	code := runChat(cfg, strings.NewReader(prompt), &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("chat failed: code=%d stdout=%q stderr=%q", code,
@@ -127,7 +127,7 @@ func TestRunChatStatusCommand(t *testing.T) {
 		sessionDir: filepath.Join(t.TempDir(), "sessions"),
 		provider:   providerEcho,
 	}
-	var stdout, stderr bytes.Buffer
+	var stdout, stderr lockedBuffer
 	code := runChat(
 		cfg, strings.NewReader("hello\n/status\n/exit\n"), &stdout,
 		&stderr,

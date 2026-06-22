@@ -1,4 +1,4 @@
-.PHONY: help build test lint fmt fmt-check commitmsg-lint commitlint commitmsg-fmt
+.PHONY: help build test test-race lint fmt fmt-check commitmsg-lint commitlint commitmsg-fmt
 
 GOCC ?= go
 
@@ -18,6 +18,7 @@ help:
 		'Targets:' \
 		'  build           Build the harness binary into bin/harness.' \
 		'  test            Run the Go test suite.' \
+		'  test-race       Run race-enabled tests for the main module.' \
 		'  lint            Run golangci-lint for all Go modules.' \
 		'  fmt             Format handwritten Go source with llformat.' \
 		'  fmt-check       Run fmt and fail if git sees formatting changes.' \
@@ -33,6 +34,9 @@ test:
 	$(GOCC) test ./...
 	cd $(EXAMPLE_PLUGIN_DIR); $(GOCC) test ./...
 	cd $(GO_INTEL_PLUGIN_DIR); $(GOCC) test ./...
+
+test-race:
+	$(GOCC) test -race ./...
 
 lint:
 	$(GOCC) run $(GOLANGCI_LINT_PKG) run ./...

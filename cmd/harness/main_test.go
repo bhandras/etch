@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -16,6 +17,39 @@ const (
 	// cliPluginHelperEnv enables the subprocess plugin used by CLI tests.
 	cliPluginHelperEnv = "HARNESS_CLI_PLUGIN_HELPER"
 )
+
+// lockedBuffer serializes test reads and writes around chat's input goroutine.
+type lockedBuffer struct {
+	// mu protects Buffer.
+	mu sync.Mutex
+
+	// Buffer stores captured output.
+	Buffer bytes.Buffer
+}
+
+// Write appends bytes while holding the buffer lock.
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	return b.Buffer.Write(p)
+}
+
+// String returns captured output while holding the buffer lock.
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	return b.Buffer.String()
+}
+
+// Bytes returns a stable copy of captured output.
+func (b *lockedBuffer) Bytes() []byte {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	return append([]byte(nil), b.Buffer.Bytes()...)
+}
 
 // TestMain runs command tests from an empty directory so project-config
 // discovery cannot inherit the developer's local .harness/config.toml.
@@ -49,7 +83,7 @@ func TestRunUsesProjectConfigDefaults(t *testing.T) {
 			"= 9\n",
 	)
 
-	var stdout, stderr bytes.Buffer
+	var stdout, stderr lockedBuffer
 	code := run([]string{"-p", "hello"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("run failed: code=%d stdout=%q stderr=%q", code,
@@ -78,7 +112,7 @@ func TestConfigCheckValidatesDiscoveredConfig(t *testing.T) {
 		"[provider]\nname = \"openai\"\n",
 	)
 
-	var stdout, stderr bytes.Buffer
+	var stdout, stderr lockedBuffer
 	code := run([]string{"config", "check"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("config check failed: code=%d stdout=%q stderr=%q",
@@ -102,7 +136,7 @@ func TestConfigCheckRejectsInvalidDiscoveredConfig(t *testing.T) {
 		"[provider]\nname = \"mystery\"\n",
 	)
 
-	var stdout, stderr bytes.Buffer
+	var stdout, stderr lockedBuffer
 	code := run([]string{"config", "check"}, &stdout, &stderr)
 	if code == 0 {
 		t.Fatalf("config check unexpectedly succeeded")
@@ -125,7 +159,7 @@ func TestConfigShowEffectiveRendersMergedDefaults(t *testing.T) {
 		"[provider]\nname = \"openai\"\nmodel = \"gpt-test\"\n",
 	)
 
-	var stdout, stderr bytes.Buffer
+	var stdout, stderr lockedBuffer
 	code := run(
 		[]string{"config", "show", "--effective"}, &stdout, &stderr,
 	)
@@ -433,7 +467,7 @@ func TestRunChatProcessesMultipleTurns(t *testing.T) {
 		sessionDir: filepath.Join(t.TempDir(), "sessions"),
 		provider:   providerEcho,
 	}
-	var stdout, stderr bytes.Buffer
+	var stdout, stderr lockedBuffer
 	code := runChat(
 		cfg, strings.NewReader("hello\nfollow-up\n/exit\n"), &stdout,
 		&stderr,
@@ -462,7 +496,7 @@ func TestRunChatSkipsWhitespacePrompt(t *testing.T) {
 		sessionDir: filepath.Join(t.TempDir(), "sessions"),
 		provider:   providerEcho,
 	}
-	var stdout, stderr bytes.Buffer
+	var stdout, stderr lockedBuffer
 	code := runChat(cfg, strings.NewReader("  \n/exit\n"), &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("chat failed: code=%d stdout=%q stderr=%q", code,
