@@ -244,6 +244,14 @@ type MetricsData struct {
 	// to be retried as full-context requests.
 	ContinuationFallbacks int `json:"continuationFallbacks,omitempty"`
 
+	// ContinuationFallbackStatus is the HTTP status that caused the most
+	// recent continuation fallback.
+	ContinuationFallbackStatus int `json:"continuationFallbackStatus,omitempty"`
+
+	// ContinuationFallbackError is bounded provider error text from the
+	// most recent continuation fallback.
+	ContinuationFallbackError string `json:"continuationFallbackError,omitempty"`
+
 	// RequestBytes is the serialized request body size in bytes.
 	RequestBytes int `json:"requestBytes,omitempty"`
 
@@ -309,6 +317,14 @@ func (m MetricsData) Add(other MetricsData) MetricsData {
 			other.ContinuationRequests,
 		ContinuationFallbacks: m.ContinuationFallbacks +
 			other.ContinuationFallbacks,
+		ContinuationFallbackStatus: mergeMetricsInt(
+			m.ContinuationFallbackStatus,
+			other.ContinuationFallbackStatus,
+		),
+		ContinuationFallbackError: mergeMetricsString(
+			m.ContinuationFallbackError,
+			other.ContinuationFallbackError,
+		),
 		RequestBytes:     m.RequestBytes + other.RequestBytes,
 		ResponseBytes:    m.ResponseBytes + other.ResponseBytes,
 		InputMessages:    m.InputMessages + other.InputMessages,
@@ -328,12 +344,32 @@ func (m MetricsData) Add(other MetricsData) MetricsData {
 func (m MetricsData) Empty() bool {
 	return m.Requests == 0 && m.ContinuationRequests == 0 &&
 		m.ContinuationFallbacks == 0 &&
+		m.ContinuationFallbackStatus == 0 &&
+		m.ContinuationFallbackError == "" &&
 		m.RequestBytes == 0 && m.ResponseBytes == 0 &&
 		m.InputMessages == 0 && m.DeltaMessages == 0 &&
 		m.ToolCount == 0 && m.InstructionBytes == 0 &&
 		m.InputBytes == 0 && m.ToolBytes == 0 &&
 		m.TimeToHeadersMillis == 0 &&
 		m.TimeToFirstEventMillis == 0
+}
+
+// mergeMetricsInt preserves the latest non-zero diagnostic integer.
+func mergeMetricsInt(current int, newer int) int {
+	if newer != 0 {
+		return newer
+	}
+
+	return current
+}
+
+// mergeMetricsString preserves the latest non-empty diagnostic text.
+func mergeMetricsString(current string, newer string) string {
+	if newer != "" {
+		return newer
+	}
+
+	return current
 }
 
 // IndexEntry is one summary row in the local session index.

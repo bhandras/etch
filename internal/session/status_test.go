@@ -2,6 +2,7 @@ package session
 
 import (
 	"encoding/json"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -140,14 +141,16 @@ func TestBuildStatusUsesMetricRequestCounts(t *testing.T) {
 		statusEvent(
 			t, EventModelMetrics, "3", "2",
 			startedAt.Add(2*time.Second), MetricsData{
-				Requests:              2,
-				ContinuationRequests:  1,
-				ContinuationFallbacks: 1,
-				RequestBytes:          2048,
-				ResponseBytes:         1024,
-				InputMessages:         8,
-				DeltaMessages:         2,
-				ToolCount:             5,
+				Requests:                   2,
+				ContinuationRequests:       1,
+				ContinuationFallbacks:      1,
+				ContinuationFallbackStatus: http.StatusBadRequest,
+				ContinuationFallbackError:  "400 Bad Request: stale response",
+				RequestBytes:               2048,
+				ResponseBytes:              1024,
+				InputMessages:              8,
+				DeltaMessages:              2,
+				ToolCount:                  5,
 			},
 		),
 	}
@@ -174,6 +177,13 @@ func TestBuildStatusUsesMetricRequestCounts(t *testing.T) {
 	) {
 
 		t.Fatalf("missing request counts: %q", text)
+	}
+	if !strings.Contains(
+		text, "- last continuation fallback: HTTP 400, 400 Bad "+
+			"Request: stale response",
+	) {
+
+		t.Fatalf("missing fallback diagnostic: %q", text)
 	}
 	if !strings.Contains(text, "- averages: 1.0KB up/request") {
 		t.Fatalf("missing averages: %q", text)

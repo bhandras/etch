@@ -44,13 +44,15 @@ Harness currently has:
   `/status` session stats
 - provider-reported token usage for OpenAI Chat Completions and Responses API
   streams
-- durable OpenAI Responses IDs stored as `model.response` events and used for
-  conservative `previous_response_id` continuation
+- durable OpenAI Responses IDs stored as `model.response` events for inspection
+  and future stored-response transports
 - durable provider transport metrics for OpenAI-compatible HTTP/SSE streams,
   including request count, continuation attempts and fallbacks, payload sizes,
   response headers, first-event latency, input-message count, delta-message
   count, and tool-schema count
-- Responses API prompt cache affinity keyed by the durable local session ID
+- Responses API prompt cache affinity keyed by the durable local session ID;
+  the default plain-HTTP Responses path keeps `store:false` and resends the
+  current context instead of using `previous_response_id`
 - chat steering that lets prompts typed while a turn is running influence the
   next safe model-call boundary
 - session-backed prompt history for Up/Down navigation in interactive chat
@@ -354,8 +356,8 @@ go run ./cmd/harness resume <session-id-prefix>
 On clean exit, chat prints the session id and a copyable `harness resume`
 command. `harness resume <id-prefix>` is equivalent to starting chat with the
 matching session preloaded, including prompt history, usage counters, compacted
-summaries, and prior model response continuation metadata when the provider can
-use it.
+summaries, and prior model response identity metadata when the provider can
+expose it.
 
 Inside chat, use slash commands for local session and context operations:
 
@@ -382,10 +384,11 @@ metrics. When providers report usage, Harness appends `model.usage` events to
 the JSONL log and sums them for `/status`, including input, cached input,
 output, reasoning output, and total tokens when available. When providers
 report transport measurements, Harness appends `model.metrics` events with
-request counts, continuation attempts, continuation fallbacks, request/response
-byte totals, per-request byte averages, first-event timing, and request-shape
-counters. Chat status folds in completed subagent sessions referenced by `task`
-results, including nested child sessions when their logs are still present.
+request counts, continuation attempts, continuation fallbacks, the latest
+continuation fallback diagnostic, request/response byte totals, per-request
+byte averages, first-event timing, and request-shape counters. Chat status
+folds in completed subagent sessions referenced by `task` results, including
+nested child sessions when their logs are still present.
 
 Interactive chat uses the active session log for prompt history. Up and Down
 cycle through prior user prompts from the current session, including prompts

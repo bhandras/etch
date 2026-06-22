@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"harness/internal/model"
+	"harness/internal/textutil"
 )
 
 const (
@@ -47,6 +48,10 @@ const (
 	// sseMaxFrameBytes bounds one server-sent-event frame before a
 	// delimiter must arrive.
 	sseMaxFrameBytes = 4 * 1024 * 1024
+
+	// continuationFallbackErrorBytes bounds provider error text retained
+	// when a stored Responses continuation falls back to full context.
+	continuationFallbackErrorBytes = 2048
 )
 
 // Client streams responses from an OpenAI-compatible Chat Completions endpoint.
@@ -74,6 +79,12 @@ type Client struct {
 
 	// UserAgent identifies harness to provider backends when non-empty.
 	UserAgent string
+
+	// StoreResponses enables provider-side Responses API storage. The
+	// default is false because ChatGPT/Codex OAuth backends reject stored
+	// responses, and plain HTTP previous_response_id continuation is only
+	// valid when storage is enabled.
+	StoreResponses bool
 }
 
 // Stream starts a streaming chat completion request and returns model events.
@@ -103,8 +114,8 @@ func (c *Client) Stream(ctx context.Context, req model.Request) (
 		return nil, fmt.Errorf("openai request: %w", err)
 	}
 	timeToHeaders := time.Since(startedAt)
-	if shouldRetryWithoutContinuation(resp, req) {
-		resp.Body.Close()
+	if shouldRetryWithoutContinuation(resp, requestMetrics) {
+		statusCode, fallbackError := readContinuationFallbackError(resp)
 		fallbackReq, fallbackMetrics, err := c.newRequest(
 			ctx, requestWithoutContinuation(req),
 		)
@@ -112,6 +123,8 @@ func (c *Client) Stream(ctx context.Context, req model.Request) (
 			return nil, err
 		}
 		requestMetrics.ContinuationFallbacks++
+		requestMetrics.ContinuationFallbackStatus = statusCode
+		requestMetrics.ContinuationFallbackError = fallbackError
 		fallbackMetrics = requestMetrics.Add(fallbackMetrics)
 		httpReq = fallbackReq
 		requestMetrics = fallbackMetrics
@@ -146,10 +159,38 @@ func (c *Client) Stream(ctx context.Context, req model.Request) (
 // shouldRetryWithoutContinuation reports whether a failed continuation should
 // be retried as a full-context request.
 func shouldRetryWithoutContinuation(resp *http.Response,
-	req model.Request) bool {
+	metrics model.Metrics) bool {
 
-	return req.PreviousResponseID != "" &&
+	return metrics.ContinuationRequests > 0 &&
 		resp.StatusCode == http.StatusBadRequest
+}
+
+// readContinuationFallbackError closes resp and returns bounded diagnostic
+// text for a rejected continuation request.
+func readContinuationFallbackError(resp *http.Response) (int, string) {
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(
+		io.LimitReader(
+			resp.Body, continuationFallbackErrorBytes+1,
+		),
+	)
+	if err != nil {
+		return resp.StatusCode, fmt.Sprintf("%s: read error body: %v",
+			resp.Status, err)
+	}
+	text := strings.TrimSpace(string(body))
+	if len(body) > continuationFallbackErrorBytes {
+		text, _ = textutil.TruncateUTF8Bytes(
+			text, continuationFallbackErrorBytes,
+		)
+		text += "..."
+	}
+	if text == "" {
+		return resp.StatusCode, resp.Status
+	}
+
+	return resp.StatusCode, resp.Status + ": " + text
 }
 
 // requestWithoutContinuation returns a full-context retry request.
@@ -207,9 +248,12 @@ func (c *Client) newResponsesRequest(ctx context.Context, req model.Request) (
 	*http.Request, model.Metrics, error) {
 
 	inputMessages := req.Messages
-	continued := req.PreviousResponseID != "" && len(req.DeltaMessages) > 0
-	if req.PreviousResponseID != "" && len(req.DeltaMessages) > 0 {
+	previousResponseID := ""
+	continued := c.StoreResponses && req.PreviousResponseID != "" &&
+		len(req.DeltaMessages) > 0
+	if continued {
 		inputMessages = req.DeltaMessages
+		previousResponseID = req.PreviousResponseID
 	}
 	instructions := responseInstructions(req.Messages)
 	input := responseInput(inputMessages)
@@ -217,9 +261,9 @@ func (c *Client) newResponsesRequest(ctx context.Context, req model.Request) (
 	body, err := json.Marshal(responseRequest{
 		Model:              c.Model,
 		Stream:             true,
-		Store:              false,
+		Store:              c.StoreResponses,
 		PromptCacheKey:     promptCacheKey(req.SessionID),
-		PreviousResponseID: req.PreviousResponseID,
+		PreviousResponseID: previousResponseID,
 		Instructions:       instructions,
 		Input:              input,
 		Tools:              tools,

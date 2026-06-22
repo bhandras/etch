@@ -476,14 +476,14 @@ func TestClientStreamsResponsesAPI(t *testing.T) {
 		t.Fatalf("unexpected prompt cache key: %q",
 			gotRequest.PromptCacheKey)
 	}
-	if gotRequest.PreviousResponseID != "resp_previous" {
+	if gotRequest.PreviousResponseID != "" {
 		t.Fatalf("unexpected previous response id: %q",
 			gotRequest.PreviousResponseID)
 	}
 	if len(gotRequest.Input) != 1 ||
-		gotRequest.Input[0].Content != "delta only" {
+		gotRequest.Input[0].Content != "list files" {
 
-		t.Fatalf("request did not use delta input: %#v",
+		t.Fatalf("request did not use full input: %#v",
 			gotRequest.Input)
 	}
 	if gotRequest.Reasoning == nil ||
@@ -526,11 +526,11 @@ func TestClientStreamsResponsesAPI(t *testing.T) {
 	}
 	if got[5].Type != model.EventMetrics ||
 		got[5].Metrics.Requests != 1 ||
-		got[5].Metrics.ContinuationRequests != 1 ||
+		got[5].Metrics.ContinuationRequests != 0 ||
 		got[5].Metrics.RequestBytes == 0 ||
 		got[5].Metrics.ResponseBytes == 0 ||
 		got[5].Metrics.InputMessages != 2 ||
-		got[5].Metrics.DeltaMessages != 2 ||
+		got[5].Metrics.DeltaMessages != 0 ||
 		got[5].Metrics.ToolCount != 1 ||
 		got[5].Metrics.InstructionBytes != len("rules") ||
 		got[5].Metrics.InputBytes == 0 ||
@@ -540,6 +540,72 @@ func TestClientStreamsResponsesAPI(t *testing.T) {
 	}
 	if got[6].Type != model.EventDone {
 		t.Fatalf("unexpected done event: %#v", got[6])
+	}
+}
+
+// TestClientStreamsStoredResponsesContinuation verifies explicit stored
+// Responses mode can send only the continuation delta.
+func TestClientStreamsStoredResponsesContinuation(t *testing.T) {
+	var gotRequest responseRequest
+	server := httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if err := json.NewDecoder(r.Body).Decode(
+				&gotRequest,
+			); err != nil {
+
+				t.Fatal(err)
+			}
+
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprint(
+				w, "data: "+
+					"{\"type\":\"response.output_item.added"+
+					"\",\"item\":{\"type\":\"message\",\"role\":\""+
+					"assistant\"}}\n\n",
+			)
+			fmt.Fprint(
+				w, "data: "+
+					"{\"type\":\"response.output_text.delta"+
+					"\",\"delta\":\"ok\"}\n\n",
+			)
+			fmt.Fprint(w, "data: [DONE]\n\n")
+		}),
+	)
+	defer server.Close()
+
+	client := &Client{
+		BaseURL:        server.URL,
+		Model:          "test-model",
+		API:            APIResponses,
+		StoreResponses: true,
+	}
+	events, err := client.Stream(context.Background(), model.Request{
+		PreviousResponseID: "resp_previous",
+		Messages: []model.Message{
+			{Role: model.RoleUser, Content: "full"},
+			{Role: model.RoleUser, Content: "current"},
+		},
+		DeltaMessages: []model.Message{
+			{Role: model.RoleUser, Content: "current"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := collectEvents(events)
+	if gotRequest.PreviousResponseID != "resp_previous" ||
+		len(gotRequest.Input) != 1 ||
+		gotRequest.Input[0].Content != "current" ||
+		!gotRequest.Store {
+
+		t.Fatalf("unexpected stored continuation request: %#v",
+			gotRequest)
+	}
+	if got[1].Type != model.EventMetrics ||
+		got[1].Metrics.ContinuationRequests != 1 ||
+		got[1].Metrics.DeltaMessages != 1 {
+
+		t.Fatalf("unexpected continuation metrics: %#v", got[1])
 	}
 }
 
@@ -600,9 +666,10 @@ func TestClientRetriesContinuationAsFullRequest(t *testing.T) {
 	defer server.Close()
 
 	client := &Client{
-		BaseURL: server.URL,
-		Model:   "test-model",
-		API:     APIResponses,
+		BaseURL:        server.URL,
+		Model:          "test-model",
+		API:            APIResponses,
+		StoreResponses: true,
 	}
 	events, err := client.Stream(context.Background(), model.Request{
 		PreviousResponseID: "resp_previous",
@@ -625,6 +692,12 @@ func TestClientRetriesContinuationAsFullRequest(t *testing.T) {
 		got[1].Metrics.Requests != 2 ||
 		got[1].Metrics.ContinuationRequests != 1 ||
 		got[1].Metrics.ContinuationFallbacks != 1 ||
+		got[1].Metrics.ContinuationFallbackStatus !=
+			http.StatusBadRequest ||
+		!strings.Contains(
+			got[1].Metrics.ContinuationFallbackError,
+			"bad previous response",
+		) ||
 		got[1].Metrics.RequestBytes == 0 {
 
 		t.Fatalf("unexpected fallback metrics: %#v", got[1])

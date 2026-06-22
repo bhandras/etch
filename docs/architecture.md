@@ -236,10 +236,11 @@ WebSocket transport: request body bytes, raw streamed response bytes, time to
 response headers, and time to the first meaningful stream event are reported as
 provider-neutral `metrics` events and folded into turn timing. Metrics also
 capture request shape: total provider requests, continuation attempts,
-continuation fallbacks, input-message count, delta-message count,
-tool-schema count, and serialized instruction/input/tool payload sizes. Those
-fields let sessions answer whether Responses continuation is actually sending
-only the safe delta slice or falling back to full-context requests.
+continuation fallbacks, the latest continuation fallback diagnostic,
+input-message count, delta-message count, tool-schema count, and serialized
+instruction/input/tool payload sizes. Those fields let sessions answer whether
+a stored-response transport is actually sending only the safe delta slice or
+falling back to full-context requests.
 
 The OpenAI stream parser is frame-oriented instead of `bufio.Scanner`-based. It
 reads response-body chunks, splits complete server-sent-event frames on blank
@@ -249,13 +250,14 @@ close to Pi's hand-written SSE fallback shape while avoiding Scanner token
 limits and making byte metrics reflect the real stream body.
 
 Pi's OpenAI Platform path generally consumes the OpenAI SDK's typed async stream
-events, while Pi's Codex path prefers a WebSocket transport with cached session
-state and falls back to HTTP/SSE. Harness intentionally starts without a
-WebSocket dependency: the Responses `previous_response_id` path and prompt cache
-affinity give most of the measured latency benefit while keeping transport code
-small and inspectable. If WebSocket support becomes necessary later, it should
-arrive as a minimal provider transport swap behind the same model event stream,
-not as a new core concept.
+events with `store:false`, while Pi's Codex path prefers a WebSocket transport
+with cached session state and falls back to HTTP/SSE. Harness intentionally
+starts without a WebSocket dependency: plain HTTP/SSE uses full-context
+Responses requests with `store:false` plus prompt-cache affinity, which keeps
+transport code small and inspectable. If WebSocket support becomes necessary
+later, it should arrive as a minimal provider transport swap behind the same
+model event stream, not as a new core concept.
+
 Responses API requests include the durable local session ID as
 `prompt_cache_key`, clamped to OpenAI's documented 64-character limit, so Codex
 and Platform Responses calls can get stable cache affinity across turns. Chat
@@ -263,10 +265,13 @@ Completions keeps the narrower compatibility request shape because many local
 or OpenAI-compatible endpoints reject unknown OpenAI-specific fields.
 
 When a prior Responses call has a durable `model.response` provider ID, the
-core can send `previous_response_id` plus only the new user/tool input since
-that response. The full context is still carried in the provider-neutral request
-so the OpenAI client can retry without continuation if the provider rejects the
-handle. Context-build hooks currently disable continuation because hooks can
+core can offer `previous_response_id` plus only the new user/tool input since
+that response. The OpenAI HTTP client only uses that slice when an explicit
+stored-response mode is enabled, because ChatGPT/Codex OAuth requires
+`store:false` and plain HTTP continuation is not valid in that mode. The full
+context is still carried in the provider-neutral request so a stored-response
+transport can retry without continuation if the provider rejects the handle.
+Context-build hooks currently disable continuation hints because hooks can
 rewrite message lists in ways the core cannot safely slice.
 
 OpenAI-compatible usage is selected explicitly:
@@ -568,11 +573,11 @@ turns.
 Model clients should also emit provider response identity when available. The
 core stores those identifiers as `model.response` JSONL events chained after the
 assistant message and any usage event for the same model pass. That state makes
-sessions auditable and lets Responses providers continue from a prior response
-without resending the whole visible transcript when the local session history is
-still a safe suffix of that response. Only context-build hooks disable this
-optimization, because those hooks can rewrite transient provider input without
-changing the durable session suffix.
+sessions auditable and leaves room for stored-response or WebSocket transports
+to continue from a prior response without resending the whole visible
+transcript when the local session history is still a safe suffix of that
+response. The default HTTP/SSE Responses path does not use those IDs for
+continuation while it sends `store:false`.
 
 Model clients should emit transport and request-shape metrics when available.
 The core stores those counters as `model.metrics` JSONL events chained after the
@@ -582,8 +587,8 @@ assistant-message counts only for older logs. The OpenAI provider records
 request bytes, response bytes, response-header latency, first-event latency,
 continuation attempts, continuation fallbacks, selected input-message count,
 selected delta-message count, tool-schema count, serialized
-instruction/input/tool fragment sizes, and per-request averages in status
-output.
+instruction/input/tool fragment sizes, latest continuation fallback diagnostic,
+and per-request averages in status output.
 
 ## OpenAI And Codex Auth
 

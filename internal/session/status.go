@@ -283,6 +283,14 @@ func FormatStatus(status Status) string {
 				status.Metrics.ContinuationFallbacks,
 			),
 		)
+		if status.Metrics.ContinuationFallbackError != "" {
+			fmt.Fprintf(
+				&out, "- last continuation fallback: HTTP "+
+					"%d, %s\n",
+				status.Metrics.ContinuationFallbackStatus,
+				status.Metrics.ContinuationFallbackError,
+			)
+		}
 		fmt.Fprintf(
 			&out, "- bytes: %s up, %s down\n",
 			textutil.FormatBytes(status.Metrics.RequestBytes),

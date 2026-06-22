@@ -178,6 +178,14 @@ type Metrics struct {
 	// were retried as full-context requests after provider rejection.
 	ContinuationFallbacks int
 
+	// ContinuationFallbackStatus is the HTTP status code that caused the
+	// most recent continuation fallback.
+	ContinuationFallbackStatus int
+
+	// ContinuationFallbackError is bounded provider error text captured
+	// from the most recent continuation fallback.
+	ContinuationFallbackError string
+
 	// RequestBytes is the JSON request body size sent to the provider.
 	RequestBytes int
 
@@ -224,6 +232,14 @@ func (m Metrics) Add(other Metrics) Metrics {
 			other.ContinuationRequests,
 		ContinuationFallbacks: m.ContinuationFallbacks +
 			other.ContinuationFallbacks,
+		ContinuationFallbackStatus: mergeMetricInt(
+			m.ContinuationFallbackStatus,
+			other.ContinuationFallbackStatus,
+		),
+		ContinuationFallbackError: mergeMetricString(
+			m.ContinuationFallbackError,
+			other.ContinuationFallbackError,
+		),
 		RequestBytes:     m.RequestBytes + other.RequestBytes,
 		ResponseBytes:    m.ResponseBytes + other.ResponseBytes,
 		InputMessages:    m.InputMessages + other.InputMessages,
@@ -241,11 +257,32 @@ func (m Metrics) Add(other Metrics) Metrics {
 func (m Metrics) Empty() bool {
 	return m.Requests == 0 && m.ContinuationRequests == 0 &&
 		m.ContinuationFallbacks == 0 &&
+		m.ContinuationFallbackStatus == 0 &&
+		m.ContinuationFallbackError == "" &&
 		m.RequestBytes == 0 && m.ResponseBytes == 0 &&
 		m.InputMessages == 0 && m.DeltaMessages == 0 &&
 		m.ToolCount == 0 && m.InstructionBytes == 0 &&
 		m.InputBytes == 0 && m.ToolBytes == 0 &&
 		m.TimeToHeaders == 0 && m.TimeToFirstEvent == 0
+}
+
+// mergeMetricInt returns the newer non-zero diagnostic integer when present.
+func mergeMetricInt(current int, newer int) int {
+	if newer != 0 {
+		return newer
+	}
+
+	return current
+}
+
+// mergeMetricString returns the newer non-empty diagnostic string when
+// present.
+func mergeMetricString(current string, newer string) string {
+	if newer != "" {
+		return newer
+	}
+
+	return current
 }
 
 // ToolSpec describes one model-callable tool.
