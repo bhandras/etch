@@ -143,6 +143,12 @@ func (o *chatObserver) startSubagentTool(call model.ToolCall) {
 	}
 	o.activeSubagents[call.ID] = true
 	o.renderer.setActiveSubagents(len(o.activeSubagents))
+	if display, ok := parseSubagentCall(call.Arguments); ok {
+		o.renderer.startSubagentStatus(
+			call.ID, subagentLiveLabel(display),
+			"starting",
+		)
+	}
 }
 
 // finishSubagentTool clears a completed child-agent task from status display.
@@ -150,16 +156,24 @@ func (o *chatObserver) finishSubagentTool(message session.MessageData) {
 	if message.Name != tool.NameTask || len(o.activeSubagents) == 0 {
 		return
 	}
+	removedID := message.ToolCallID
 	if message.ToolCallID != "" {
 		delete(o.activeSubagents, message.ToolCallID)
 	} else {
 		for id := range o.activeSubagents {
 			delete(o.activeSubagents, id)
+			removedID = id
 
 			break
 		}
 	}
 	o.renderer.setActiveSubagents(len(o.activeSubagents))
+	o.renderer.removeSubagentStatus(removedID)
+}
+
+// ToolProgress updates live progress rows for long-running tools.
+func (o *chatObserver) ToolProgress(event tool.ProgressEvent) {
+	o.renderer.updateSubagentStatus(event.ToolCallID, event.Message)
 }
 
 // ModelTextDelta records assistant stream progress without rendering raw

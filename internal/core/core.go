@@ -223,6 +223,12 @@ type TimingObserver interface {
 	TurnTiming(timing TurnTiming)
 }
 
+// ToolProgressObserver receives ephemeral status from long-running tools.
+type ToolProgressObserver interface {
+	// ToolProgress receives compact live activity for one running tool.
+	ToolProgress(event tool.ProgressEvent)
+}
+
 // RunTurn executes one prompt against a model client and persists the exchange.
 func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 	if strings.TrimSpace(req.Prompt) == "" {
@@ -1306,6 +1312,9 @@ func executeOneToolCall(ctx context.Context, req TurnRequest,
 				SessionPath:      store.Path(),
 				AssistantEventID: assistantID,
 				ToolCallID:       call.ID,
+				Progress: toolProgressSink(
+					req.Observer, call.ID,
+				),
 			},
 		)
 		var err error
@@ -1334,6 +1343,21 @@ func executeOneToolCall(ctx context.Context, req TurnRequest,
 		Result:   result,
 		Duration: time.Since(started),
 	}, nil
+}
+
+// toolProgressSink adapts an observer into a tool execution progress sink.
+func toolProgressSink(observer Observer, callID string) tool.ProgressSink {
+	progressObserver, ok := observer.(ToolProgressObserver)
+	if !ok {
+		return nil
+	}
+
+	return func(event tool.ProgressEvent) {
+		if event.ToolCallID == "" {
+			event.ToolCallID = callID
+		}
+		progressObserver.ToolProgress(event)
+	}
 }
 
 // toolErrorText formats a tool failure as model-visible feedback.

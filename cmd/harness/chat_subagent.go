@@ -150,6 +150,20 @@ func subagentStartHeader(display subagentCallDisplay) string {
 	return "Started subagent " + profile
 }
 
+// subagentLiveLabel returns a compact row label for live child status.
+func subagentLiveLabel(display subagentCallDisplay) string {
+	profile := display.Profile
+	if profile == "" {
+		profile = "subagent"
+	}
+	task := compactOneLine(display.Task)
+	if task == "" {
+		return profile
+	}
+
+	return profile + " " + truncateRunes(task, 48)
+}
+
 // subagentCalls extracts display data for task calls in call order.
 func subagentCalls(calls []model.ToolCall) []subagentCallDisplay {
 	var displays []subagentCallDisplay

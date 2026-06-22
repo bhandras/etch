@@ -163,6 +163,37 @@ func TestTerminalChatInputPadsStatusAbovePrompt(t *testing.T) {
 	}
 }
 
+// TestTerminalChatInputRendersStatusRows verifies subordinate live activity
+// rows appear between the main working status and the prompt island.
+func TestTerminalChatInputRendersStatusRows(t *testing.T) {
+	t.Setenv("COLUMNS", "80")
+	var stdout bytes.Buffer
+	input := &terminalChatInput{
+		stdout: &stdout,
+	}
+
+	input.statusText = "working"
+	input.statusRows = []string{
+		"review core: read internal/core/core.go",
+	}
+	input.statusStartedAt = time.Now()
+	if err := input.renderLocked(); err != nil {
+		t.Fatalf("status row render failed: %v", err)
+	}
+
+	got := stdout.String()
+	if !strings.Contains(got, "working") ||
+		!strings.Contains(
+			got, "review core: read internal/core/core.go",
+		) {
+
+		t.Fatalf("status rows missing from composer: %q", got)
+	}
+	if input.lastRows != 7 {
+		t.Fatalf("composer rows = %d, want 7", input.lastRows)
+	}
+}
+
 // TestTerminalChatInputSubmitPadsIsland verifies committed prompt islands leave
 // one blank transcript row before and after the shaded island.
 func TestTerminalChatInputSubmitPadsIsland(t *testing.T) {

@@ -165,6 +165,24 @@ func TestDefaultRegistryExecutesBash(t *testing.T) {
 	}
 }
 
+// TestReportProgressUsesExecutionContextSink verifies tools can emit
+// ephemeral progress through execution metadata without knowing the UI layer.
+func TestReportProgressUsesExecutionContextSink(t *testing.T) {
+	var got ProgressEvent
+	ctx := WithExecutionContext(context.Background(), ExecutionContext{
+		ToolCallID: "call_1",
+		Progress: func(event ProgressEvent) {
+			got = event
+		},
+	})
+
+	ReportProgress(ctx, "working")
+
+	if got.ToolCallID != "call_1" || got.Message != "working" {
+		t.Fatalf("unexpected progress event: %#v", got)
+	}
+}
+
 // quoteJSON returns a quoted JSON string literal for test arguments.
 func quoteJSON(text string) string {
 	encoded, err := json.Marshal(text)

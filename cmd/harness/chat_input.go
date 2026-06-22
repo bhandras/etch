@@ -80,6 +80,9 @@ type terminalChatInput struct {
 	// statusText stores the transient working status above the prompt.
 	statusText string
 
+	// statusRows stores extra transient activity rows below statusText.
+	statusRows []string
+
 	// statusFrame stores the current status animation frame.
 	statusFrame int
 
@@ -481,6 +484,14 @@ func (i *terminalChatInput) SetStatus(text string) {
 	i.mu.Unlock()
 }
 
+// SetStatusRows updates additional working status rows above the prompt.
+func (i *terminalChatInput) SetStatusRows(rows []string) {
+	i.mu.Lock()
+	i.statusRows = append(i.statusRows[:0], rows...)
+	_ = i.renderLocked()
+	i.mu.Unlock()
+}
+
 // AdvanceStatus moves the status animation forward by one frame.
 func (i *terminalChatInput) AdvanceStatus() {
 	i.mu.Lock()
@@ -493,6 +504,7 @@ func (i *terminalChatInput) AdvanceStatus() {
 func (i *terminalChatInput) ClearStatus() {
 	i.mu.Lock()
 	i.statusText = ""
+	i.statusRows = nil
 	i.statusFrame = 0
 	i.statusStartedAt = time.Time{}
 	_ = i.renderLocked()
@@ -529,18 +541,32 @@ func (i *terminalChatInput) renderedComposerRows(inputRows []string,
 	rows := make(
 		[]string, 0,
 		composerRowCount(
-			len(inputRows), i.statusText != "", i.footerText != "",
+			len(inputRows), i.statusText != "", len(i.statusRows),
+			i.footerText != "",
 		),
 	)
 	if i.statusText != "" {
+		rows = append(rows, ansiReset+strings.Repeat(" ", width))
 		rows = append(
-			rows, ansiReset+strings.Repeat(" ", width),
-			statusComposerLine(
+			rows, statusComposerLine(
 				i.statusFrame, i.statusText, i.statusStartedAt,
 				width,
 			),
-			ansiReset+strings.Repeat(" ", width),
 		)
+		for _, row := range i.statusRows {
+			rows = append(
+				rows, statusComposerDetailLine(row, width),
+			)
+		}
+		rows = append(rows, ansiReset+strings.Repeat(" ", width))
+	} else if len(i.statusRows) > 0 {
+		rows = append(rows, ansiReset+strings.Repeat(" ", width))
+		for _, row := range i.statusRows {
+			rows = append(
+				rows, statusComposerDetailLine(row, width),
+			)
+		}
+		rows = append(rows, ansiReset+strings.Repeat(" ", width))
 	}
 	rows = append(rows, promptIslandRowWithTextWidth("", width))
 	for _, row := range inputRows {
@@ -584,7 +610,9 @@ func (i *terminalChatInput) moveToPromptCursorLocked(input []rune, width int,
 	inputRows int) {
 
 	cursorCol := promptCursorColumn(input, width)
-	i.cursorRow = composerPrefixRows(i.statusText != "") + inputRows + 1
+	i.cursorRow = composerPrefixRows(
+		i.statusText != "", len(i.statusRows),
+	) + inputRows + 1
 	fmt.Fprintf(
 		i.stdout, "\r%s%s", ansiMoveUp(i.lastRows-i.cursorRow),
 		ansiMoveRight(cursorCol),
@@ -717,21 +745,26 @@ func promptCursorColumn(input []rune, width int) int {
 }
 
 // composerPrefixRows returns rows rendered before the prompt island itself.
-func composerPrefixRows(hasStatus bool) int {
-	if !hasStatus {
+func composerPrefixRows(hasStatus bool, statusRows int) int {
+	if !hasStatus && statusRows == 0 {
 		return 0
 	}
+	if !hasStatus {
+		return statusRows + 2
+	}
 
-	return 3
+	return statusRows + 3
 }
 
 // composerRowCount returns the complete rendered height of the live composer.
-func composerRowCount(inputRows int, hasStatus bool, hasFooter bool) int {
+func composerRowCount(inputRows int, hasStatus bool, statusRows int,
+	hasFooter bool) int {
+
 	if inputRows < 1 {
 		inputRows = 1
 	}
 
-	rows := composerPrefixRows(hasStatus) + inputRows + 2
+	rows := composerPrefixRows(hasStatus, statusRows) + inputRows + 2
 	if hasFooter {
 		rows++
 	}
@@ -749,6 +782,12 @@ func statusComposerLine(frame int, text string, startedAt time.Time,
 		elapsed)
 
 	return ansiDim + padPromptRow(line, width) + ansiReset
+}
+
+// statusComposerDetailLine renders one subordinate live activity row.
+func statusComposerDetailLine(text string, width int) string {
+	return ansiReset + ansiDim + padPromptRow("  "+text, width) +
+		ansiReset
 }
 
 // footerComposerLine renders the metadata row below the prompt island.

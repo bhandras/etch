@@ -9,6 +9,7 @@ import (
 
 	"harness/internal/model"
 	"harness/internal/session"
+	"harness/internal/tool"
 )
 
 // TestChatObserverRendersToolEvents verifies that live chat feedback pairs each
@@ -135,6 +136,14 @@ func TestChatObserverTracksActiveSubagents(t *testing.T) {
 		t.Fatalf("active subagents after starts = %d",
 			renderer.activeSubagents)
 	}
+	observer.ToolProgress(tool.ProgressEvent{
+		ToolCallID: "call_1",
+		Message:    "read README.md",
+	})
+	if renderer.subagentStatuses["call_1"].Message != "read README.md" {
+		t.Fatalf("subagent progress was not recorded: %#v",
+			renderer.subagentStatuses["call_1"])
+	}
 
 	observer.EventAppended(
 		messageEvent(
@@ -145,6 +154,9 @@ func TestChatObserverTracksActiveSubagents(t *testing.T) {
 	if renderer.activeSubagents != 1 {
 		t.Fatalf("active subagents after first result = %d",
 			renderer.activeSubagents)
+	}
+	if _, ok := renderer.subagentStatuses["call_1"]; ok {
+		t.Fatalf("completed subagent status was not removed")
 	}
 
 	observer.EventAppended(

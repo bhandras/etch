@@ -805,11 +805,13 @@ The terminal presentation should stay compact while making delegation legible.
 The parent UI renders each `task` start as a subagent activity block containing
 the full delegated task and optional context, then appends the compact task
 result when the child finishes. The working status line also includes a quiet
-count of active subagents. Full child output stays in the child JSONL session
-and can be inspected with `harness show <child-id>` or continued with `harness
-resume <child-id>`. A richer future terminal can show per-subagent status rows,
-but it should still avoid streaming every child event into the parent transcript
-by default.
+count of active subagents and bounded ephemeral rows for each child agent's
+current activity, such as its latest reasoning status or tool call. These rows
+are live UI hints, not durable parent transcript events. Full child output stays
+in the child JSONL session and can be inspected with `harness show <child-id>`
+or continued with `harness resume <child-id>`. A richer future terminal can add
+more per-subagent controls, but it should still avoid streaming every child
+event into the parent transcript by default.
 
 ## Plugins
 

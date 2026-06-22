@@ -206,6 +206,9 @@ func (t *taskTool) runChild(ctx context.Context, callID string,
 	if err != nil {
 		return subagentRunResult{}, err
 	}
+	progress := newSubagentProgressObserver(
+		meta.Progress, nonEmptyString(meta.ToolCallID, callID),
+	)
 
 	turn, err := core.RunTurn(ctx, core.TurnRequest{
 		Prompt:                      childPrompt(args),
@@ -225,6 +228,7 @@ func (t *taskTool) runChild(ctx context.Context, callID string,
 		),
 		SubagentProfile: profile.Name,
 		Hooks:           hookRunner,
+		Observer:        progress,
 	})
 	if err != nil {
 		return subagentRunResult{}, err

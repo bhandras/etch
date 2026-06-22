@@ -58,10 +58,25 @@ type ExecutionContext struct {
 
 	// ToolCallID is the provider-assigned tool call identifier.
 	ToolCallID string
+
+	// Progress receives ephemeral status updates for this tool call.
+	Progress ProgressSink
 }
 
 // executionContextKey stores ExecutionContext values in context.Context.
 type executionContextKey struct{}
+
+// ProgressEvent is one ephemeral tool progress update for live UIs.
+type ProgressEvent struct {
+	// ToolCallID links progress to the parent model tool call.
+	ToolCallID string
+
+	// Message is the compact human-readable activity label.
+	Message string
+}
+
+// ProgressSink receives live progress updates for one running tool.
+type ProgressSink func(ProgressEvent)
 
 // Tool executes one model-callable builtin operation.
 type Tool interface {
@@ -84,6 +99,18 @@ func ExecutionContextFrom(ctx context.Context) (ExecutionContext, bool) {
 	meta, ok := ctx.Value(executionContextKey{}).(ExecutionContext)
 
 	return meta, ok
+}
+
+// ReportProgress sends one ephemeral progress update when ctx carries a sink.
+func ReportProgress(ctx context.Context, message string) {
+	meta, ok := ExecutionContextFrom(ctx)
+	if !ok || meta.Progress == nil || strings.TrimSpace(message) == "" {
+		return
+	}
+	meta.Progress(ProgressEvent{
+		ToolCallID: meta.ToolCallID,
+		Message:    message,
+	})
 }
 
 // CallExecutor executes a tool with access to the complete model call.

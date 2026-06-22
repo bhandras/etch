@@ -28,6 +28,10 @@ const (
 	// the parent terminal log.
 	liveSubagentResultLimit = 24
 
+	// liveSubagentStatusLimit caps ephemeral child-agent status rows above
+	// the active prompt.
+	liveSubagentStatusLimit = 8
+
 	// statusPulseFrameCount is the number of brightness steps in one status
 	// pulse.
 	statusPulseFrameCount = 8
@@ -118,6 +122,12 @@ type liveChatRenderer struct {
 	// activeSubagents is the number of child-agent tasks still running.
 	activeSubagents int
 
+	// subagentOrder stores running child tool-call ids in display order.
+	subagentOrder []string
+
+	// subagentStatuses stores compact live status by parent tool-call id.
+	subagentStatuses map[string]subagentLiveStatus
+
 	// statusFrame is the current pulsing-dot animation frame index.
 	statusFrame int
 
@@ -144,6 +154,15 @@ type terminalTone struct {
 
 	// italic requests italic terminal text for reasoning summaries.
 	italic bool
+}
+
+// subagentLiveStatus stores one ephemeral child-agent row.
+type subagentLiveStatus struct {
+	// Label identifies the child profile or task row.
+	Label string
+
+	// Message describes the child's current activity.
+	Message string
 }
 
 // newLiveChatRenderer creates the live renderer for one chat turn.
@@ -478,6 +497,97 @@ func (r *liveChatRenderer) setActiveSubagents(count int) {
 	r.redrawStatusLocked()
 }
 
+// startSubagentStatus registers a live child-agent status row.
+func (r *liveChatRenderer) startSubagentStatus(callID string, label string,
+	message string) {
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if strings.TrimSpace(callID) == "" {
+		return
+	}
+	if r.subagentStatuses == nil {
+		r.subagentStatuses = make(map[string]subagentLiveStatus)
+	}
+	if _, ok := r.subagentStatuses[callID]; !ok {
+		r.subagentOrder = append(r.subagentOrder, callID)
+	}
+	r.subagentStatuses[callID] = subagentLiveStatus{
+		Label:   nonEmptyStatusLabel(label),
+		Message: nonEmptyStatusMessage(message),
+	}
+	r.refreshSubagentStatusRowsLocked()
+}
+
+// updateSubagentStatus updates a live child-agent row.
+func (r *liveChatRenderer) updateSubagentStatus(callID string, message string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.subagentStatuses == nil || strings.TrimSpace(callID) == "" {
+		return
+	}
+	status, ok := r.subagentStatuses[callID]
+	if !ok {
+		return
+	}
+	status.Message = nonEmptyStatusMessage(message)
+	r.subagentStatuses[callID] = status
+	r.refreshSubagentStatusRowsLocked()
+}
+
+// removeSubagentStatus removes a live child-agent row.
+func (r *liveChatRenderer) removeSubagentStatus(callID string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.subagentStatuses == nil || strings.TrimSpace(callID) == "" {
+		return
+	}
+	delete(r.subagentStatuses, callID)
+	for i, id := range r.subagentOrder {
+		if id == callID {
+			r.subagentOrder = append(
+				r.subagentOrder[:i], r.subagentOrder[i+1:]...,
+			)
+
+			break
+		}
+	}
+	r.refreshSubagentStatusRowsLocked()
+}
+
+// refreshSubagentStatusRowsLocked redraws composer child-agent status rows.
+func (r *liveChatRenderer) refreshSubagentStatusRowsLocked() {
+	if r.composer == nil {
+		return
+	}
+	r.composer.SetStatusRows(r.subagentStatusRowsLocked())
+}
+
+// subagentStatusRowsLocked returns bounded live child-agent status rows.
+func (r *liveChatRenderer) subagentStatusRowsLocked() []string {
+	var rows []string
+	for _, id := range r.subagentOrder {
+		status, ok := r.subagentStatuses[id]
+		if !ok {
+			continue
+		}
+		rows = append(rows, status.Label+": "+status.Message)
+		if len(rows) == liveSubagentStatusLimit {
+			break
+		}
+	}
+	if remaining := len(r.subagentOrder) - len(rows); remaining > 0 {
+		rows = append(
+			rows, fmt.Sprintf("... %d more subagents", remaining),
+		)
+	}
+
+	return rows
+}
+
 // stopStatus stops and clears the animated working status line.
 func (r *liveChatRenderer) stopStatus() {
 	r.mu.Lock()
@@ -486,6 +596,8 @@ func (r *liveChatRenderer) stopStatus() {
 	r.statusCancel = nil
 	r.statusDone = nil
 	r.activeSubagents = 0
+	r.subagentOrder = nil
+	r.subagentStatuses = nil
 	if r.composer != nil {
 		r.composer.ClearStatus()
 	} else {
@@ -607,6 +719,29 @@ func statusTextWithSubagents(text string, count int) string {
 	}
 
 	return fmt.Sprintf("%s · %d %s", text, count, noun)
+}
+
+// nonEmptyStatusLabel returns a fallback live subagent label.
+func nonEmptyStatusLabel(label string) string {
+	if strings.TrimSpace(label) == "" {
+		return "subagent"
+	}
+
+	return strings.TrimSpace(label)
+}
+
+// nonEmptyStatusMessage returns a fallback live subagent message.
+func nonEmptyStatusMessage(message string) string {
+	if strings.TrimSpace(message) == "" {
+		return "working"
+	}
+
+	return compactStatusText(message)
+}
+
+// compactStatusText returns one-line terminal status text.
+func compactStatusText(message string) string {
+	return truncateRunes(strings.Join(strings.Fields(message), " "), 120)
 }
 
 // statusPulseDot returns one stable dot with frame-dependent intensity.
