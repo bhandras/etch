@@ -18,6 +18,9 @@ type subagentCallDisplay struct {
 
 	// Task is the delegated child-agent instruction.
 	Task string
+
+	// Context is optional focused background passed to the child.
+	Context string
 }
 
 // subagentResultDisplay stores the terminal-facing fields from a task result.
@@ -67,12 +70,14 @@ func parseSubagentCall(raw string) (subagentCallDisplay, bool) {
 	var args struct {
 		Profile string `json:"profile"`
 		Task    string `json:"task"`
+		Context string `json:"context"`
 	}
 	if err := json.Unmarshal([]byte(raw), &args); err != nil {
 		return subagentCallDisplay{}, false
 	}
 	args.Profile = strings.TrimSpace(args.Profile)
 	args.Task = strings.TrimSpace(args.Task)
+	args.Context = strings.TrimSpace(args.Context)
 	if args.Profile == "" && args.Task == "" {
 		return subagentCallDisplay{}, false
 	}
@@ -80,6 +85,7 @@ func parseSubagentCall(raw string) (subagentCallDisplay, bool) {
 	return subagentCallDisplay{
 		Profile: args.Profile,
 		Task:    args.Task,
+		Context: args.Context,
 	}, true
 }
 
@@ -96,6 +102,81 @@ func subagentCallLabel(display subagentCallDisplay) string {
 
 	return fmt.Sprintf("Started subagent %s: %s", profile,
 		truncateRunes(task, 100))
+}
+
+// renderSubagentToolCall renders the full delegated task prompt.
+func (r *liveChatRenderer) renderSubagentToolCall(call model.ToolCall) bool {
+	if call.Name != tool.NameTask {
+		return false
+	}
+	display, ok := parseSubagentCall(call.Arguments)
+	if !ok {
+		return false
+	}
+
+	r.renderSubagentCallDisplay(display)
+
+	return true
+}
+
+// renderSubagentCallDisplay writes one subagent start block.
+func (r *liveChatRenderer) renderSubagentCallDisplay(
+	display subagentCallDisplay) {
+
+	header := subagentStartHeader(display)
+	fmt.Fprintln(r.stdout, "• "+header)
+	if strings.TrimSpace(display.Task) != "" {
+		fmt.Fprintln(r.stdout, r.style.muted("  Task:"))
+		for _, line := range markdownLines(display.Task, r.style) {
+			fmt.Fprintln(r.stdout, "  "+line)
+		}
+	}
+	if strings.TrimSpace(display.Context) != "" {
+		fmt.Fprintln(r.stdout, r.style.muted("  Context:"))
+		for _, line := range markdownLines(display.Context, r.style) {
+			fmt.Fprintln(r.stdout, "  "+line)
+		}
+	}
+	r.redrawStatusLocked()
+}
+
+// subagentStartHeader returns the first visible task-call line.
+func subagentStartHeader(display subagentCallDisplay) string {
+	profile := display.Profile
+	if profile == "" {
+		profile = "subagent"
+	}
+
+	return "Started subagent " + profile
+}
+
+// subagentCalls extracts display data for task calls in call order.
+func subagentCalls(calls []model.ToolCall) []subagentCallDisplay {
+	var displays []subagentCallDisplay
+	for _, call := range calls {
+		if call.Name != tool.NameTask {
+			continue
+		}
+		display, ok := parseSubagentCall(call.Arguments)
+		if ok {
+			displays = append(displays, display)
+		}
+	}
+
+	return displays
+}
+
+// nonSubagentToolCalls returns calls that should use generic tool rendering.
+func nonSubagentToolCalls(calls []model.ToolCall) []model.ToolCall {
+	var out []model.ToolCall
+	for _, call := range calls {
+		if call.Name == tool.NameTask {
+			continue
+		}
+		out = append(out, call)
+	}
+
+	return out
 }
 
 // renderSubagentToolResult renders task output as a compact child-agent card.

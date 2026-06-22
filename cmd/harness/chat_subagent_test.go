@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -24,6 +25,81 @@ func TestLiveToolCallLabelRendersTaskAsSubagent(t *testing.T) {
 	}
 	if strings.Contains(label, "{") {
 		t.Fatalf("task label exposed raw JSON: %q", label)
+	}
+}
+
+// TestRenderSubagentToolCallShowsFullPrompt verifies start blocks display the
+// complete delegated task and context instead of truncating them.
+func TestRenderSubagentToolCallShowsFullPrompt(t *testing.T) {
+	var stdout bytes.Buffer
+	renderer := &liveChatRenderer{
+		stdout: &stdout,
+	}
+	longTask := strings.TrimSpace(
+		strings.Repeat("review architecture carefully ", 8),
+	)
+	renderer.renderToolCall(model.ToolCall{
+		ID:   "call_1",
+		Name: "task",
+		Arguments: `{"profile":"review","task":` +
+			quoteJSONString(longTask) +
+			`,"context":"Focus on concurrency and session order."}`,
+	})
+
+	got := stdout.String()
+	for _, want := range []string{
+		"• Started subagent review",
+		"  Task:",
+		"  " + longTask,
+		"  Context:",
+		"  Focus on concurrency and session order.",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("subagent start block missing %q:\n%s", want,
+				got)
+		}
+	}
+	if strings.Contains(got, "…") {
+		t.Fatalf("subagent task was truncated:\n%s", got)
+	}
+}
+
+// TestRenderSubagentToolBatchShowsEachPrompt verifies parallel task batches
+// make each child assignment visible before results arrive.
+func TestRenderSubagentToolBatchShowsEachPrompt(t *testing.T) {
+	var stdout bytes.Buffer
+	renderer := &liveChatRenderer{
+		stdout: &stdout,
+	}
+
+	renderer.renderToolBatch([]model.ToolCall{
+		{
+			ID:        "call_1",
+			Name:      "task",
+			Arguments: `{"profile":"review","task":"Review core."}`,
+		},
+		{
+			ID:        "call_2",
+			Name:      "task",
+			Arguments: `{"profile":"explore","task":"Map CLI."}`,
+		},
+	})
+
+	got := stdout.String()
+	for _, want := range []string{
+		"• Starting 2 subagents",
+		"• Started subagent review",
+		"  Review core.",
+		"• Started subagent explore",
+		"  Map CLI.",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("subagent batch missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "Running 2 tools") {
+		t.Fatalf("subagent-only batch kept generic tool header:\n%s",
+			got)
 	}
 }
 
@@ -74,4 +150,14 @@ func TestRenderSubagentToolResultSummarizesChildRun(t *testing.T) {
 	if strings.Contains(got, "Session path") {
 		t.Fatalf("subagent output kept noisy path metadata:\n%s", got)
 	}
+}
+
+// quoteJSONString returns text as a JSON string literal for test arguments.
+func quoteJSONString(text string) string {
+	encoded, err := json.Marshal(text)
+	if err != nil {
+		panic(err)
+	}
+
+	return string(encoded)
 }

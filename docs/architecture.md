@@ -801,13 +801,15 @@ the profile lists it. Subagent tool-loop budgets are config-owned: the parent
 model can choose the profile and task, but it cannot lower or raise
 `max_tool_rounds` at runtime.
 
-The terminal presentation should stay compact. The parent UI renders `task` as
-a subagent activity block and appends the compact task result. The working
-status line also includes a quiet count of active subagents. Full child output
-stays in the child JSONL session and can be inspected with `harness show
-<child-id>` or continued with `harness resume <child-id>`. A richer future
-terminal can show per-subagent status rows, but it should still avoid streaming
-every child event into the parent transcript by default.
+The terminal presentation should stay compact while making delegation legible.
+The parent UI renders each `task` start as a subagent activity block containing
+the full delegated task and optional context, then appends the compact task
+result when the child finishes. The working status line also includes a quiet
+count of active subagents. Full child output stays in the child JSONL session
+and can be inspected with `harness show <child-id>` or continued with `harness
+resume <child-id>`. A richer future terminal can show per-subagent status rows,
+but it should still avoid streaming every child event into the parent transcript
+by default.
 
 ## Plugins
 

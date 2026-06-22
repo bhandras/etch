@@ -287,6 +287,9 @@ func (r *liveChatRenderer) renderToolCall(call model.ToolCall) {
 	r.renderWithOutputLocked(func() {
 		r.closeStreamLocked()
 		r.printSeparator()
+		if r.renderSubagentToolCall(call) {
+			return
+		}
 		r.renderDotBlock(
 			[]string{liveToolCallLabel(call)}, terminalTone{},
 		)
@@ -305,8 +308,30 @@ func (r *liveChatRenderer) renderToolBatch(calls []model.ToolCall) {
 	r.renderWithOutputLocked(func() {
 		r.closeStreamLocked()
 		r.printSeparator()
-		lines := []string{fmt.Sprintf("Running %d tools", len(calls))}
-		for _, call := range calls {
+		subagents := subagentCalls(calls)
+		if len(subagents) > 0 {
+			lines := []string{
+				fmt.Sprintf("Starting %d subagents",
+					len(subagents)),
+			}
+			r.renderDotBlock(lines, terminalTone{})
+			for _, display := range subagents {
+				fmt.Fprintln(r.stdout)
+				r.renderSubagentCallDisplay(display)
+			}
+			if len(subagents) == len(calls) {
+				return
+			}
+			fmt.Fprintln(r.stdout)
+		}
+		nonSubagentCalls := nonSubagentToolCalls(calls)
+		if len(nonSubagentCalls) == 0 {
+			return
+		}
+		lines := []string{
+			fmt.Sprintf("Running %d tools", len(nonSubagentCalls)),
+		}
+		for _, call := range nonSubagentCalls {
 			lines = append(
 				lines, "  "+strings.TrimPrefix(
 					liveToolCallLabel(call),
