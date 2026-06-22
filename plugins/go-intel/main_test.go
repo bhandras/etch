@@ -53,6 +53,56 @@ func TestRunGoFileSymbolsListsOneFile(t *testing.T) {
 	}
 }
 
+// TestRunGoSearchSymbolsFindsNameMatches verifies substring search finds
+// symbols by exact and partial names before callers know the precise lookup.
+func TestRunGoSearchSymbolsFindsNameMatches(t *testing.T) {
+	dir := goFixture(t)
+	text, err := runGoSearchSymbols(json.RawMessage(
+		`{"path":` + jsonQuote(dir) + `,"query":"NameText"}`,
+	))
+	if err != nil {
+		t.Fatalf("search go symbols: %v", err)
+	}
+	for _, want := range []string{
+		"query: NameText",
+		"symbols: 1",
+		"method Widget.NameText sample/sample.go:17",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("missing %q in output:\n%s", want, text)
+		}
+	}
+}
+
+// TestRunGoSearchSymbolsFindsDocMatches verifies search covers godoc so agents
+// can find concepts even when names are not obvious.
+func TestRunGoSearchSymbolsFindsDocMatches(t *testing.T) {
+	dir := goFixture(t)
+	text, err := runGoSearchSymbols(json.RawMessage(
+		`{"path":` + jsonQuote(dir) + `,"query":"display name"}`,
+	))
+	if err != nil {
+		t.Fatalf("search go symbols by doc: %v", err)
+	}
+	if !strings.Contains(text, "struct Widget sample/sample.go:7") {
+		t.Fatalf("missing doc-matched Widget in output:\n%s", text)
+	}
+	if strings.Contains(text, "func hidden") {
+		t.Fatalf("unexported symbol leaked without flag:\n%s", text)
+	}
+}
+
+// TestRunGoSearchSymbolsRequiresQuery verifies empty searches fail before
+// parsing the project.
+func TestRunGoSearchSymbolsRequiresQuery(t *testing.T) {
+	if _, err := runGoSearchSymbols(
+		json.RawMessage(`{"query":"   "}`),
+	); err == nil {
+
+		t.Fatal("expected empty query to fail")
+	}
+}
+
 // TestRunGoSymbolReturnsDocAndDeclaration verifies symbol lookup returns the
 // doc comment and full source declaration for a struct.
 func TestRunGoSymbolReturnsDocAndDeclaration(t *testing.T) {

@@ -31,6 +31,10 @@ const (
 	// toolGoFileSymbols lists symbols declared by one Go source file.
 	toolGoFileSymbols = "go_file_symbols"
 
+	// toolGoSearchSymbols searches Go symbols by metadata and
+	// documentation.
+	toolGoSearchSymbols = "go_search_symbols"
+
 	// toolGoSymbol returns the doc comment and source for one Go symbol.
 	toolGoSymbol = "go_symbol"
 
@@ -105,6 +109,26 @@ type fileSymbolsArgs struct {
 	Limit int `json:"limit"`
 }
 
+// searchSymbolsArgs stores arguments for substring-based Go symbol search.
+type searchSymbolsArgs struct {
+	// Path is a Go file or directory to inspect. Empty means current
+	// directory.
+	Path string `json:"path"`
+
+	// Query is the substring to find in symbol names, files, packages,
+	// signatures, or godoc.
+	Query string `json:"query"`
+
+	// Kind filters symbols by kind, such as func, method, struct, or const.
+	Kind string `json:"kind"`
+
+	// IncludeUnexported includes lowercase package symbols when true.
+	IncludeUnexported bool `json:"includeUnexported"`
+
+	// Limit caps the number of matching symbols rendered.
+	Limit int `json:"limit"`
+}
+
 // symbolArgs stores arguments for a specific Go symbol lookup.
 type symbolArgs struct {
 	// Path is a Go file or directory to inspect. Empty means current
@@ -171,6 +195,7 @@ func main() {
 			goListSymbolsSpec(),
 			goPackageSymbolsSpec(),
 			goFileSymbolsSpec(),
+			goSearchSymbolsSpec(),
 			goSymbolSpec(),
 		},
 	}); err != nil {
@@ -290,12 +315,58 @@ func goFileSymbolsSpec() sdk.Tool {
 	}
 }
 
+// goSearchSymbolsSpec returns the schema for substring Go symbol search.
+func goSearchSymbolsSpec() sdk.Tool {
+	return sdk.Tool{
+		Name: toolGoSearchSymbols,
+		Description: "Search Go symbols by name, file, package, " +
+			"signature, or godoc substring. Use this before grep " +
+			"when you know a concept or name fragment but not the " +
+			"exact symbol; follow with go_symbol for citation-ready " +
+			"details.",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"path": stringSchema(
+					"Go file or directory to inspect. " +
+						"Defaults to .",
+				),
+				"query": stringSchema(
+					"Substring to find in symbol " +
+						"names, files, packages, " +
+						"signatures, or godoc.",
+				),
+				"kind": stringSchema(
+					"Optional kind filter: func, " +
+						"method, struct, " +
+						"interface, type, const, " +
+						"or var.",
+				),
+				"includeUnexported": boolSchema(
+					"Include lowercase package symbols.",
+				),
+				"limit": integerSchema(
+					"Maximum symbols to render. " +
+						"Defaults to 200 and caps " +
+						"at 2000.",
+				),
+			},
+			"required": []string{
+				"query",
+			},
+		},
+		Handler: handleGoSearchSymbols,
+	}
+}
+
 // goSymbolSpec returns the schema for specific symbol source lookup.
 func goSymbolSpec() sdk.Tool {
 	return sdk.Tool{
 		Name: toolGoSymbol,
 		Description: "Return structured godoc, function signatures, " +
-			"and optional source declaration for one Go symbol.",
+			"and optional source declaration for one Go symbol. Use " +
+			"instead of read+grep when you know the function, type, " +
+			"method, const, or var name.",
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -305,7 +376,8 @@ func goSymbolSpec() sdk.Tool {
 				),
 				"name": stringSchema(
 					"Symbol name, such as Config or " +
-						"Store.Append.",
+						"Store.Append. If unsure, " +
+						"call go_search_symbols first.",
 				),
 				"package": stringSchema(
 					"Optional package name or relative " +
@@ -385,6 +457,21 @@ func handleGoFileSymbols(ctx context.Context,
 		return sdk.ToolResult{}, err
 	}
 	text, err := runGoFileSymbols(call.Arguments)
+	if err != nil {
+		return sdk.ToolResult{}, err
+	}
+
+	return sdk.TextResult(text), nil
+}
+
+// handleGoSearchSymbols executes go_search_symbols through the SDK handler.
+func handleGoSearchSymbols(ctx context.Context,
+	call sdk.ToolCall) (sdk.ToolResult, error) {
+
+	if err := ctx.Err(); err != nil {
+		return sdk.ToolResult{}, err
+	}
+	text, err := runGoSearchSymbols(call.Arguments)
 	if err != nil {
 		return sdk.ToolResult{}, err
 	}
@@ -480,6 +567,35 @@ func runGoFileSymbols(raw json.RawMessage) (string, error) {
 
 	return formatSymbolList(
 		args.Path, packages, symbols, "flat",
+		normalizeSymbolLimit(args.Limit),
+	), nil
+}
+
+// runGoSearchSymbols returns symbols whose metadata contains a query
+// substring.
+func runGoSearchSymbols(raw json.RawMessage) (string, error) {
+	var args searchSymbolsArgs
+	if err := decodeArguments(raw, &args); err != nil {
+		return "", err
+	}
+	query := strings.TrimSpace(args.Query)
+	if query == "" {
+		return "", fmt.Errorf("query must not be empty")
+	}
+	path := defaultPath(args.Path)
+	packages, err := parsePackages(path)
+	if err != nil {
+		return "", err
+	}
+	filter := symbolFilter{
+		kind:              strings.TrimSpace(args.Kind),
+		includeUnexported: args.IncludeUnexported,
+	}
+	symbols := filterSymbols(allSymbols(packages), filter)
+	matches := searchSymbols(symbols, query)
+
+	return formatSymbolSearch(
+		path, packages, matches, query,
 		normalizeSymbolLimit(args.Limit),
 	), nil
 }
@@ -1009,6 +1125,41 @@ func matchSymbols(symbols []symbolInfo, args symbolArgs) []symbolInfo {
 	return matches
 }
 
+// searchSymbols returns symbols containing query in high-signal metadata.
+func searchSymbols(symbols []symbolInfo, query string) []symbolInfo {
+	query = strings.ToLower(strings.TrimSpace(query))
+	var matches []symbolInfo
+	for _, symbol := range symbols {
+		if symbolMatchesQuery(symbol, query) {
+			matches = append(matches, symbol)
+		}
+	}
+
+	return matches
+}
+
+// symbolMatchesQuery reports whether symbol contains query in searchable
+// metadata.
+func symbolMatchesQuery(symbol symbolInfo, query string) bool {
+	fields := []string{
+		symbol.name,
+		simpleSymbolName(symbol.name),
+		symbol.kind,
+		symbol.packageName,
+		symbol.relDir,
+		symbol.relFile,
+		symbol.signature,
+		symbol.doc,
+	}
+	for _, field := range fields {
+		if strings.Contains(strings.ToLower(field), query) {
+			return true
+		}
+	}
+
+	return false
+}
+
 // simpleSymbolName returns the member portion of a qualified method name.
 func simpleSymbolName(name string) string {
 	_, after, ok := strings.Cut(name, ".")
@@ -1017,6 +1168,20 @@ func simpleSymbolName(name string) string {
 	}
 
 	return after
+}
+
+// formatSymbolSearch renders search results with the query visible.
+func formatSymbolSearch(root string, packages []packageInfo,
+	symbols []symbolInfo, query string, limit int) string {
+
+	var builder strings.Builder
+	fmt.Fprintf(&builder, "query: %s\n", query)
+	fmt.Fprintf(
+		&builder, "%s",
+		formatSymbolList(root, packages, symbols, "flat", limit),
+	)
+
+	return strings.TrimRight(builder.String(), "\n")
 }
 
 // formatSymbolList renders symbols in the requested grouping.
