@@ -56,7 +56,7 @@ func runChat(cfg cliConfig, stdin io.Reader, stdout io.Writer,
 		_ = input.Close()
 	}()
 	composer := terminalComposer(input)
-	chrome := newChatChrome(cfg, runtime.cwd, runtime.initialUsage)
+	chrome := newChatChrome(cfg, runtime.cwd, runtime.initialStatus)
 	if composer != nil {
 		composer.SetFooter(chrome.Footer())
 		if sessionPath != "" {

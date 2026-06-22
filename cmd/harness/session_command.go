@@ -251,6 +251,17 @@ func decodeUsage(event session.Event) (session.UsageData, error) {
 	return data, nil
 }
 
+// decodeMetrics decodes a durable model metrics event.
+func decodeMetrics(event session.Event) (session.MetricsData, error) {
+	var data session.MetricsData
+	if err := json.Unmarshal(event.Data, &data); err != nil {
+		return session.MetricsData{}, fmt.Errorf("decode metrics: %w",
+			err)
+	}
+
+	return data, nil
+}
+
 // formatSessionTime renders index timestamps for compact terminal lists.
 func formatSessionTime(createdAt time.Time) string {
 	return createdAt.Local().Format("2006-01-02 15:04")

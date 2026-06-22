@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"time"
 
 	"harness/internal/core"
 	"harness/internal/model"
@@ -27,14 +26,21 @@ type chatChrome struct {
 
 	// usage stores cumulative provider counters for the chat session.
 	usage model.Usage
+
+	// timing stores cumulative provider transport counters for the chat
+	// session.
+	timing core.TurnTiming
 }
 
 // newChatChrome creates the prompt footer state for one chat loop.
-func newChatChrome(cfg cliConfig, cwd string, usage model.Usage) *chatChrome {
+func newChatChrome(cfg cliConfig, cwd string,
+	status chatChromeStatus) *chatChrome {
+
 	return &chatChrome{
-		cfg:   cfg,
-		cwd:   cwd,
-		usage: usage,
+		cfg:    cfg,
+		cwd:    cwd,
+		usage:  status.Usage,
+		timing: status.Timing,
 	}
 }
 
@@ -56,6 +62,16 @@ func (c *chatChrome) AddUsage(usage model.Usage) string {
 	return c.footerLocked()
 }
 
+// AddTiming records provider transport counters and returns the updated footer.
+func (c *chatChrome) AddTiming(timing core.TurnTiming) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.timing = addTurnTiming(c.timing, timing)
+
+	return c.footerLocked()
+}
+
 // footerLocked formats the current prompt footer while c.mu is held.
 func (c *chatChrome) footerLocked() string {
 	parts := []string{
@@ -64,6 +80,9 @@ func (c *chatChrome) footerLocked() string {
 	}
 	if usage := formatUsageStats(c.usage); usage != "" {
 		parts = append(parts, usage)
+	}
+	if timing := formatFooterTimingStats(c.timing); timing != "" {
+		parts = append(parts, timing)
 	}
 
 	return strings.Join(parts, " · ")
@@ -103,14 +122,27 @@ func displayCWD(cwd string) string {
 	return filepath.Join("~", rel)
 }
 
-// chatSessionUsage loads cumulative provider usage from an existing session.
-func chatSessionUsage(path string) (model.Usage, error) {
+// chatChromeStatus stores counters used to seed the live prompt footer.
+type chatChromeStatus struct {
+	// Usage stores cumulative provider token counters.
+	Usage model.Usage
+
+	// Timing stores cumulative provider transport counters.
+	Timing core.TurnTiming
+}
+
+// chatSessionChromeStatus loads cumulative provider counters from a session.
+func chatSessionChromeStatus(path string) (chatChromeStatus, error) {
 	status, err := aggregateSessionStatus(path)
 	if err != nil {
-		return model.Usage{}, fmt.Errorf("build session usage: %w", err)
+		return chatChromeStatus{}, fmt.Errorf("build session "+
+			"status: %w", err)
 	}
 
-	return modelUsageFromSessionStatus(status), nil
+	return chatChromeStatus{
+		Usage:  modelUsageFromSessionStatus(status),
+		Timing: turnTimingFromSessionStatus(status),
+	}, nil
 }
 
 // modelUsageFromSessionStatus converts durable session counters into footer
@@ -128,22 +160,14 @@ func modelUsageFromSessionStatus(status session.Status) model.Usage {
 // turnTimingFromSessionStatus converts durable session metrics into the subset
 // of footer timing counters that can be summed across child agents.
 func turnTimingFromSessionStatus(status session.Status) core.TurnTiming {
-	modelCalls := status.Metrics.Requests
+	timing := turnTimingFromMetrics(status.Metrics)
+	modelCalls := timing.ModelCalls
 	if modelCalls == 0 {
 		modelCalls = status.ModelCalls
 	}
+	timing.ModelCalls = modelCalls
 
-	return core.TurnTiming{
-		ModelCalls:    modelCalls,
-		RequestBytes:  status.Metrics.RequestBytes,
-		ResponseBytes: status.Metrics.ResponseBytes,
-		TimeToHeaders: time.Duration(status.Metrics.TimeToHeadersMillis) *
-			time.Millisecond,
-		TimeToFirstEvent: time.Duration(
-			status.Metrics.TimeToFirstEventMillis,
-		) *
-			time.Millisecond,
-	}
+	return timing
 }
 
 // chatPromptHistory loads durable user prompts for interactive history.

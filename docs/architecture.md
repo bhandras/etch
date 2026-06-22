@@ -1033,6 +1033,14 @@ cancellation and raw terminal input instead of being hidden in the renderer.
 The same prompt island handles Up/Down history navigation, preserving the
 current draft and drawing history from the active session transcript.
 
+The prompt footer is a live status row, not static decoration. It shows the
+selected model and cwd from startup, then updates as durable provider usage and
+metrics events arrive. Token counters, request counts, and up/down transport
+bytes therefore move during a turn as model calls complete and again when
+completed subagent sessions are folded into the parent. Resume seeds the same
+footer from aggregate session status so a continued chat starts with the
+traffic counters it already spent.
+
 Transient working labels are provider-aware. Native OpenAI Responses reasoning
 summaries can supply concise labels for the animated status line when reasoning
 summaries are configured, but OpenAI-compatible providers and custom base URLs

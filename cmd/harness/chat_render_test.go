@@ -659,4 +659,12 @@ func TestFormatTurnStatsSummarizesToolCounts(t *testing.T) {
 		t.Fatalf("unexpected transport stats:\nwant %q\ngot  %q", want,
 			got)
 	}
+	if got := formatFooterTimingStats(core.TurnTiming{
+		ModelCalls:    1234,
+		RequestBytes:  4096,
+		ResponseBytes: 2048,
+	}); got != "1,234 req · 4.0KB up · 2.0KB down" {
+
+		t.Fatalf("unexpected footer timing stats: %q", got)
+	}
 }

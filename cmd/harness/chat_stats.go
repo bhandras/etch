@@ -7,6 +7,7 @@ import (
 
 	"harness/internal/core"
 	"harness/internal/model"
+	"harness/internal/session"
 	"harness/internal/textutil"
 )
 
@@ -96,10 +97,69 @@ func timingStatParts(timing core.TurnTiming) []string {
 	return parts
 }
 
+// formatFooterTimingStats returns compact transport counters for prompt chrome.
+func formatFooterTimingStats(timing core.TurnTiming) string {
+	parts := footerTimingStatParts(timing)
+	if len(parts) == 0 {
+		return ""
+	}
+
+	return strings.Join(parts, " · ")
+}
+
+// footerTimingStatParts returns the transport counters useful in a live footer.
+func footerTimingStatParts(timing core.TurnTiming) []string {
+	var parts []string
+	if timing.ModelCalls > 0 {
+		if timing.ModelCalls == 1 {
+			parts = append(parts, "1 req")
+		} else {
+			parts = append(
+				parts,
+				fmt.Sprintf(
+					"%s req",
+					textutil.FormatCount(timing.ModelCalls),
+				),
+			)
+		}
+	}
+	if timing.RequestBytes > 0 {
+		parts = append(
+			parts, textutil.FormatBytes(timing.RequestBytes)+" up",
+		)
+	}
+	if timing.ResponseBytes > 0 {
+		parts = append(
+			parts,
+			textutil.FormatBytes(timing.ResponseBytes)+" down",
+		)
+	}
+
+	return parts
+}
+
 // formatUsageStats returns compact provider token counters without a leading
 // separator.
 func formatUsageStats(usage model.Usage) string {
 	return strings.Join(usageStatParts(usage), " · ")
+}
+
+// turnTimingFromMetrics converts durable metrics into live footer counters.
+func turnTimingFromMetrics(metrics session.MetricsData) core.TurnTiming {
+	modelCalls := metrics.Requests
+	if modelCalls == 0 && !metrics.Empty() {
+		modelCalls = 1
+	}
+
+	return core.TurnTiming{
+		ModelCalls:    modelCalls,
+		RequestBytes:  metrics.RequestBytes,
+		ResponseBytes: metrics.ResponseBytes,
+		TimeToHeaders: time.Duration(metrics.TimeToHeadersMillis) *
+			time.Millisecond,
+		TimeToFirstEvent: time.Duration(metrics.TimeToFirstEventMillis) *
+			time.Millisecond,
+	}
 }
 
 // usageStatParts returns compact token counter phrases for terminal chrome.

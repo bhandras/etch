@@ -84,6 +84,19 @@ func (o *chatObserver) EventAppended(event session.Event) {
 
 		return
 	}
+	if event.Type == session.EventModelMetrics {
+		metrics, err := decodeMetrics(event)
+		if err != nil {
+			fmt.Fprintf(
+				o.renderer.stdout, "render error: %v\n", err,
+			)
+
+			return
+		}
+		o.addTiming(turnTimingFromMetrics(metrics))
+
+		return
+	}
 	if event.Type == session.EventUserMessage {
 		return
 	}
@@ -285,6 +298,20 @@ func (o *chatObserver) addSubagentStats(status session.Status) {
 	o.toolCalls += status.ToolCalls
 	o.subagentTiming = addTurnTiming(o.subagentTiming, timing)
 	o.timing = addTurnTiming(o.timing, timing)
+	if o.renderer.composer != nil && o.chrome != nil {
+		o.renderer.composer.SetFooter(o.chrome.AddTiming(timing))
+	}
+}
+
+// addTiming records provider transport counters and refreshes the footer.
+func (o *chatObserver) addTiming(timing core.TurnTiming) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	o.timing = addTurnTiming(o.timing, timing)
+	if o.renderer.composer != nil && o.chrome != nil {
+		o.renderer.composer.SetFooter(o.chrome.AddTiming(timing))
+	}
 }
 
 // ToolProgress updates live progress rows for long-running tools.
@@ -349,7 +376,10 @@ func (o *chatObserver) TurnTiming(timing core.TurnTiming) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 
-	o.timing = addTurnTiming(timing, o.subagentTiming)
+	o.timing.ModelDuration = timing.ModelDuration
+	o.timing.ToolDuration = timing.ToolDuration
+	o.timing.ToolBatches = timing.ToolBatches
+	o.timing.LargestToolBatch = timing.LargestToolBatch
 }
 
 // Finish renders terminal-only end-of-turn decoration.

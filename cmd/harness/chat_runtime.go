@@ -39,8 +39,9 @@ type chatRuntime struct {
 	// resumeID is the resolved durable session identifier when resuming.
 	resumeID string
 
-	// initialUsage seeds the terminal footer with resumed-session counters.
-	initialUsage model.Usage
+	// initialStatus seeds the terminal footer with resumed-session
+	// counters.
+	initialStatus chatChromeStatus
 }
 
 // openChatRuntime builds provider, context, hook, tool, and session state.
@@ -76,7 +77,7 @@ func openChatRuntime(cfg cliConfig) (*chatRuntime, error) {
 		}
 		runtime.sessionPath = entry.Path
 		runtime.resumeID = entry.ID
-		runtime.initialUsage, err = chatSessionUsage(entry.Path)
+		runtime.initialStatus, err = chatSessionChromeStatus(entry.Path)
 		if err != nil {
 			return nil, err
 		}

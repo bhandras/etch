@@ -283,7 +283,7 @@ func TestChatObserverAddsSubagentUsage(t *testing.T) {
 		cliConfig{
 			model: "gpt-test",
 		}, ".",
-		model.Usage{},
+		chatChromeStatus{},
 	)
 	renderer := newLiveChatRenderer(&stdout, false)
 	renderer.composer = composer
@@ -321,21 +321,60 @@ func TestChatObserverAddsSubagentUsage(t *testing.T) {
 			observer.timing)
 	}
 	observer.TurnTiming(core.TurnTiming{
-		ModelCalls:   1,
-		RequestBytes: 100,
+		ModelDuration: time.Second,
 	})
-	if observer.timing.ModelCalls != 3 ||
-		observer.timing.RequestBytes != 2148 {
+	if observer.timing.ModelCalls != 2 ||
+		observer.timing.RequestBytes != 2048 ||
+		observer.timing.ModelDuration != time.Second {
 
 		t.Fatalf("parent timing overwrote subagent timing: %#v",
 			observer.timing)
 	}
 	if !strings.Contains(composer.footerText, "1,000 in") ||
 		!strings.Contains(composer.footerText, "400 cached") ||
-		!strings.Contains(composer.footerText, "200 out") {
+		!strings.Contains(composer.footerText, "200 out") ||
+		!strings.Contains(composer.footerText, "2 req") ||
+		!strings.Contains(composer.footerText, "2.0KB up") ||
+		!strings.Contains(composer.footerText, "1.0KB down") {
 
-		t.Fatalf("subagent usage missing from footer: %q",
+		t.Fatalf("subagent counters missing from footer: %q",
 			composer.footerText)
+	}
+}
+
+// TestChatObserverAddsModelMetrics verifies provider metrics refresh the live
+// prompt footer as each model call is persisted.
+func TestChatObserverAddsModelMetrics(t *testing.T) {
+	var stdout bytes.Buffer
+	composer := &terminalChatInput{stdout: &stdout}
+	chrome := newChatChrome(
+		cliConfig{
+			model: "gpt-test",
+		}, ".",
+		chatChromeStatus{},
+	)
+	renderer := newLiveChatRenderer(&stdout, false)
+	renderer.composer = composer
+	observer := &chatObserver{
+		renderer: renderer,
+		chrome:   chrome,
+	}
+
+	observer.EventAppended(
+		metricsEvent(
+			t, session.MetricsData{
+				Requests:      3,
+				RequestBytes:  4096,
+				ResponseBytes: 2048,
+			},
+		),
+	)
+
+	for _, want := range []string{"3 req", "4.0KB up", "2.0KB down"} {
+		if !strings.Contains(composer.footerText, want) {
+			t.Fatalf("footer missing %q: %q", want,
+				composer.footerText)
+		}
 	}
 }
 
@@ -352,6 +391,22 @@ func messageEvent(t *testing.T, eventType string,
 	return session.Event{
 		Type: eventType,
 		ID:   "event_1",
+		Time: time.Now().UTC(),
+		Data: raw,
+	}
+}
+
+// metricsEvent creates one durable metrics event for CLI rendering tests.
+func metricsEvent(t *testing.T, metrics session.MetricsData) session.Event {
+	t.Helper()
+	raw, err := json.Marshal(metrics)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return session.Event{
+		Type: session.EventModelMetrics,
+		ID:   "metrics_1",
 		Time: time.Now().UTC(),
 		Data: raw,
 	}

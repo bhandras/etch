@@ -54,6 +54,8 @@ Harness currently has:
 - chat steering that lets prompts typed while a turn is running influence the
   next safe model-call boundary
 - session-backed prompt history for Up/Down navigation in interactive chat
+- live prompt footer counters for tokens, provider requests, and up/down
+  transport bytes
 - built-in tools for `ls`, `find`, `grep`, `read`, `write`, `edit`, and
   `bash`, including dry-run previews for exact replacement edits
 - external process hooks for session, turn, prompt, context, tool, and
