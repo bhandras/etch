@@ -114,6 +114,16 @@ is one model response followed by zero or more requested tool executions, so it
 is not the same as an individual tool-call count. CLI callers can raise or
 lower the bound with `--max-tool-rounds` or `.harness/config.toml`.
 
+Tool execution preserves provider-visible order while allowing safe local
+parallelism. The core partitions each assistant tool-call batch into execution
+groups: consecutive read-only or isolated calls such as `ls`, `read`, `find`,
+`grep`, `task`, and known Go-introspection tools can run concurrently, while
+side-effectful calls such as `write`, `edit`, `bash`, and unknown plugin tools
+act as serial barriers. Tool results are appended to JSONL and sent back to the
+model in the original assistant-call order even when the local executions
+overlap. This gives subagent and read-heavy review batches real parallelism
+without letting reads and writes observe an interleaved filesystem state.
+
 Pi appears to treat tool use as part of the broader agent lifecycle: it tracks
 tool calls for session statistics and relies on stop reasons, cancellation,
 retries, context overflow handling, and compaction to bound real work. This
@@ -792,11 +802,12 @@ model can choose the profile and task, but it cannot lower or raise
 `max_tool_rounds` at runtime.
 
 The terminal presentation should stay compact. The parent UI renders `task` as
-a normal tool call and appends the compact task result. Full child output stays
-in the child JSONL session and can be inspected with `harness show <child-id>`
-or continued with `harness resume <child-id>`. A richer future terminal can show
-live per-subagent status rows, but it should still avoid streaming every child
-event into the parent transcript by default.
+a subagent activity block and appends the compact task result. The working
+status line also includes a quiet count of active subagents. Full child output
+stays in the child JSONL session and can be inspected with `harness show
+<child-id>` or continued with `harness resume <child-id>`. A richer future
+terminal can show per-subagent status rows, but it should still avoid streaming
+every child event into the parent transcript by default.
 
 ## Plugins
 

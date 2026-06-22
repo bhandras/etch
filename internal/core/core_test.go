@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -407,6 +408,126 @@ func TestRunTurnExecutesToolCalls(t *testing.T) {
 	}
 	if events[4].Type != session.EventToolMessage {
 		t.Fatalf("expected tool message event, got %q", events[4].Type)
+	}
+}
+
+// TestToolExecutionGroupsKeepMutationBarriers verifies read-only calls batch
+// together while mutating calls split the execution stream.
+func TestToolExecutionGroupsKeepMutationBarriers(t *testing.T) {
+	groups := toolExecutionGroups([]model.ToolCall{
+		{ID: "call_1", Name: tool.NameRead},
+		{ID: "call_2", Name: tool.NameGrep},
+		{ID: "call_3", Name: tool.NameWrite},
+		{ID: "call_4", Name: tool.NameRead},
+	})
+
+	if len(groups) != 3 {
+		t.Fatalf("expected three execution groups, got %#v", groups)
+	}
+	if len(groups[0]) != 2 || groups[0][0].ID != "call_1" ||
+		groups[0][1].ID != "call_2" {
+
+		t.Fatalf("unexpected first read-only group: %#v", groups[0])
+	}
+	if len(groups[1]) != 1 || groups[1][0].ID != "call_3" {
+		t.Fatalf("unexpected mutation barrier group: %#v", groups[1])
+	}
+	if len(groups[2]) != 1 || groups[2][0].ID != "call_4" {
+		t.Fatalf("unexpected trailing read group: %#v", groups[2])
+	}
+}
+
+// TestRunTurnExecutesReadOnlyToolGroupConcurrently verifies model-requested
+// read-only batches overlap in wall time while preserving ordered results.
+func TestRunTurnExecutesReadOnlyToolGroupConcurrently(t *testing.T) {
+	blocking := newBlockingReadTool(2)
+	registry := tool.NewRegistry()
+	registry.Register(blocking)
+	client := &scriptedToolClient{
+		events: [][]model.Event{
+			{
+				{
+					Type: model.EventToolCall,
+					ToolCall: model.ToolCall{
+						ID:        "call_1",
+						Name:      tool.NameRead,
+						Arguments: `{"path":"one"}`,
+					},
+				},
+				{
+					Type: model.EventToolCall,
+					ToolCall: model.ToolCall{
+						ID:        "call_2",
+						Name:      tool.NameRead,
+						Arguments: `{"path":"two"}`,
+					},
+				},
+				{
+					Type: model.EventDone,
+				},
+			},
+			{
+				{
+					Type: model.EventTextDelta,
+					Text: "done",
+				},
+				{
+					Type: model.EventDone,
+				},
+			},
+		},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	type turnResult struct {
+		result *TurnResult
+		err    error
+	}
+	done := make(chan turnResult, 1)
+	go func() {
+		result, err := RunTurn(ctx, TurnRequest{
+			Prompt:     "read both",
+			SessionDir: t.TempDir(),
+			CWD:        "/work/project",
+			Model:      client,
+			Tools:      registry,
+		})
+		done <- turnResult{result: result, err: err}
+	}()
+
+	select {
+	case <-blocking.allStarted:
+		close(blocking.release)
+
+	case <-ctx.Done():
+		t.Fatal("read-only tool group did not start concurrently")
+	}
+
+	got := <-done
+	if got.err != nil {
+		t.Fatal(got.err)
+	}
+	events, err := session.ReadAll(got.result.SessionPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var toolTexts []string
+	for _, event := range events {
+		if event.Type != session.EventToolMessage {
+			continue
+		}
+		var message session.MessageData
+		if err := json.Unmarshal(event.Data, &message); err != nil {
+			t.Fatal(err)
+		}
+		toolTexts = append(toolTexts, summaryMessageText(message))
+	}
+	if len(toolTexts) != 2 || toolTexts[0] != "read {\"path\":\"one\"}" ||
+		toolTexts[1] != "read {\"path\":\"two\"}" {
+
+		t.Fatalf("tool results were not appended in call order: %#v",
+			toolTexts)
 	}
 }
 
@@ -1202,6 +1323,28 @@ type contextRecordingTool struct {
 	meta tool.ExecutionContext
 }
 
+// blockingReadTool waits until a configured number of calls have started.
+type blockingReadTool struct {
+	// expected is the number of concurrent starts required to unblock
+	// tests.
+	expected int
+
+	// allStarted closes after expected calls have entered Execute.
+	allStarted chan struct{}
+
+	// release lets blocked calls return to the core turn loop.
+	release chan struct{}
+
+	// once closes allStarted exactly once.
+	once sync.Once
+
+	// mu protects started.
+	mu sync.Mutex
+
+	// started counts calls that have entered Execute.
+	started int
+}
+
 // Spec returns the schema for the context-recording test tool.
 func (t *contextRecordingTool) Spec() model.ToolSpec {
 	return model.ToolSpec{
@@ -1222,6 +1365,46 @@ func (t *contextRecordingTool) Execute(ctx context.Context, arguments string) (
 	t.meta = meta
 
 	return tool.Result{Text: "recorded"}, nil
+}
+
+// newBlockingReadTool creates a read tool fixture for parallelism tests.
+func newBlockingReadTool(expected int) *blockingReadTool {
+	return &blockingReadTool{
+		expected:   expected,
+		allStarted: make(chan struct{}),
+		release:    make(chan struct{}),
+	}
+}
+
+// Spec returns the read tool schema used by the blocking fixture.
+func (t *blockingReadTool) Spec() model.ToolSpec {
+	return model.ToolSpec{
+		Name:        tool.NameRead,
+		Description: "Block until sibling reads start.",
+		Parameters:  json.RawMessage(`{"type":"object"}`),
+	}
+}
+
+// Execute waits for sibling calls before returning its argument text.
+func (t *blockingReadTool) Execute(ctx context.Context, arguments string) (
+	tool.Result, error) {
+
+	t.mu.Lock()
+	t.started++
+	if t.started >= t.expected {
+		t.once.Do(func() {
+			close(t.allStarted)
+		})
+	}
+	t.mu.Unlock()
+
+	select {
+	case <-ctx.Done():
+		return tool.Result{}, ctx.Err()
+
+	case <-t.release:
+		return tool.Result{Text: "read " + arguments}, nil
+	}
 }
 
 // Stream returns the next scripted event stream.

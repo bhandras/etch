@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"harness/internal/hooks"
@@ -394,68 +395,37 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 				response.ResponseInfo.ProviderResponseID
 		}
 
-		for _, call := range toolCalls {
-			toolCallCount++
-			notifyToolCallStarted(req.Observer, call)
-			toolStarted := time.Now()
-			result := tool.Result{}
-			toolFailed := false
-			if reason, ok := blockedCalls[call.ID]; ok {
-				toolFailed = true
-				result = tool.Result{
-					Text: blockedToolText(reason),
-				}
-			} else {
-				toolCtx := tool.WithExecutionContext(
-					ctx,
-					tool.ExecutionContext{
-						SessionID:        store.ID(),
-						SessionPath:      store.Path(),
-						AssistantEventID: assistant.ID,
-						ToolCallID:       call.ID,
-					},
-				)
-				result, err = executeTool(
-					toolCtx, req.Tools, call,
+		for _, group := range toolExecutionGroups(toolCalls) {
+			results, err := executeToolGroup(
+				ctx, req, store, assistant.ID, blockedCalls,
+				group,
+			)
+			if err != nil {
+				return nil, err
+			}
+			for _, executed := range results {
+				toolCallCount++
+				timing.ToolDuration += executed.Duration
+				toolEvent, err := store.Append(
+					session.EventToolMessage, parentID,
+					session.ToolMessage(
+						executed.Call.ID,
+						executed.Call.Name,
+						executed.Result.Text,
+					),
 				)
 				if err != nil {
-					if errors.Is(err, context.Canceled) ||
-						errors.Is(
-							err,
-							context.DeadlineExceeded,
-						) {
-						return nil, err
-					}
-					toolFailed = true
-					result = tool.Result{
-						Text: toolErrorText(err),
-					}
+					return nil, err
 				}
+				notifyEvent(req.Observer, toolEvent)
+				messages = append(messages, model.Message{
+					Role:       model.RoleTool,
+					Content:    executed.Result.Text,
+					ToolCallID: executed.Call.ID,
+					Name:       executed.Call.Name,
+				})
+				parentID = toolEvent.ID
 			}
-			result, err = runPostToolUseHooks(
-				ctx, req, call, result, toolFailed,
-			)
-			timing.ToolDuration += time.Since(toolStarted)
-			if err != nil {
-				return nil, err
-			}
-			toolEvent, err := store.Append(
-				session.EventToolMessage, parentID,
-				session.ToolMessage(
-					call.ID, call.Name, result.Text,
-				),
-			)
-			if err != nil {
-				return nil, err
-			}
-			notifyEvent(req.Observer, toolEvent)
-			messages = append(messages, model.Message{
-				Role:       model.RoleTool,
-				Content:    result.Text,
-				ToolCallID: call.ID,
-				Name:       call.Name,
-			})
-			parentID = toolEvent.ID
 		}
 		steeredParentID, err := applySteeringPrompts(
 			ctx, req, store, parentID, &messages, &userPrompts,
@@ -1205,6 +1175,165 @@ func executeTool(ctx context.Context, registry *tool.Registry,
 	}
 
 	return registry.Execute(ctx, call)
+}
+
+// toolExecutionResult stores one completed tool call in model-request order.
+type toolExecutionResult struct {
+	// Call is the model tool call that was executed.
+	Call model.ToolCall
+
+	// Result is the model-visible output after post-tool hooks.
+	Result tool.Result
+
+	// Duration is the elapsed execution and post-hook time for this call.
+	Duration time.Duration
+}
+
+// toolExecutionGroups splits tool calls into parallel read-only groups and
+// serial side-effect barriers.
+func toolExecutionGroups(calls []model.ToolCall) [][]model.ToolCall {
+	var groups [][]model.ToolCall
+	var readonly []model.ToolCall
+	flushReadonly := func() {
+		if len(readonly) == 0 {
+			return
+		}
+		groups = append(groups, readonly)
+		readonly = nil
+	}
+	for _, call := range calls {
+		if parallelReadOnlyTool(call.Name) {
+			readonly = append(readonly, call)
+
+			continue
+		}
+		flushReadonly()
+		groups = append(groups, []model.ToolCall{call})
+	}
+	flushReadonly()
+
+	return groups
+}
+
+// parallelReadOnlyTool reports whether a call can execute inside a concurrent
+// read-only block without mingling with writes or shell side effects.
+func parallelReadOnlyTool(name string) bool {
+	switch name {
+	case tool.NameLS, tool.NameRead, tool.NameFind, tool.NameGrep,
+		tool.NameTask:
+		return true
+
+	default:
+		return strings.HasPrefix(name, "go_")
+	}
+}
+
+// executeToolGroup runs one execution group and returns results in call order.
+func executeToolGroup(ctx context.Context, req TurnRequest,
+	store *session.Store, assistantID string,
+	blockedCalls map[string]string,
+	calls []model.ToolCall) ([]toolExecutionResult, error) {
+
+	for _, call := range calls {
+		notifyToolCallStarted(req.Observer, call)
+	}
+	if len(calls) == 1 || !parallelExecutionGroup(calls) {
+		result, err := executeOneToolCall(
+			ctx, req, store, assistantID, blockedCalls, calls[0],
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		return []toolExecutionResult{result}, nil
+	}
+
+	results := make([]toolExecutionResult, len(calls))
+	errs := make([]error, len(calls))
+	var wg sync.WaitGroup
+	for i, call := range calls {
+		i := i
+		call := call
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			results[i], errs[i] = executeOneToolCall(
+				ctx, req, store, assistantID, blockedCalls,
+				call,
+			)
+		}()
+	}
+	wg.Wait()
+	for _, err := range errs {
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return results, nil
+}
+
+// parallelExecutionGroup reports whether every call in group is read-only.
+func parallelExecutionGroup(calls []model.ToolCall) bool {
+	for _, call := range calls {
+		if !parallelReadOnlyTool(call.Name) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// executeOneToolCall runs one tool call and applies post-tool hooks.
+func executeOneToolCall(ctx context.Context, req TurnRequest,
+	store *session.Store, assistantID string,
+	blockedCalls map[string]string,
+	call model.ToolCall) (toolExecutionResult, error) {
+
+	started := time.Now()
+	var result tool.Result
+	toolFailed := false
+	if reason, ok := blockedCalls[call.ID]; ok {
+		toolFailed = true
+		result = tool.Result{
+			Text: blockedToolText(reason),
+		}
+	} else {
+		toolCtx := tool.WithExecutionContext(
+			ctx,
+			tool.ExecutionContext{
+				SessionID:        store.ID(),
+				SessionPath:      store.Path(),
+				AssistantEventID: assistantID,
+				ToolCallID:       call.ID,
+			},
+		)
+		var err error
+		result, err = executeTool(toolCtx, req.Tools, call)
+		if err != nil {
+			if errors.Is(err, context.Canceled) ||
+				errors.Is(err, context.DeadlineExceeded) {
+				return toolExecutionResult{}, err
+			}
+			toolFailed = true
+			result = tool.Result{
+				Text: toolErrorText(err),
+			}
+		}
+	}
+	var err error
+	result, err = runPostToolUseHooks(
+		ctx, req, call, result, toolFailed,
+	)
+	if err != nil {
+		return toolExecutionResult{}, err
+	}
+
+	return toolExecutionResult{
+		Call:     call,
+		Result:   result,
+		Duration: time.Since(started),
+	}, nil
 }
 
 // toolErrorText formats a tool failure as model-visible feedback.
