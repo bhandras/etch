@@ -501,6 +501,116 @@ func TestToolExecutionGroupsSeparateTaskBatchesFromReads(t *testing.T) {
 	}
 }
 
+// TestFilterIncompleteToolCallEventsDropsDanglingAssistant verifies interrupted
+// tool-call turns do not poison later provider replay.
+func TestFilterIncompleteToolCallEventsDropsDanglingAssistant(t *testing.T) {
+	events := []session.Event{
+		testCoreEvent(
+			"start", "", session.EventSessionStarted,
+			session.StartedData{},
+		),
+		testCoreEvent(
+			"user-1", "start", session.EventUserMessage,
+			session.TextMessage(session.RoleUser, "first"),
+		),
+		testCoreEvent(
+			"assistant-1", "user-1", session.EventAssistantMessage,
+			session.TextMessage(session.RoleAssistant, "done"),
+		),
+		testCoreEvent(
+			"response-1", "assistant-1", session.EventModelResponse,
+			session.ResponseData{
+				ProviderResponseID: "resp_complete",
+			},
+		),
+		testCoreEvent(
+			"user-2", "response-1", session.EventUserMessage,
+			session.TextMessage(session.RoleUser, "delegate"),
+		),
+		testCoreEvent(
+			"reasoning-2", "user-2", session.EventModelReasoning,
+			session.ReasoningData{
+				Reasoning: "planning tasks",
+			},
+		),
+		testCoreEvent(
+			"assistant-2", "reasoning-2",
+			session.EventAssistantMessage,
+			session.AssistantToolCallMessage(
+				"",
+				[]session.ToolCallData{
+					{ID: "call_1", Name: tool.NameTask},
+					{ID: "call_2", Name: tool.NameTask},
+				},
+			),
+		),
+		testCoreEvent(
+			"usage-2", "assistant-2", session.EventModelUsage,
+			session.UsageData{
+				InputTokens: 1,
+				TotalTokens: 1,
+			},
+		),
+		testCoreEvent(
+			"response-2", "usage-2", session.EventModelResponse,
+			session.ResponseData{
+				ProviderResponseID: "resp_dangling",
+			},
+		),
+		testCoreEvent(
+			"user-3", "response-2", session.EventUserMessage,
+			session.TextMessage(session.RoleUser, "retry"),
+		),
+	}
+
+	filtered, err := filterIncompleteToolCallEvents(events)
+	if err != nil {
+		t.Fatal(err)
+	}
+	typesByID := make(map[string]string)
+	for _, event := range filtered {
+		typesByID[event.ID] = event.Type
+	}
+	for _, id := range []string{
+		"reasoning-2", "assistant-2", "usage-2", "response-2",
+	} {
+		if _, ok := typesByID[id]; ok {
+			t.Fatalf("dangling event %s was kept: %#v", id,
+				filtered)
+		}
+	}
+	if _, ok := typesByID["user-3"]; !ok {
+		t.Fatalf("later user prompt was dropped: %#v", filtered)
+	}
+
+	messages, err := prompt.BuildHistoryMessages(prompt.HistoryRequest{
+		Events: filtered,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, message := range messages {
+		if len(message.ToolCalls) > 0 {
+			t.Fatalf("dangling tool calls reached replay: %#v",
+				messages)
+		}
+	}
+	continuation, err := initialResponseContinuation(filtered, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if continuation.PreviousResponseID != "resp_complete" {
+		t.Fatalf("unexpected continuation response: %#v", continuation)
+	}
+	if len(continuation.DeltaMessages) != 2 ||
+		continuation.DeltaMessages[0].Content != "delegate" ||
+		continuation.DeltaMessages[1].Content != "retry" {
+
+		t.Fatalf("unexpected continuation delta: %#v",
+			continuation.DeltaMessages)
+	}
+}
+
 // TestRunTurnExecutesReadOnlyToolGroupConcurrently verifies model-requested
 // read-only batches overlap in wall time while preserving ordered results.
 func TestRunTurnExecutesReadOnlyToolGroupConcurrently(t *testing.T) {
@@ -1559,6 +1669,24 @@ func quoteJSON(text string) string {
 	}
 
 	return string(encoded)
+}
+
+// testCoreEvent creates one session event with JSON-encoded fixture data.
+func testCoreEvent(id string, parentID string, eventType string,
+	data any) session.Event {
+
+	encoded, err := json.Marshal(data)
+	if err != nil {
+		panic(err)
+	}
+
+	return session.Event{
+		Type:     eventType,
+		ID:       id,
+		ParentID: parentID,
+		Time:     time.Unix(0, 0),
+		Data:     encoded,
+	}
 }
 
 // shellQuote returns a single-quoted shell word for test hook commands.

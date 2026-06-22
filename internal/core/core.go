@@ -287,6 +287,10 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 	if autoCompact != nil {
 		notifyAutoCompacted(req.Observer, *autoCompact)
 	}
+	history, err = filterIncompleteToolCallEvents(history)
+	if err != nil {
+		return nil, err
+	}
 
 	messages, err := prompt.BuildHistoryMessages(prompt.HistoryRequest{
 		Events:     history,
@@ -903,6 +907,133 @@ func latestModelResponse(events []session.Event) (int, session.ResponseData,
 	}
 
 	return 0, session.ResponseData{}, false, nil
+}
+
+// filterIncompleteToolCallEvents removes interrupted assistant tool-call turns
+// from replay while preserving later user prompts.
+func filterIncompleteToolCallEvents(events []session.Event) ([]session.Event,
+	error) {
+
+	resultIDs, err := toolResultIDs(events)
+	if err != nil {
+		return nil, err
+	}
+	skipIDs := make(map[string]struct{})
+	skipToolResults := make(map[string]struct{})
+	for _, event := range events {
+		if event.Type != session.EventAssistantMessage {
+			continue
+		}
+		message, err := decodeMessageEvent(event)
+		if err != nil {
+			return nil, err
+		}
+		if len(message.ToolCalls) == 0 ||
+			toolCallsComplete(message.ToolCalls, resultIDs) {
+
+			continue
+		}
+		skipIDs[event.ID] = struct{}{}
+		for _, call := range message.ToolCalls {
+			skipToolResults[call.ID] = struct{}{}
+		}
+		if event.ParentID != "" &&
+			eventType(events, event.ParentID) ==
+				session.EventModelReasoning {
+
+			skipIDs[event.ParentID] = struct{}{}
+		}
+	}
+	if len(skipIDs) == 0 {
+		return events, nil
+	}
+
+	filtered := make([]session.Event, 0, len(events))
+	for _, event := range events {
+		if _, ok := skipIDs[event.ID]; ok {
+			continue
+		}
+		if metadataEvent(event.Type) {
+			if _, ok := skipIDs[event.ParentID]; ok {
+				skipIDs[event.ID] = struct{}{}
+
+				continue
+			}
+		}
+		if event.Type == session.EventToolMessage {
+			message, err := decodeMessageEvent(event)
+			if err != nil {
+				return nil, err
+			}
+			if _, ok := skipToolResults[message.ToolCallID]; ok {
+				continue
+			}
+		}
+		filtered = append(filtered, event)
+	}
+
+	return filtered, nil
+}
+
+// toolResultIDs returns the set of tool call ids with durable result messages.
+func toolResultIDs(events []session.Event) (map[string]struct{}, error) {
+	resultIDs := make(map[string]struct{})
+	for _, event := range events {
+		if event.Type != session.EventToolMessage {
+			continue
+		}
+		message, err := decodeMessageEvent(event)
+		if err != nil {
+			return nil, err
+		}
+		if message.ToolCallID != "" {
+			resultIDs[message.ToolCallID] = struct{}{}
+		}
+	}
+
+	return resultIDs, nil
+}
+
+// toolCallsComplete reports whether every assistant call has a result.
+func toolCallsComplete(calls []session.ToolCallData,
+	resultIDs map[string]struct{}) bool {
+
+	for _, call := range calls {
+		if _, ok := resultIDs[call.ID]; !ok {
+			return false
+		}
+	}
+
+	return true
+}
+
+// decodeMessageEvent decodes the message payload for one session event.
+func decodeMessageEvent(event session.Event) (session.MessageData, error) {
+	var message session.MessageData
+	if err := json.Unmarshal(event.Data, &message); err != nil {
+		return session.MessageData{}, fmt.Errorf("decode session "+
+			"message %s: %w", event.ID, err)
+	}
+
+	return message, nil
+}
+
+// eventType returns the durable type for id when present in events.
+func eventType(events []session.Event, id string) string {
+	for _, event := range events {
+		if event.ID == id {
+			return event.Type
+		}
+	}
+
+	return ""
+}
+
+// metadataEvent reports whether an event stores provider-side model metadata.
+func metadataEvent(eventType string) bool {
+	return eventType == session.EventModelReasoning ||
+		eventType == session.EventModelUsage ||
+		eventType == session.EventModelResponse
 }
 
 // containsSummaryEvent reports whether delta events crossed compaction.
