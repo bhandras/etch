@@ -313,7 +313,7 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	if req.Hooks != nil {
+	if contextBuildHooksEnabled(req.Hooks) {
 		continuation = responseContinuation{}
 	}
 	parentID := store.LastID()
@@ -415,7 +415,7 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 		})
 		continuation = responseContinuation{}
 		deltaStart := len(messages)
-		if req.Hooks == nil &&
+		if !contextBuildHooksEnabled(req.Hooks) &&
 			response.ResponseInfo.ProviderResponseID != "" {
 
 			continuation.PreviousResponseID =
@@ -1063,6 +1063,11 @@ func metadataEvent(eventType string) bool {
 		eventType == session.EventModelMetrics
 }
 
+// contextBuildHooksEnabled reports whether hooks can rewrite model context.
+func contextBuildHooksEnabled(runner *hooks.Runner) bool {
+	return runner != nil && runner.HasEvent(hooks.EventContextBuild)
+}
+
 // containsSummaryEvent reports whether delta events crossed compaction.
 func containsSummaryEvent(events []session.Event) bool {
 	for _, event := range events {
@@ -1335,16 +1340,17 @@ func appendModelMetrics(store *session.Store, parentID string,
 	}
 	event, err := store.Append(session.EventModelMetrics, parentID,
 		session.MetricsData{
-			Requests:             requests,
-			ContinuationRequests: metrics.ContinuationRequests,
-			RequestBytes:         metrics.RequestBytes,
-			ResponseBytes:        metrics.ResponseBytes,
-			InputMessages:        metrics.InputMessages,
-			DeltaMessages:        metrics.DeltaMessages,
-			ToolCount:            metrics.ToolCount,
-			InstructionBytes:     metrics.InstructionBytes,
-			InputBytes:           metrics.InputBytes,
-			ToolBytes:            metrics.ToolBytes,
+			Requests:              requests,
+			ContinuationRequests:  metrics.ContinuationRequests,
+			ContinuationFallbacks: metrics.ContinuationFallbacks,
+			RequestBytes:          metrics.RequestBytes,
+			ResponseBytes:         metrics.ResponseBytes,
+			InputMessages:         metrics.InputMessages,
+			DeltaMessages:         metrics.DeltaMessages,
+			ToolCount:             metrics.ToolCount,
+			InstructionBytes:      metrics.InstructionBytes,
+			InputBytes:            metrics.InputBytes,
+			ToolBytes:             metrics.ToolBytes,
 			TimeToHeadersMillis: metrics.TimeToHeaders.
 				Milliseconds(),
 			TimeToFirstEventMillis: metrics.TimeToFirstEvent.

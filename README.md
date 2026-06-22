@@ -47,9 +47,9 @@ Harness currently has:
 - durable OpenAI Responses IDs stored as `model.response` events and used for
   conservative `previous_response_id` continuation
 - durable provider transport metrics for OpenAI-compatible HTTP/SSE streams,
-  including request count, continuation count, payload sizes, response headers,
-  first-event latency, input-message count, delta-message count, and tool-schema
-  count
+  including request count, continuation attempts and fallbacks, payload sizes,
+  response headers, first-event latency, input-message count, delta-message
+  count, and tool-schema count
 - Responses API prompt cache affinity keyed by the durable local session ID
 - chat steering that lets prompts typed while a turn is running influence the
   next safe model-call boundary
@@ -312,7 +312,7 @@ max_concurrent = 2
 name = "explore"
 description = "Read-only exploration for finding relevant files and likely causes."
 system_prompt = "Explore independently and return concise findings for the parent."
-allowed_tools = ["ls", "read", "find", "grep", "go_search_symbols", "go_symbols", "go_package_symbols", "go_symbol"]
+allowed_tools = ["ls", "read", "find", "grep", "go_search_symbols", "go_symbols", "go_package_symbols"]
 max_tool_rounds = 16
 auto_compact = true
 ```
@@ -380,10 +380,10 @@ metrics. When providers report usage, Harness appends `model.usage` events to
 the JSONL log and sums them for `/status`, including input, cached input,
 output, reasoning output, and total tokens when available. When providers
 report transport measurements, Harness appends `model.metrics` events with
-request counts, continuation counts, request/response byte totals, first-event
-timing, and request-shape counters. Chat status folds in completed subagent
-sessions referenced by `task` results, including nested child sessions when
-their logs are still present.
+request counts, continuation attempts, continuation fallbacks, request/response
+byte totals, per-request byte averages, first-event timing, and request-shape
+counters. Chat status folds in completed subagent sessions referenced by `task`
+results, including nested child sessions when their logs are still present.
 
 Interactive chat uses the active session log for prompt history. Up and Down
 cycle through prior user prompts from the current session, including prompts

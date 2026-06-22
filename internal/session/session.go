@@ -240,6 +240,10 @@ type MetricsData struct {
 	// provider response ID.
 	ContinuationRequests int `json:"continuationRequests,omitempty"`
 
+	// ContinuationFallbacks is the subset of continuation attempts that had
+	// to be retried as full-context requests.
+	ContinuationFallbacks int `json:"continuationFallbacks,omitempty"`
+
 	// RequestBytes is the serialized request body size in bytes.
 	RequestBytes int `json:"requestBytes,omitempty"`
 
@@ -303,6 +307,8 @@ func (m MetricsData) Add(other MetricsData) MetricsData {
 		Requests: m.Requests + other.Requests,
 		ContinuationRequests: m.ContinuationRequests +
 			other.ContinuationRequests,
+		ContinuationFallbacks: m.ContinuationFallbacks +
+			other.ContinuationFallbacks,
 		RequestBytes:     m.RequestBytes + other.RequestBytes,
 		ResponseBytes:    m.ResponseBytes + other.ResponseBytes,
 		InputMessages:    m.InputMessages + other.InputMessages,
@@ -321,6 +327,7 @@ func (m MetricsData) Add(other MetricsData) MetricsData {
 // Empty reports whether metrics contains no recorded provider counters.
 func (m MetricsData) Empty() bool {
 	return m.Requests == 0 && m.ContinuationRequests == 0 &&
+		m.ContinuationFallbacks == 0 &&
 		m.RequestBytes == 0 && m.ResponseBytes == 0 &&
 		m.InputMessages == 0 && m.DeltaMessages == 0 &&
 		m.ToolCount == 0 && m.InstructionBytes == 0 &&

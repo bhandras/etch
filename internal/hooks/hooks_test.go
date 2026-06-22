@@ -8,6 +8,32 @@ import (
 	"harness/internal/model"
 )
 
+// TestRunnerHasEventReportsActiveHooks verifies callers can distinguish
+// context-rewriting hooks from unrelated lifecycle hooks.
+func TestRunnerHasEventReportsActiveHooks(t *testing.T) {
+	empty, err := New(nil, t.TempDir())
+	if err != nil {
+		t.Fatalf("create empty runner: %v", err)
+	}
+	if empty != nil {
+		t.Fatalf("empty hook config should not create a runner: %#v",
+			empty)
+	}
+	runner, err := New([]config.HookConfig{{
+		Event:   EventTurnStart,
+		Command: "printf '{}'",
+	}}, t.TempDir())
+	if err != nil {
+		t.Fatalf("create runner: %v", err)
+	}
+	if !runner.HasEvent(EventTurnStart) {
+		t.Fatal("runner did not report configured event")
+	}
+	if runner.HasEvent(EventContextBuild) {
+		t.Fatal("runner reported an unconfigured context hook")
+	}
+}
+
 // TestPreToolUseTransformsArguments verifies command hook output can rewrite a
 // pending tool call.
 func TestPreToolUseTransformsArguments(t *testing.T) {

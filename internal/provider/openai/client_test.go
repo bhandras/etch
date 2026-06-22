@@ -621,6 +621,14 @@ func TestClientRetriesContinuationAsFullRequest(t *testing.T) {
 	if len(got) != 3 || got[0].Text != "ok" {
 		t.Fatalf("unexpected fallback stream: %#v", got)
 	}
+	if got[1].Type != model.EventMetrics ||
+		got[1].Metrics.Requests != 2 ||
+		got[1].Metrics.ContinuationRequests != 1 ||
+		got[1].Metrics.ContinuationFallbacks != 1 ||
+		got[1].Metrics.RequestBytes == 0 {
+
+		t.Fatalf("unexpected fallback metrics: %#v", got[1])
+	}
 	if len(requests) != 2 {
 		t.Fatalf("expected retry, got %#v", requests)
 	}

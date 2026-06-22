@@ -360,7 +360,7 @@
 # reasoning_summary = "auto"
 # system_prompt = "Explore independently and return concise findings for the parent."
 # system_prompt_file = ".harness/subagents/explore.md"
-# allowed_tools = ["ls", "read", "find", "grep", "go_package_symbols", "go_symbol"]
+# allowed_tools = ["ls", "read", "find", "grep", "go_package_symbols", "go_symbols"]
 # max_tool_rounds = 16
 # auto_compact = true
 # auto_compact_threshold_tokens = 80000

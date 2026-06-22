@@ -235,10 +235,11 @@ items. It should measure the existing HTTP/SSE path before we consider a
 WebSocket transport: request body bytes, raw streamed response bytes, time to
 response headers, and time to the first meaningful stream event are reported as
 provider-neutral `metrics` events and folded into turn timing. Metrics also
-capture request shape: total provider requests, continuation requests,
-input-message count, delta-message count, tool-schema count, and serialized
-instruction/input/tool payload sizes. Those fields let sessions answer whether
-Responses continuation is actually sending only the safe delta slice.
+capture request shape: total provider requests, continuation attempts,
+continuation fallbacks, input-message count, delta-message count,
+tool-schema count, and serialized instruction/input/tool payload sizes. Those
+fields let sessions answer whether Responses continuation is actually sending
+only the safe delta slice or falling back to full-context requests.
 
 The OpenAI stream parser is frame-oriented instead of `bufio.Scanner`-based. It
 reads response-body chunks, splits complete server-sent-event frames on blank
@@ -371,7 +372,7 @@ max_concurrent = 2
 [[subagents.profile]]
 name = "explore"
 description = "Read-only codebase exploration."
-allowed_tools = ["ls", "read", "find", "grep", "go_search_symbols", "go_symbols", "go_symbol"]
+allowed_tools = ["ls", "read", "find", "grep", "go_search_symbols", "go_symbols"]
 max_tool_rounds = 16
 auto_compact = true
 ```
@@ -569,7 +570,9 @@ core stores those identifiers as `model.response` JSONL events chained after the
 assistant message and any usage event for the same model pass. That state makes
 sessions auditable and lets Responses providers continue from a prior response
 without resending the whole visible transcript when the local session history is
-still a safe suffix of that response.
+still a safe suffix of that response. Only context-build hooks disable this
+optimization, because those hooks can rewrite transient provider input without
+changing the durable session suffix.
 
 Model clients should emit transport and request-shape metrics when available.
 The core stores those counters as `model.metrics` JSONL events chained after the
@@ -577,8 +580,10 @@ assistant message and other metadata for the same model pass. New status output
 uses these events as the authoritative model-request count and falls back to
 assistant-message counts only for older logs. The OpenAI provider records
 request bytes, response bytes, response-header latency, first-event latency,
-continuation count, selected input-message count, selected delta-message count,
-tool-schema count, and serialized instruction/input/tool fragment sizes.
+continuation attempts, continuation fallbacks, selected input-message count,
+selected delta-message count, tool-schema count, serialized
+instruction/input/tool fragment sizes, and per-request averages in status
+output.
 
 ## OpenAI And Codex Auth
 
@@ -789,7 +794,7 @@ openai_api = "responses"
 reasoning_effort = "medium"
 reasoning_summary = "auto"
 system_prompt_file = ".harness/subagents/review.md"
-allowed_tools = ["ls", "read", "find", "grep", "go_search_symbols", "go_symbols", "go_package_symbols", "go_symbol"]
+allowed_tools = ["ls", "read", "find", "grep", "go_search_symbols", "go_symbols", "go_package_symbols"]
 max_tool_rounds = 20
 auto_compact = true
 auto_compact_threshold_tokens = 80000
@@ -917,7 +922,9 @@ and source-lookup tools (`go_list_symbols`, `go_package_symbols`,
 `go_file_symbols`, `go_search_symbols`, `go_symbol`, and `go_symbols`). A
 useful inspection path is to use `go_search_symbols` for concept or name
 fragments, `go_package_symbols` or `go_file_symbols` for maps, `go_symbols` for
-a small citation-ready batch, and `go_symbol` for one focused follow-up.
+a small citation-ready batch or one focused symbol. `go_symbol` remains
+available for compatibility and manual direct calls, but subagent profiles
+should usually expose only `go_symbols` to encourage batching.
 `go_symbols` defaults to signature-sized detail so agents can collect several
 godoc/signature/line-range references without pulling every function body;
 callers can request full declarations when implementation context is necessary.

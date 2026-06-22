@@ -174,6 +174,10 @@ type Metrics struct {
 	// provider response ID instead of sending a full model context.
 	ContinuationRequests int
 
+	// ContinuationFallbacks is the number of continuation attempts that
+	// were retried as full-context requests after provider rejection.
+	ContinuationFallbacks int
+
 	// RequestBytes is the JSON request body size sent to the provider.
 	RequestBytes int
 
@@ -218,6 +222,8 @@ func (m Metrics) Add(other Metrics) Metrics {
 		Requests: m.Requests + other.Requests,
 		ContinuationRequests: m.ContinuationRequests +
 			other.ContinuationRequests,
+		ContinuationFallbacks: m.ContinuationFallbacks +
+			other.ContinuationFallbacks,
 		RequestBytes:     m.RequestBytes + other.RequestBytes,
 		ResponseBytes:    m.ResponseBytes + other.ResponseBytes,
 		InputMessages:    m.InputMessages + other.InputMessages,
@@ -234,6 +240,7 @@ func (m Metrics) Add(other Metrics) Metrics {
 // Empty reports whether metrics contains no provider measurements.
 func (m Metrics) Empty() bool {
 	return m.Requests == 0 && m.ContinuationRequests == 0 &&
+		m.ContinuationFallbacks == 0 &&
 		m.RequestBytes == 0 && m.ResponseBytes == 0 &&
 		m.InputMessages == 0 && m.DeltaMessages == 0 &&
 		m.ToolCount == 0 && m.InstructionBytes == 0 &&

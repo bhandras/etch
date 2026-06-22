@@ -273,16 +273,35 @@ func FormatStatus(status Status) string {
 	if !status.Metrics.Empty() {
 		fmt.Fprintf(&out, "\n\nRecorded Transport\n")
 		fmt.Fprintf(
-			&out, "- requests: %s (%s continued)\n",
+			&out, "- requests: %s (%s continuation attempts, %s "+
+				"fallbacks)\n",
 			textutil.FormatCount(status.Metrics.Requests),
 			textutil.FormatCount(
 				status.Metrics.ContinuationRequests,
+			),
+			textutil.FormatCount(
+				status.Metrics.ContinuationFallbacks,
 			),
 		)
 		fmt.Fprintf(
 			&out, "- bytes: %s up, %s down\n",
 			textutil.FormatBytes(status.Metrics.RequestBytes),
 			textutil.FormatBytes(status.Metrics.ResponseBytes),
+		)
+		fmt.Fprintf(
+			&out, "- averages: %s up/request, %s down/request\n",
+			textutil.FormatBytes(
+				averageInt(
+					status.Metrics.RequestBytes,
+					status.Metrics.Requests,
+				),
+			),
+			textutil.FormatBytes(
+				averageInt(
+					status.Metrics.ResponseBytes,
+					status.Metrics.Requests,
+				),
+			),
 		)
 		fmt.Fprintf(
 			&out, "- request shape: %s input messages, %s delta "+
@@ -294,6 +313,15 @@ func FormatStatus(status Status) string {
 	}
 
 	return out.String()
+}
+
+// averageInt returns a rounded integer average while tolerating zero counts.
+func averageInt(total int, count int) int {
+	if count <= 0 {
+		return 0
+	}
+
+	return (total + count/2) / count
 }
 
 // FormatDuration renders a compact approximate wall-clock duration.

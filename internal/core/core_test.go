@@ -219,18 +219,19 @@ func TestRunTurnPersistsModelMetrics(t *testing.T) {
 			{
 				Type: model.EventMetrics,
 				Metrics: model.Metrics{
-					Requests:             1,
-					ContinuationRequests: 1,
-					RequestBytes:         2048,
-					ResponseBytes:        1024,
-					InputMessages:        2,
-					DeltaMessages:        1,
-					ToolCount:            4,
-					InstructionBytes:     100,
-					InputBytes:           500,
-					ToolBytes:            700,
-					TimeToHeaders:        3 * time.Millisecond,
-					TimeToFirstEvent:     4 * time.Millisecond,
+					Requests:              1,
+					ContinuationRequests:  1,
+					ContinuationFallbacks: 1,
+					RequestBytes:          2048,
+					ResponseBytes:         1024,
+					InputMessages:         2,
+					DeltaMessages:         1,
+					ToolCount:             4,
+					InstructionBytes:      100,
+					InputBytes:            500,
+					ToolBytes:             700,
+					TimeToHeaders:         3 * time.Millisecond,
+					TimeToFirstEvent:      4 * time.Millisecond,
 				},
 			},
 			{
@@ -263,6 +264,7 @@ func TestRunTurnPersistsModelMetrics(t *testing.T) {
 		t.Fatal(err)
 	}
 	if metrics.Requests != 1 || metrics.ContinuationRequests != 1 ||
+		metrics.ContinuationFallbacks != 1 ||
 		metrics.RequestBytes != 2048 || metrics.ResponseBytes != 1024 ||
 		metrics.InputMessages != 2 || metrics.DeltaMessages != 1 ||
 		metrics.ToolCount != 4 || metrics.InstructionBytes != 100 ||
@@ -394,6 +396,121 @@ func TestRunTurnContinuesExistingSession(t *testing.T) {
 
 		t.Fatalf("unexpected current user message: %#v", messages[2])
 	}
+}
+
+// TestRunTurnContinuesWithLifecycleHooks verifies non-context hooks do not
+// force full-context provider requests.
+func TestRunTurnContinuesWithLifecycleHooks(t *testing.T) {
+	first := createContinuationSession(t, "first", "resp_first")
+	cwd := t.TempDir()
+	runner, err := hooks.New([]config.HookConfig{{
+		Event:   hooks.EventTurnStart,
+		Command: "printf '{}'",
+	}}, cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &scriptedToolClient{
+		events: [][]model.Event{{
+			{
+				Type: model.EventTextDelta,
+				Text: "second",
+			},
+			{
+				Type: model.EventDone,
+			},
+		}},
+	}
+
+	if _, err := RunTurn(context.Background(), TurnRequest{
+		Prompt:      "follow-up",
+		SessionPath: first.SessionPath,
+		CWD:         cwd,
+		Model:       client,
+		Hooks:       runner,
+	}); err != nil {
+
+		t.Fatal(err)
+	}
+	if client.requests[0].PreviousResponseID != "resp_first" {
+		t.Fatalf("continuation was disabled: %#v", client.requests[0])
+	}
+}
+
+// TestRunTurnDisablesContinuationWithContextHooks verifies context-build hooks
+// remain a full-context boundary because they can rewrite transient messages.
+func TestRunTurnDisablesContinuationWithContextHooks(t *testing.T) {
+	first := createContinuationSession(t, "first", "resp_first")
+	cwd := t.TempDir()
+	runner, err := hooks.New([]config.HookConfig{{
+		Event:   hooks.EventContextBuild,
+		Command: "printf '{}'",
+	}}, cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &scriptedToolClient{
+		events: [][]model.Event{{
+			{
+				Type: model.EventTextDelta,
+				Text: "second",
+			},
+			{
+				Type: model.EventDone,
+			},
+		}},
+	}
+
+	if _, err := RunTurn(context.Background(), TurnRequest{
+		Prompt:      "follow-up",
+		SessionPath: first.SessionPath,
+		CWD:         cwd,
+		Model:       client,
+		Hooks:       runner,
+	}); err != nil {
+
+		t.Fatal(err)
+	}
+	if client.requests[0].PreviousResponseID != "" {
+		t.Fatalf("context hook did not disable continuation: %#v",
+			client.requests[0])
+	}
+	if len(client.requests[0].DeltaMessages) != 0 {
+		t.Fatalf("unexpected delta messages: %#v",
+			client.requests[0].DeltaMessages)
+	}
+}
+
+// createContinuationSession writes a one-turn session with response identity.
+func createContinuationSession(t *testing.T, text string,
+	responseID string) *TurnResult {
+
+	t.Helper()
+	client := &scriptedToolClient{
+		events: [][]model.Event{{
+			{
+				Type: model.EventTextDelta,
+				Text: text,
+			},
+			{Type: model.EventResponseInfo, ResponseInfo: model.ResponseInfo{
+				ProviderResponseID: responseID,
+			}},
+			{
+				Type: model.EventDone,
+			},
+		}},
+	}
+	result, err := RunTurn(context.Background(), TurnRequest{
+		Prompt:     text,
+		SessionDir: t.TempDir(),
+		CWD:        "/work/project",
+		Model:      client,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return result
 }
 
 // TestRunTurnExecutesToolCalls verifies that the core can run one model

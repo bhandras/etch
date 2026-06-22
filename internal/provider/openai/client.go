@@ -111,6 +111,8 @@ func (c *Client) Stream(ctx context.Context, req model.Request) (
 		if err != nil {
 			return nil, err
 		}
+		requestMetrics.ContinuationFallbacks++
+		fallbackMetrics = requestMetrics.Add(fallbackMetrics)
 		httpReq = fallbackReq
 		requestMetrics = fallbackMetrics
 		startedAt = time.Now()

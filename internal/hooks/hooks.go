@@ -319,6 +319,20 @@ func New(configs []config.HookConfig, cwd string) (*Runner, error) {
 	return &Runner{cwd: cwd, hooks: active}, nil
 }
 
+// HasEvent reports whether the runner has at least one active hook for event.
+func (r *Runner) HasEvent(event string) bool {
+	if r == nil {
+		return false
+	}
+	for _, hook := range r.hooks {
+		if hook.Event == event {
+			return true
+		}
+	}
+
+	return false
+}
+
 // SessionStart runs hooks that observe a newly opened session log.
 func (r *Runner) SessionStart(ctx context.Context,
 	event SessionStartEvent) error {

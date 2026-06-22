@@ -140,13 +140,14 @@ func TestBuildStatusUsesMetricRequestCounts(t *testing.T) {
 		statusEvent(
 			t, EventModelMetrics, "3", "2",
 			startedAt.Add(2*time.Second), MetricsData{
-				Requests:             2,
-				ContinuationRequests: 1,
-				RequestBytes:         2048,
-				ResponseBytes:        1024,
-				InputMessages:        8,
-				DeltaMessages:        2,
-				ToolCount:            5,
+				Requests:              2,
+				ContinuationRequests:  1,
+				ContinuationFallbacks: 1,
+				RequestBytes:          2048,
+				ResponseBytes:         1024,
+				InputMessages:         8,
+				DeltaMessages:         2,
+				ToolCount:             5,
 			},
 		),
 	}
@@ -159,7 +160,8 @@ func TestBuildStatusUsesMetricRequestCounts(t *testing.T) {
 		t.Fatalf("unexpected model calls: %#v", status)
 	}
 	if status.Metrics.RequestBytes != 2048 ||
-		status.Metrics.ContinuationRequests != 1 {
+		status.Metrics.ContinuationRequests != 1 ||
+		status.Metrics.ContinuationFallbacks != 1 {
 
 		t.Fatalf("unexpected metrics: %#v", status.Metrics)
 	}
@@ -167,8 +169,14 @@ func TestBuildStatusUsesMetricRequestCounts(t *testing.T) {
 	if !strings.Contains(text, "Recorded Transport") {
 		t.Fatalf("missing transport section: %q", text)
 	}
-	if !strings.Contains(text, "- requests: 2 (1 continued)") {
+	if !strings.Contains(
+		text, "- requests: 2 (1 continuation attempts, 1 fallbacks)",
+	) {
+
 		t.Fatalf("missing request counts: %q", text)
+	}
+	if !strings.Contains(text, "- averages: 1.0KB up/request") {
+		t.Fatalf("missing averages: %q", text)
 	}
 	if !strings.Contains(
 		text, "8 input messages, 2 delta messages, 5 tools",
