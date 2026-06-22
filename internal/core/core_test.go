@@ -419,7 +419,7 @@ func TestToolExecutionGroupsKeepMutationBarriers(t *testing.T) {
 		{ID: "call_2", Name: tool.NameGrep},
 		{ID: "call_3", Name: tool.NameWrite},
 		{ID: "call_4", Name: tool.NameRead},
-	})
+	}, tool.DefaultRegistry())
 
 	if len(groups) != 3 {
 		t.Fatalf("expected three execution groups, got %#v", groups)
@@ -434,6 +434,42 @@ func TestToolExecutionGroupsKeepMutationBarriers(t *testing.T) {
 	}
 	if len(groups[2]) != 1 || groups[2][0].ID != "call_4" {
 		t.Fatalf("unexpected trailing read group: %#v", groups[2])
+	}
+}
+
+// TestToolExecutionGroupsHonorPerCallSafety verifies stateful tools can
+// classify individual calls as parallel-safe or as serial barriers.
+func TestToolExecutionGroupsHonorPerCallSafety(t *testing.T) {
+	registry := tool.DefaultRegistry()
+	registry.Register(callSafetyTool{})
+	groups := toolExecutionGroups([]model.ToolCall{
+		{ID: "call_1", Name: tool.NameRead},
+		{
+			ID:        "call_2",
+			Name:      "maybe_parallel",
+			Arguments: `{"safe":true}`,
+		},
+		{
+			ID:        "call_3",
+			Name:      "maybe_parallel",
+			Arguments: `{"safe":false}`,
+		},
+		{ID: "call_4", Name: tool.NameRead},
+	}, registry)
+
+	if len(groups) != 3 {
+		t.Fatalf("expected three execution groups, got %#v", groups)
+	}
+	if len(groups[0]) != 2 || groups[0][0].ID != "call_1" ||
+		groups[0][1].ID != "call_2" {
+
+		t.Fatalf("unexpected first parallel group: %#v", groups[0])
+	}
+	if len(groups[1]) != 1 || groups[1][0].ID != "call_3" {
+		t.Fatalf("unexpected serial barrier group: %#v", groups[1])
+	}
+	if len(groups[2]) != 1 || groups[2][0].ID != "call_4" {
+		t.Fatalf("unexpected trailing parallel group: %#v", groups[2])
 	}
 }
 
@@ -1362,6 +1398,9 @@ type blockingReadTool struct {
 	started int
 }
 
+// callSafetyTool classifies each call's parallel safety from its arguments.
+type callSafetyTool struct{}
+
 // Spec returns the schema for the context-recording test tool.
 func (t *contextRecordingTool) Spec() model.ToolSpec {
 	return model.ToolSpec{
@@ -1422,6 +1461,27 @@ func (t *blockingReadTool) Execute(ctx context.Context, arguments string) (
 	case <-t.release:
 		return tool.Result{Text: "read " + arguments}, nil
 	}
+}
+
+// Spec returns the schema for the per-call safety test tool.
+func (callSafetyTool) Spec() model.ToolSpec {
+	return model.ToolSpec{
+		Name:        "maybe_parallel",
+		Description: "Test per-call parallel safety.",
+		Parameters:  json.RawMessage(`{"type":"object"}`),
+	}
+}
+
+// Execute returns a placeholder result for the per-call safety test tool.
+func (callSafetyTool) Execute(ctx context.Context, arguments string) (
+	tool.Result, error) {
+
+	return tool.Result{Text: arguments}, nil
+}
+
+// ParallelSafe reports whether the test call carries safe:true.
+func (callSafetyTool) ParallelSafe(call model.ToolCall) bool {
+	return strings.Contains(call.Arguments, `"safe":true`)
 }
 
 // Stream returns the next scripted event stream.

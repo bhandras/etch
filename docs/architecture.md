@@ -117,12 +117,15 @@ lower the bound with `--max-tool-rounds` or `.harness/config.toml`.
 Tool execution preserves provider-visible order while allowing safe local
 parallelism. The core partitions each assistant tool-call batch into execution
 groups: consecutive read-only or isolated calls such as `ls`, `read`, `find`,
-`grep`, `task`, and known Go-introspection tools can run concurrently, while
-side-effectful calls such as `write`, `edit`, `bash`, and unknown plugin tools
-act as serial barriers. Tool results are appended to JSONL and sent back to the
-model in the original assistant-call order even when the local executions
-overlap. This gives subagent and read-heavy review batches real parallelism
-without letting reads and writes observe an interleaved filesystem state.
+`grep`, read-only `task` calls, and known Go-introspection tools can run
+concurrently, while side-effectful calls such as `write`, `edit`, `bash`, and
+unknown plugin tools act as serial barriers. Stateful tools may classify each
+concrete call; the `task` tool is parallel only when the selected subagent
+profile's child tool allowlist is itself read-only. Tool results are appended
+to JSONL and sent back to the model in the original assistant-call order even
+when the local executions overlap. This gives subagent and read-heavy review
+batches real parallelism without letting reads and writes observe an
+interleaved filesystem state.
 
 Pi appears to treat tool use as part of the broader agent lifecycle: it tracks
 tool calls for session statistics and relies on stop reasons, cancellation,
@@ -799,7 +802,10 @@ configured plugin tools by model-facing name. The first implementation removes
 `task` from child allowlists, so subagents do not spawn nested subagents even if
 the profile lists it. Subagent tool-loop budgets are config-owned: the parent
 model can choose the profile and task, but it cannot lower or raise
-`max_tool_rounds` at runtime.
+`max_tool_rounds` at runtime. Profiles whose allowlist contains only read-only
+tools can run concurrently with other read-only work; profiles that can invoke
+`write`, `edit`, `bash`, or any other side-effectful tool are treated as serial
+barriers by the parent scheduler.
 
 The terminal presentation should stay compact while making delegation legible.
 The parent UI renders each `task` start as a subagent activity block containing

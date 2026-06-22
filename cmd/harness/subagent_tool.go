@@ -27,6 +27,10 @@ const (
 	// defaultSubagentMaxConcurrent caps child runs when config omits a
 	// global limit.
 	defaultSubagentMaxConcurrent = 2
+
+	// maxTrackedSubagentTurns bounds per-turn delegation bookkeeping kept
+	// by the long-lived task tool.
+	maxTrackedSubagentTurns = 1024
 )
 
 // taskTool delegates isolated work to configured child-agent profiles.
@@ -49,7 +53,16 @@ type taskTool struct {
 
 	// turnCounts tracks task calls accepted for each parent assistant
 	// event.
-	turnCounts map[string]int
+	turnCounts map[string]subagentTurnCount
+}
+
+// subagentTurnCount stores bounded delegation bookkeeping for one parent turn.
+type subagentTurnCount struct {
+	// Count is the number of accepted task calls for the parent turn.
+	Count int
+
+	// UpdatedAt records the last reserve update for pruning old turns.
+	UpdatedAt time.Time
 }
 
 // taskArguments is the model-facing input accepted by the task tool.
@@ -75,7 +88,7 @@ func newTaskTool(cfg cliConfig, cwd string, registry *tool.Registry) *taskTool {
 		cwd:        cwd,
 		registry:   registry,
 		sem:        make(chan struct{}, maxConcurrent),
-		turnCounts: make(map[string]int),
+		turnCounts: make(map[string]subagentTurnCount),
 	}
 }
 
@@ -161,6 +174,24 @@ func (t *taskTool) ExecuteCall(ctx context.Context, call model.ToolCall) (
 	result.Duration = time.Since(started)
 
 	return tool.Result{Text: formatTaskResult(result)}, nil
+}
+
+// ParallelSafe reports whether the requested child profile is read-only.
+func (t *taskTool) ParallelSafe(call model.ToolCall) bool {
+	var args taskArguments
+	if strings.TrimSpace(call.Arguments) != "" {
+		if err := json.Unmarshal(
+			[]byte(call.Arguments), &args,
+		); err != nil {
+			return false
+		}
+	}
+	profile, err := findSubagentProfile(t.cfg.subagents, args.Profile)
+	if err != nil {
+		return false
+	}
+
+	return subagentProfileReadOnly(profile)
 }
 
 // subagentRunResult stores the compact outcome returned to the parent.
@@ -349,12 +380,31 @@ func (t *taskTool) reserveTurnSlot(meta tool.ExecutionContext) error {
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.turnCounts[key] >= maxPerTurn {
+	entry := t.turnCounts[key]
+	if entry.Count >= maxPerTurn {
 		return fmt.Errorf("subagent task limit reached for this turn")
 	}
-	t.turnCounts[key]++
+	entry.Count++
+	entry.UpdatedAt = time.Now()
+	t.turnCounts[key] = entry
+	t.pruneTurnCountsLocked()
 
 	return nil
+}
+
+// pruneTurnCountsLocked bounds stale per-turn task counters.
+func (t *taskTool) pruneTurnCountsLocked() {
+	for len(t.turnCounts) > maxTrackedSubagentTurns {
+		oldestKey := ""
+		var oldest time.Time
+		for key, entry := range t.turnCounts {
+			if oldestKey == "" || entry.UpdatedAt.Before(oldest) {
+				oldestKey = key
+				oldest = entry.UpdatedAt
+			}
+		}
+		delete(t.turnCounts, oldestKey)
+	}
 }
 
 // childToolRegistry returns an allowlisted registry for one child profile.
@@ -387,6 +437,21 @@ func filteredChildToolNames(names []string) []string {
 	}
 
 	return filtered
+}
+
+// subagentProfileReadOnly reports whether every child tool is parallel-safe.
+func subagentProfileReadOnly(profile harnessconfig.SubagentProfileConfig) bool {
+	allowed := filteredChildToolNames(profile.AllowedTools)
+	if len(allowed) == 0 {
+		return false
+	}
+	for _, name := range allowed {
+		if !tool.ReadOnlyToolName(name) {
+			return false
+		}
+	}
+
+	return true
 }
 
 // childPrompt formats the user prompt admitted into the child session.

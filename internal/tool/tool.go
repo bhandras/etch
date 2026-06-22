@@ -119,6 +119,14 @@ type CallExecutor interface {
 	ExecuteCall(ctx context.Context, call model.ToolCall) (Result, error)
 }
 
+// ParallelSafetyChecker lets stateful tools decide whether one concrete call
+// may run inside a parallel read-only execution group.
+type ParallelSafetyChecker interface {
+	// ParallelSafe reports whether call has no workspace side effects and
+	// may overlap other parallel-safe calls.
+	ParallelSafe(call model.ToolCall) bool
+}
+
 // Registry stores builtin tools by name and dispatches model tool calls.
 type Registry struct {
 	tools map[string]Tool
@@ -198,6 +206,19 @@ func (r *Registry) Specs() []model.ToolSpec {
 	return specs
 }
 
+// ParallelSafe reports whether call may run in a concurrent read-only group.
+func (r *Registry) ParallelSafe(call model.ToolCall) bool {
+	registered, ok := r.tools[call.Name]
+	if !ok {
+		return false
+	}
+	if checker, ok := registered.(ParallelSafetyChecker); ok {
+		return checker.ParallelSafe(call)
+	}
+
+	return ReadOnlyToolName(call.Name)
+}
+
 // Execute dispatches a complete model tool call to its registered tool.
 func (r *Registry) Execute(ctx context.Context, call model.ToolCall) (Result,
 	error) {
@@ -212,6 +233,18 @@ func (r *Registry) Execute(ctx context.Context, call model.ToolCall) (Result,
 	}
 
 	return tool.Execute(ctx, call.Arguments)
+}
+
+// ReadOnlyToolName reports whether a model-facing tool name is read-only by
+// convention when no stateful tool provides stricter per-call safety.
+func ReadOnlyToolName(name string) bool {
+	switch name {
+	case NameLS, NameRead, NameFind, NameGrep:
+		return true
+
+	default:
+		return strings.HasPrefix(name, "go_")
+	}
 }
 
 // lsTool wraps the pure-Go filesystem listing operation as a model tool.

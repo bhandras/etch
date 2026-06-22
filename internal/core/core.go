@@ -406,7 +406,7 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 				response.ResponseInfo.ProviderResponseID
 		}
 
-		for _, group := range toolExecutionGroups(toolCalls) {
+		for _, group := range toolExecutionGroups(toolCalls, req.Tools) {
 			results, err := executeToolGroup(
 				ctx, req, store, assistant.ID, blockedCalls,
 				group,
@@ -1213,7 +1213,9 @@ type toolExecutionResult struct {
 
 // toolExecutionGroups splits tool calls into parallel read-only groups and
 // serial side-effect barriers.
-func toolExecutionGroups(calls []model.ToolCall) [][]model.ToolCall {
+func toolExecutionGroups(calls []model.ToolCall,
+	registry *tool.Registry) [][]model.ToolCall {
+
 	var groups [][]model.ToolCall
 	var readonly []model.ToolCall
 	flushReadonly := func() {
@@ -1224,7 +1226,7 @@ func toolExecutionGroups(calls []model.ToolCall) [][]model.ToolCall {
 		readonly = nil
 	}
 	for _, call := range calls {
-		if parallelReadOnlyTool(call.Name) {
+		if parallelReadOnlyTool(call, registry) {
 			readonly = append(readonly, call)
 
 			continue
@@ -1239,15 +1241,12 @@ func toolExecutionGroups(calls []model.ToolCall) [][]model.ToolCall {
 
 // parallelReadOnlyTool reports whether a call can execute inside a concurrent
 // read-only block without mingling with writes or shell side effects.
-func parallelReadOnlyTool(name string) bool {
-	switch name {
-	case tool.NameLS, tool.NameRead, tool.NameFind, tool.NameGrep,
-		tool.NameTask:
-		return true
-
-	default:
-		return strings.HasPrefix(name, "go_")
+func parallelReadOnlyTool(call model.ToolCall, registry *tool.Registry) bool {
+	if registry == nil {
+		return tool.ReadOnlyToolName(call.Name)
 	}
+
+	return registry.ParallelSafe(call)
 }
 
 // executeToolGroup runs one execution group and returns results in call order.
@@ -1259,7 +1258,7 @@ func executeToolGroup(ctx context.Context, req TurnRequest,
 	for _, call := range calls {
 		notifyToolCallStarted(req.Observer, call)
 	}
-	if len(calls) == 1 || !parallelExecutionGroup(calls) {
+	if len(calls) == 1 || !parallelExecutionGroup(calls, req.Tools) {
 		result, err := executeOneToolCall(
 			ctx, req, store, assistantID, blockedCalls, calls[0],
 		)
@@ -1298,9 +1297,11 @@ func executeToolGroup(ctx context.Context, req TurnRequest,
 }
 
 // parallelExecutionGroup reports whether every call in group is read-only.
-func parallelExecutionGroup(calls []model.ToolCall) bool {
+func parallelExecutionGroup(calls []model.ToolCall,
+	registry *tool.Registry) bool {
+
 	for _, call := range calls {
-		if !parallelReadOnlyTool(call.Name) {
+		if !parallelReadOnlyTool(call, registry) {
 			return false
 		}
 	}
