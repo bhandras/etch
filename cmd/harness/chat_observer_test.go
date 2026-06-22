@@ -145,14 +145,12 @@ func TestChatObserverTracksActiveSubagents(t *testing.T) {
 			renderer.subagentStatuses["call_1"])
 	}
 
-	observer.EventAppended(
-		messageEvent(
-			t, session.EventToolMessage,
-			session.ToolMessage("call_1", "task", "Task done."),
-		),
-	)
+	observer.ToolCallFinished(model.ToolCall{
+		ID:   "call_1",
+		Name: "task",
+	})
 	if renderer.activeSubagents != 1 {
-		t.Fatalf("active subagents after first result = %d",
+		t.Fatalf("active subagents after first finish = %d",
 			renderer.activeSubagents)
 	}
 	if _, ok := renderer.subagentStatuses["call_1"]; ok {
@@ -162,11 +160,20 @@ func TestChatObserverTracksActiveSubagents(t *testing.T) {
 	observer.EventAppended(
 		messageEvent(
 			t, session.EventToolMessage,
-			session.ToolMessage("call_2", "task", "Task done."),
+			session.ToolMessage("call_1", "task", "Task done."),
 		),
 	)
+	if renderer.activeSubagents != 1 {
+		t.Fatalf("active subagents after appended result = %d",
+			renderer.activeSubagents)
+	}
+
+	observer.ToolCallFinished(model.ToolCall{
+		ID:   "call_2",
+		Name: "task",
+	})
 	if renderer.activeSubagents != 0 {
-		t.Fatalf("active subagents after all results = %d",
+		t.Fatalf("active subagents after all finishes = %d",
 			renderer.activeSubagents)
 	}
 }

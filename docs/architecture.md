@@ -807,11 +807,13 @@ the full delegated task and optional context, then appends the compact task
 result when the child finishes. The working status line also includes a quiet
 count of active subagents and bounded ephemeral rows for each child agent's
 current activity, such as its latest reasoning status or tool call. These rows
-are live UI hints, not durable parent transcript events. Full child output stays
-in the child JSONL session and can be inspected with `harness show <child-id>`
-or continued with `harness resume <child-id>`. A richer future terminal can add
-more per-subagent controls, but it should still avoid streaming every child
-event into the parent transcript by default.
+are live UI hints, not durable parent transcript events, and they are cleared
+from live tool-completion callbacks rather than waiting for parent transcript
+append order. Full child output stays in the child JSONL session and can be
+inspected with `harness show <child-id>` or continued with `harness resume
+<child-id>`. A richer future terminal can add more per-subagent controls, but
+it should still avoid streaming every child event into the parent transcript by
+default.
 
 ## Plugins
 

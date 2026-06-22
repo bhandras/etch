@@ -177,11 +177,16 @@ type Observer interface {
 	EventAppended(event session.Event)
 }
 
-// ToolCallObserver receives live progress before local tool execution.
+// ToolCallObserver receives live progress around local tool execution.
 type ToolCallObserver interface {
 	// ToolCallStarted receives one model-requested tool call immediately
 	// before the core executes it locally.
 	ToolCallStarted(call model.ToolCall)
+
+	// ToolCallFinished receives one model-requested tool call immediately
+	// after local execution and post-tool hooks finish. The durable tool
+	// result may still be appended later to preserve model-request order.
+	ToolCallFinished(call model.ToolCall)
 }
 
 // ToolBatchObserver receives one model-requested batch before execution.
@@ -694,6 +699,17 @@ func notifyToolCallStarted(observer Observer, call model.ToolCall) {
 	toolObserver, ok := observer.(ToolCallObserver)
 	if ok {
 		toolObserver.ToolCallStarted(call)
+	}
+}
+
+// notifyToolCallFinished sends live completion progress to observers.
+func notifyToolCallFinished(observer Observer, call model.ToolCall) {
+	if observer == nil {
+		return
+	}
+	toolObserver, ok := observer.(ToolCallObserver)
+	if ok {
+		toolObserver.ToolCallFinished(call)
 	}
 }
 
@@ -1247,6 +1263,7 @@ func executeToolGroup(ctx context.Context, req TurnRequest,
 		result, err := executeOneToolCall(
 			ctx, req, store, assistantID, blockedCalls, calls[0],
 		)
+		notifyToolCallFinished(req.Observer, calls[0])
 		if err != nil {
 			return nil, err
 		}
@@ -1263,6 +1280,7 @@ func executeToolGroup(ctx context.Context, req TurnRequest,
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			defer notifyToolCallFinished(req.Observer, call)
 			results[i], errs[i] = executeOneToolCall(
 				ctx, req, store, assistantID, blockedCalls,
 				call,

@@ -62,6 +62,11 @@ func (o *subagentProgressObserver) ToolCallStarted(call model.ToolCall) {
 	o.emit(toolCallProgressText(call))
 }
 
+// ToolCallFinished ignores child completion because the next child event or
+// final task result is a better parent-visible activity signal.
+func (o *subagentProgressObserver) ToolCallFinished(call model.ToolCall) {
+}
+
 // ModelTextDelta reports that the child is writing a response.
 func (o *subagentProgressObserver) ModelTextDelta(text string) {
 	o.emit("responding")

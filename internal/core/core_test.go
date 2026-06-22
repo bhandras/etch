@@ -951,6 +951,14 @@ func TestRunTurnNotifiesObserver(t *testing.T) {
 		t.Fatalf("unexpected live tool call: %#v",
 			observer.toolCalls[0])
 	}
+	if len(observer.finishedToolCalls) != 1 {
+		t.Fatalf("expected one live tool finish, got %d",
+			len(observer.finishedToolCalls))
+	}
+	if observer.finishedToolCalls[0].Name != tool.NameLS {
+		t.Fatalf("unexpected live tool finish: %#v",
+			observer.finishedToolCalls[0])
+	}
 	if len(observer.reasoning) != 1 ||
 		observer.reasoning[0] != "checking files" {
 
@@ -1220,6 +1228,10 @@ type recordingObserver struct {
 	// toolCalls stores live tool-start notifications in arrival order.
 	toolCalls []model.ToolCall
 
+	// finishedToolCalls stores live tool-finish notifications in arrival
+	// order.
+	finishedToolCalls []model.ToolCall
+
 	// toolBatches stores live batch notifications in arrival order.
 	toolBatches [][]model.ToolCall
 
@@ -1247,6 +1259,11 @@ func (o *recordingObserver) EventAppended(event session.Event) {
 // ToolCallStarted records one local tool execution start notification.
 func (o *recordingObserver) ToolCallStarted(call model.ToolCall) {
 	o.toolCalls = append(o.toolCalls, call)
+}
+
+// ToolCallFinished records one local tool execution finish notification.
+func (o *recordingObserver) ToolCallFinished(call model.ToolCall) {
+	o.finishedToolCalls = append(o.finishedToolCalls, call)
 }
 
 // ToolBatchStarted records one model-requested batch notification.

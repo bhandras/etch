@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"harness/internal/core"
@@ -14,6 +15,10 @@ import (
 
 // chatObserver renders appended assistant and tool messages during a turn.
 type chatObserver struct {
+	// mu protects transient observer state that can be updated by parallel
+	// tool completions.
+	mu sync.Mutex
+
 	// renderer owns transient terminal formatting for one chat turn.
 	renderer *liveChatRenderer
 
@@ -133,11 +138,20 @@ func (o *chatObserver) ToolCallStarted(call model.ToolCall) {
 	o.renderer.renderToolCall(call)
 }
 
+// ToolCallFinished clears transient state for tools that complete before their
+// durable result is appended to the transcript.
+func (o *chatObserver) ToolCallFinished(call model.ToolCall) {
+	o.finishSubagentCall(call.ID, call.Name)
+}
+
 // startSubagentTool records a running child-agent task for status display.
 func (o *chatObserver) startSubagentTool(call model.ToolCall) {
 	if call.Name != tool.NameTask {
 		return
 	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
 	if o.activeSubagents == nil {
 		o.activeSubagents = make(map[string]bool)
 	}
@@ -153,12 +167,23 @@ func (o *chatObserver) startSubagentTool(call model.ToolCall) {
 
 // finishSubagentTool clears a completed child-agent task from status display.
 func (o *chatObserver) finishSubagentTool(message session.MessageData) {
-	if message.Name != tool.NameTask || len(o.activeSubagents) == 0 {
+	o.finishSubagentCall(message.ToolCallID, message.Name)
+}
+
+// finishSubagentCall clears a completed child-agent task by call id.
+func (o *chatObserver) finishSubagentCall(callID string, name string) {
+	if name != tool.NameTask {
 		return
 	}
-	removedID := message.ToolCallID
-	if message.ToolCallID != "" {
-		delete(o.activeSubagents, message.ToolCallID)
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	if len(o.activeSubagents) == 0 {
+		return
+	}
+	removedID := callID
+	if callID != "" {
+		delete(o.activeSubagents, callID)
 	} else {
 		for id := range o.activeSubagents {
 			delete(o.activeSubagents, id)
