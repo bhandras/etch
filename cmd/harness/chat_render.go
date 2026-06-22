@@ -158,8 +158,11 @@ type terminalTone struct {
 
 // subagentLiveStatus stores one ephemeral child-agent row.
 type subagentLiveStatus struct {
-	// Label identifies the child profile or task row.
-	Label string
+	// Profile identifies the configured child-agent profile.
+	Profile string
+
+	// Task stores a compact fragment of the delegated prompt.
+	Task string
 
 	// Message describes the child's current activity.
 	Message string
@@ -498,8 +501,8 @@ func (r *liveChatRenderer) setActiveSubagents(count int) {
 }
 
 // startSubagentStatus registers a live child-agent status row.
-func (r *liveChatRenderer) startSubagentStatus(callID string, label string,
-	message string) {
+func (r *liveChatRenderer) startSubagentStatus(callID string, profile string,
+	task string, message string) {
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -514,7 +517,8 @@ func (r *liveChatRenderer) startSubagentStatus(callID string, label string,
 		r.subagentOrder = append(r.subagentOrder, callID)
 	}
 	r.subagentStatuses[callID] = subagentLiveStatus{
-		Label:   nonEmptyStatusLabel(label),
+		Profile: nonEmptyStatusProfile(profile),
+		Task:    subagentStatusTaskFragment(task),
 		Message: nonEmptyStatusMessage(message),
 	}
 	r.refreshSubagentStatusRowsLocked()
@@ -574,7 +578,7 @@ func (r *liveChatRenderer) subagentStatusRowsLocked() []string {
 		if !ok {
 			continue
 		}
-		rows = append(rows, status.Label+": "+status.Message)
+		rows = append(rows, subagentStatusRow(status))
 		if len(rows) == liveSubagentStatusLimit {
 			break
 		}
@@ -586,6 +590,21 @@ func (r *liveChatRenderer) subagentStatusRowsLocked() []string {
 	}
 
 	return rows
+}
+
+// subagentStatusRow renders one live child-agent status list item.
+func subagentStatusRow(status subagentLiveStatus) string {
+	label := status.Profile
+	if status.Task != "" {
+		label += ": " + status.Task
+	}
+
+	return "• " + label + " => " + status.Message
+}
+
+// subagentStatusTaskFragment returns a compact delegated prompt fragment.
+func subagentStatusTaskFragment(task string) string {
+	return truncateRunes(compactStatusText(task), 56)
 }
 
 // stopStatus stops and clears the animated working status line.
@@ -721,13 +740,13 @@ func statusTextWithSubagents(text string, count int) string {
 	return fmt.Sprintf("%s · %d %s", text, count, noun)
 }
 
-// nonEmptyStatusLabel returns a fallback live subagent label.
-func nonEmptyStatusLabel(label string) string {
-	if strings.TrimSpace(label) == "" {
+// nonEmptyStatusProfile returns a fallback live subagent profile label.
+func nonEmptyStatusProfile(profile string) string {
+	if strings.TrimSpace(profile) == "" {
 		return "subagent"
 	}
 
-	return strings.TrimSpace(label)
+	return strings.TrimSpace(profile)
 }
 
 // nonEmptyStatusMessage returns a fallback live subagent message.

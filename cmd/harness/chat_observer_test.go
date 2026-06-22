@@ -136,6 +136,12 @@ func TestChatObserverTracksActiveSubagents(t *testing.T) {
 		t.Fatalf("active subagents after starts = %d",
 			renderer.activeSubagents)
 	}
+	if renderer.subagentStatuses["call_1"].Profile != "explore" ||
+		renderer.subagentStatuses["call_1"].Task != "map the repo" {
+
+		t.Fatalf("subagent row metadata was not recorded: %#v",
+			renderer.subagentStatuses["call_1"])
+	}
 	observer.ToolProgress(tool.ProgressEvent{
 		ToolCallID: "call_1",
 		Message:    "read README.md",

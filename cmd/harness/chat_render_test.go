@@ -197,6 +197,24 @@ func TestStatusTextWithSubagentsAddsActivitySuffix(t *testing.T) {
 	}
 }
 
+// TestSubagentStatusRowRendersPromptFragment verifies live child status rows
+// read like a small roster of delegated prompts and current activity.
+func TestSubagentStatusRowRendersPromptFragment(t *testing.T) {
+	got := subagentStatusRow(subagentLiveStatus{
+		Profile: "explore",
+		Task:    "map the repository",
+		Message: "read README.md",
+	})
+	want := "• explore: map the repository => read README.md"
+	if got != want {
+		t.Fatalf("subagent row mismatch:\nwant %q\ngot  %q", want, got)
+	}
+	fragment := subagentStatusTaskFragment(strings.Repeat("alpha ", 20))
+	if len([]rune(fragment)) > 56 || !strings.HasSuffix(fragment, "…") {
+		t.Fatalf("task fragment was not compacted: %q", fragment)
+	}
+}
+
 // TestChatObserverBuffersReasoningDeltas verifies reasoning deltas only update
 // status until the completed summary can be rendered as one markdown block.
 func TestChatObserverBuffersReasoningDeltas(t *testing.T) {
