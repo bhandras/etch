@@ -16,6 +16,7 @@ import (
 	"harness/internal/model"
 	promptctx "harness/internal/prompt"
 	"harness/internal/session"
+	"harness/internal/textutil"
 	"harness/internal/tool"
 )
 
@@ -549,8 +550,37 @@ func formatTaskResult(result subagentRunResult) string {
 	fmt.Fprintf(&out, "Session: %s\n", result.SessionID)
 	fmt.Fprintf(&out, "Session path: %s\n", result.SessionPath)
 	fmt.Fprintf(&out, "Duration: %s\n", formatElapsed(result.Duration))
-	fmt.Fprintf(&out, "Model calls: %d\n", result.Status.ModelCalls)
-	fmt.Fprintf(&out, "Tool calls: %d\n\n", result.Status.ToolCalls)
+	fmt.Fprintf(
+		&out, "Model calls: %s\n",
+		textutil.FormatCount(result.Status.ModelCalls),
+	)
+	fmt.Fprintf(
+		&out, "Tool calls: %s\n",
+		textutil.FormatCount(result.Status.ToolCalls),
+	)
+	if !result.Status.Usage.Empty() {
+		fmt.Fprintf(
+			&out, "Usage: %s in, %s cached, %s out\n",
+			textutil.FormatCount(result.Status.Usage.InputTokens),
+			textutil.FormatCount(
+				result.Status.Usage.CachedInputTokens,
+			),
+			textutil.FormatCount(result.Status.Usage.OutputTokens),
+		)
+	}
+	if !result.Status.Metrics.Empty() {
+		fmt.Fprintf(
+			&out, "Transport: %s requests, %s up, %s down\n",
+			textutil.FormatCount(result.Status.Metrics.Requests),
+			textutil.FormatBytes(
+				result.Status.Metrics.RequestBytes,
+			),
+			textutil.FormatBytes(
+				result.Status.Metrics.ResponseBytes,
+			),
+		)
+	}
+	fmt.Fprintln(&out)
 	fmt.Fprintln(&out, "Result:")
 	fmt.Fprintln(&out, strings.TrimSpace(result.AssistantText))
 	fmt.Fprintln(&out)
@@ -562,16 +592,7 @@ func formatTaskResult(result subagentRunResult) string {
 
 // readSessionStatus computes durable counters for a child session.
 func readSessionStatus(path string) (session.Status, error) {
-	events, err := session.ReadAll(path)
-	if err != nil {
-		return session.Status{}, err
-	}
-	status, err := session.BuildStatus(events, time.Now())
-	if err != nil {
-		return session.Status{}, err
-	}
-
-	return status, nil
+	return aggregateSessionStatus(path)
 }
 
 // resolveProfilePromptPath resolves subagent prompt files from config location.

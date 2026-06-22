@@ -87,7 +87,7 @@ func (c *Client) Stream(ctx context.Context, req model.Request) (
 		return nil, err
 	}
 
-	httpReq, err := c.newRequest(ctx, req)
+	httpReq, requestMetrics, err := c.newRequest(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -105,13 +105,14 @@ func (c *Client) Stream(ctx context.Context, req model.Request) (
 	timeToHeaders := time.Since(startedAt)
 	if shouldRetryWithoutContinuation(resp, req) {
 		resp.Body.Close()
-		fallbackReq, err := c.newRequest(
+		fallbackReq, fallbackMetrics, err := c.newRequest(
 			ctx, requestWithoutContinuation(req),
 		)
 		if err != nil {
 			return nil, err
 		}
 		httpReq = fallbackReq
+		requestMetrics = fallbackMetrics
 		startedAt = time.Now()
 		resp, err = httpClient.Do(httpReq)
 		if err != nil {
@@ -127,9 +128,9 @@ func (c *Client) Stream(ctx context.Context, req model.Request) (
 
 	events := make(chan model.Event)
 	metrics := streamMetrics{
-		startedAt:     startedAt,
-		timeToHeaders: timeToHeaders,
-		requestBytes:  requestContentLength(httpReq),
+		startedAt:      startedAt,
+		timeToHeaders:  timeToHeaders,
+		requestMetrics: requestMetrics,
 	}
 	if c.apiMode() == APIResponses {
 		go streamResponsesAPI(ctx, resp.Body, events, metrics)
@@ -159,21 +160,24 @@ func requestWithoutContinuation(req model.Request) model.Request {
 
 // newRequest builds the HTTP request for a streaming chat completion.
 func (c *Client) newRequest(ctx context.Context, req model.Request) (
-	*http.Request, error) {
+	*http.Request, model.Metrics, error) {
 
 	if c.apiMode() == APIResponses {
 		return c.newResponsesRequest(ctx, req)
 	}
+	messages := chatMessages(req.Messages)
+	tools := chatTools(req.Tools)
 
 	body, err := json.Marshal(chatRequest{
 		Model:         c.Model,
 		Stream:        true,
 		StreamOptions: chatStreamOptions{IncludeUsage: true},
-		Messages:      chatMessages(req.Messages),
-		Tools:         chatTools(req.Tools),
+		Messages:      messages,
+		Tools:         tools,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("marshal openai request: %w", err)
+		return nil, model.Metrics{},
+			fmt.Errorf("marshal openai request: %w", err)
 	}
 
 	httpReq, err := http.NewRequestWithContext(
@@ -181,37 +185,49 @@ func (c *Client) newRequest(ctx context.Context, req model.Request) (
 		bytes.NewReader(body),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("create openai request: %w", err)
+		return nil, model.Metrics{},
+			fmt.Errorf("create openai request: %w", err)
 	}
 	c.addCommonHeaders(httpReq)
 
-	return httpReq, nil
+	return httpReq, model.Metrics{
+		Requests:      1,
+		RequestBytes:  requestContentLength(httpReq),
+		InputMessages: len(req.Messages),
+		ToolCount:     len(req.Tools),
+		InputBytes:    jsonPayloadSize(messages),
+		ToolBytes:     jsonPayloadSize(tools),
+	}, nil
 }
 
 // newResponsesRequest builds the HTTP request for a streaming response.
 func (c *Client) newResponsesRequest(ctx context.Context, req model.Request) (
-	*http.Request, error) {
+	*http.Request, model.Metrics, error) {
 
 	inputMessages := req.Messages
+	continued := req.PreviousResponseID != "" && len(req.DeltaMessages) > 0
 	if req.PreviousResponseID != "" && len(req.DeltaMessages) > 0 {
 		inputMessages = req.DeltaMessages
 	}
+	instructions := responseInstructions(req.Messages)
+	input := responseInput(inputMessages)
+	tools := responseTools(req.Tools)
 	body, err := json.Marshal(responseRequest{
 		Model:              c.Model,
 		Stream:             true,
 		Store:              false,
 		PromptCacheKey:     promptCacheKey(req.SessionID),
 		PreviousResponseID: req.PreviousResponseID,
-		Instructions:       responseInstructions(req.Messages),
-		Input:              responseInput(inputMessages),
-		Tools:              responseTools(req.Tools),
+		Instructions:       instructions,
+		Input:              input,
+		Tools:              tools,
 		Reasoning: responseReasoningConfig(
 			c.ReasoningEffort, c.ReasoningSummary,
 		),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("marshal openai response request: %w",
-			err)
+		return nil, model.Metrics{},
+			fmt.Errorf("marshal openai response request: %w", err)
 	}
 
 	httpReq, err := http.NewRequestWithContext(
@@ -219,12 +235,26 @@ func (c *Client) newResponsesRequest(ctx context.Context, req model.Request) (
 		bytes.NewReader(body),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("create openai response request: %w",
-			err)
+		return nil, model.Metrics{},
+			fmt.Errorf("create openai response request: %w", err)
 	}
 	c.addCommonHeaders(httpReq)
 
-	return httpReq, nil
+	metrics := model.Metrics{
+		Requests:         1,
+		RequestBytes:     requestContentLength(httpReq),
+		InputMessages:    len(inputMessages),
+		ToolCount:        len(req.Tools),
+		InstructionBytes: len(instructions),
+		InputBytes:       jsonPayloadSize(input),
+		ToolBytes:        jsonPayloadSize(tools),
+	}
+	if continued {
+		metrics.ContinuationRequests = 1
+		metrics.DeltaMessages = len(req.DeltaMessages)
+	}
+
+	return httpReq, metrics, nil
 }
 
 // apiMode returns the configured OpenAI API shape.
@@ -296,6 +326,16 @@ func requestContentLength(req *http.Request) int {
 	return int(req.ContentLength)
 }
 
+// jsonPayloadSize returns the serialized byte length of a request fragment.
+func jsonPayloadSize(value any) int {
+	body, err := json.Marshal(value)
+	if err != nil {
+		return 0
+	}
+
+	return len(body)
+}
+
 // streamMetrics tracks one HTTP/SSE model call while it is decoded.
 type streamMetrics struct {
 	// startedAt is the wall-clock time before the HTTP request began.
@@ -304,8 +344,9 @@ type streamMetrics struct {
 	// timeToHeaders is how long the provider took to return headers.
 	timeToHeaders time.Duration
 
-	// requestBytes is the serialized JSON request body size.
-	requestBytes int
+	// requestMetrics stores the serialized request shape measured before
+	// the HTTP call began.
+	requestMetrics model.Metrics
 
 	// responseBytes is the raw SSE body byte count read so far.
 	responseBytes int
@@ -331,12 +372,11 @@ func (m *streamMetrics) markEvent(payload string) {
 func (m streamMetrics) event() model.Event {
 	return model.Event{
 		Type: model.EventMetrics,
-		Metrics: model.Metrics{
-			RequestBytes:     m.requestBytes,
+		Metrics: m.requestMetrics.Add(model.Metrics{
 			ResponseBytes:    m.responseBytes,
 			TimeToHeaders:    m.timeToHeaders,
 			TimeToFirstEvent: m.timeToFirstEvent,
-		},
+		}),
 	}
 }
 

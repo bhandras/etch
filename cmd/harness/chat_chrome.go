@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"harness/internal/core"
 	"harness/internal/model"
 	"harness/internal/render"
 	"harness/internal/session"
@@ -104,11 +105,7 @@ func displayCWD(cwd string) string {
 
 // chatSessionUsage loads cumulative provider usage from an existing session.
 func chatSessionUsage(path string) (model.Usage, error) {
-	events, err := session.ReadAll(path)
-	if err != nil {
-		return model.Usage{}, fmt.Errorf("read session usage: %w", err)
-	}
-	status, err := session.BuildStatus(events, time.Now())
+	status, err := aggregateSessionStatus(path)
 	if err != nil {
 		return model.Usage{}, fmt.Errorf("build session usage: %w", err)
 	}
@@ -125,6 +122,27 @@ func modelUsageFromSessionStatus(status session.Status) model.Usage {
 		OutputTokens:          status.Usage.OutputTokens,
 		ReasoningOutputTokens: status.Usage.ReasoningOutputTokens,
 		TotalTokens:           status.Usage.TotalTokens,
+	}
+}
+
+// turnTimingFromSessionStatus converts durable session metrics into the subset
+// of footer timing counters that can be summed across child agents.
+func turnTimingFromSessionStatus(status session.Status) core.TurnTiming {
+	modelCalls := status.Metrics.Requests
+	if modelCalls == 0 {
+		modelCalls = status.ModelCalls
+	}
+
+	return core.TurnTiming{
+		ModelCalls:    modelCalls,
+		RequestBytes:  status.Metrics.RequestBytes,
+		ResponseBytes: status.Metrics.ResponseBytes,
+		TimeToHeaders: time.Duration(status.Metrics.TimeToHeadersMillis) *
+			time.Millisecond,
+		TimeToFirstEvent: time.Duration(
+			status.Metrics.TimeToFirstEventMillis,
+		) *
+			time.Millisecond,
 	}
 }
 

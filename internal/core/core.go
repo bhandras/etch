@@ -338,10 +338,14 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 			req.Tools, req.Observer,
 		)
 		timing.ModelDuration += time.Since(modelStarted)
-		timing.ModelCalls++
 		if err != nil {
 			return nil, err
 		}
+		requests := response.Metrics.Requests
+		if requests == 0 {
+			requests = 1
+		}
+		timing.ModelCalls += requests
 		timing.RequestBytes += response.Metrics.RequestBytes
 		timing.ResponseBytes += response.Metrics.ResponseBytes
 		timing.TimeToHeaders += response.Metrics.TimeToHeaders
@@ -1055,7 +1059,8 @@ func eventType(events []session.Event, id string) string {
 func metadataEvent(eventType string) bool {
 	return eventType == session.EventModelReasoning ||
 		eventType == session.EventModelUsage ||
-		eventType == session.EventModelResponse
+		eventType == session.EventModelResponse ||
+		eventType == session.EventModelMetrics
 }
 
 // containsSummaryEvent reports whether delta events crossed compaction.
@@ -1261,6 +1266,16 @@ func appendModelMetadata(store *session.Store, parentID string,
 		notifyEvent(observer, responseEvent)
 		parentID = responseEvent.ID
 	}
+	metricsEvent, err := appendModelMetrics(
+		store, parentID, response.Metrics,
+	)
+	if err != nil {
+		return "", err
+	}
+	if metricsEvent != nil {
+		notifyEvent(observer, metricsEvent)
+		parentID = metricsEvent.ID
+	}
 
 	return parentID, nil
 }
@@ -1302,6 +1317,41 @@ func appendModelResponse(store *session.Store, parentID string,
 		})
 	if err != nil {
 		return nil, fmt.Errorf("append model response: %w", err)
+	}
+
+	return event, nil
+}
+
+// appendModelMetrics persists provider transport metrics when reported.
+func appendModelMetrics(store *session.Store, parentID string,
+	metrics model.Metrics) (*session.Event, error) {
+
+	if metrics.Empty() {
+		return nil, nil
+	}
+	requests := metrics.Requests
+	if requests == 0 {
+		requests = 1
+	}
+	event, err := store.Append(session.EventModelMetrics, parentID,
+		session.MetricsData{
+			Requests:             requests,
+			ContinuationRequests: metrics.ContinuationRequests,
+			RequestBytes:         metrics.RequestBytes,
+			ResponseBytes:        metrics.ResponseBytes,
+			InputMessages:        metrics.InputMessages,
+			DeltaMessages:        metrics.DeltaMessages,
+			ToolCount:            metrics.ToolCount,
+			InstructionBytes:     metrics.InstructionBytes,
+			InputBytes:           metrics.InputBytes,
+			ToolBytes:            metrics.ToolBytes,
+			TimeToHeadersMillis: metrics.TimeToHeaders.
+				Milliseconds(),
+			TimeToFirstEventMillis: metrics.TimeToFirstEvent.
+				Milliseconds(),
+		})
+	if err != nil {
+		return nil, fmt.Errorf("append model metrics: %w", err)
 	}
 
 	return event, nil

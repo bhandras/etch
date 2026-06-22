@@ -121,6 +121,63 @@ func TestFormatStatusShowsUsagePlaceholder(t *testing.T) {
 	}
 }
 
+// TestBuildStatusUsesMetricRequestCounts verifies new logs report actual
+// provider requests while old logs can still fall back to assistant events.
+func TestBuildStatusUsesMetricRequestCounts(t *testing.T) {
+	startedAt := time.Date(2026, 6, 22, 12, 0, 0, 0, time.UTC)
+	events := []Event{
+		statusEvent(
+			t, EventSessionStarted, "1", "", startedAt,
+			StartedData{
+				CWD: "/work",
+			},
+		),
+		statusEvent(
+			t, EventAssistantMessage, "2", "1",
+			startedAt.Add(time.Second),
+			TextMessage(RoleAssistant, "thinking"),
+		),
+		statusEvent(
+			t, EventModelMetrics, "3", "2",
+			startedAt.Add(2*time.Second), MetricsData{
+				Requests:             2,
+				ContinuationRequests: 1,
+				RequestBytes:         2048,
+				ResponseBytes:        1024,
+				InputMessages:        8,
+				DeltaMessages:        2,
+				ToolCount:            5,
+			},
+		),
+	}
+
+	status, err := BuildStatus(events, startedAt.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.ModelCalls != 2 {
+		t.Fatalf("unexpected model calls: %#v", status)
+	}
+	if status.Metrics.RequestBytes != 2048 ||
+		status.Metrics.ContinuationRequests != 1 {
+
+		t.Fatalf("unexpected metrics: %#v", status.Metrics)
+	}
+	text := FormatStatus(status)
+	if !strings.Contains(text, "Recorded Transport") {
+		t.Fatalf("missing transport section: %q", text)
+	}
+	if !strings.Contains(text, "- requests: 2 (1 continued)") {
+		t.Fatalf("missing request counts: %q", text)
+	}
+	if !strings.Contains(
+		text, "8 input messages, 2 delta messages, 5 tools",
+	) {
+
+		t.Fatalf("missing request shape: %q", text)
+	}
+}
+
 // TestFormatDurationCompactsLongDurations verifies status output stays short
 // for sessions that have been open for hours.
 func TestFormatDurationCompactsLongDurations(t *testing.T) {

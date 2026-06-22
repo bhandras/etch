@@ -2,6 +2,29 @@ package textutil
 
 import "fmt"
 
+// FormatCount renders integer counters with comma group separators.
+func FormatCount(count int) string {
+	sign := ""
+	if count < 0 {
+		sign = "-"
+		count = -count
+	}
+	digits := fmt.Sprintf("%d", count)
+	if len(digits) <= 3 {
+		return sign + digits
+	}
+	first := len(digits) % 3
+	if first == 0 {
+		first = 3
+	}
+	out := sign + digits[:first]
+	for index := first; index < len(digits); index += 3 {
+		out += "," + digits[index:index+3]
+	}
+
+	return out
+}
+
 // FormatBytes renders byte counts in a compact human-readable form.
 func FormatBytes(bytes int) string {
 	if bytes < 1024 {

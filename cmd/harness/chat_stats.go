@@ -43,7 +43,13 @@ func formatTurnStats(stats liveTurnStats) string {
 	if stats.ToolCalls == 1 {
 		parts = append(parts, "1 tool")
 	} else if stats.ToolCalls > 1 {
-		parts = append(parts, fmt.Sprintf("%d tools", stats.ToolCalls))
+		parts = append(
+			parts,
+			fmt.Sprintf(
+				"%s tools",
+				textutil.FormatCount(stats.ToolCalls),
+			),
+		)
 	}
 	parts = append(parts, usageStatParts(stats.Usage)...)
 	if stats.Timing.ModelDuration > 0 {
@@ -68,8 +74,11 @@ func timingStatParts(timing core.TurnTiming) []string {
 			parts = append(parts, "1 request")
 		} else {
 			parts = append(
-				parts, fmt.Sprintf("%d requests",
-					timing.ModelCalls),
+				parts,
+				fmt.Sprintf(
+					"%s requests",
+					textutil.FormatCount(timing.ModelCalls),
+				),
 			)
 		}
 	}
@@ -99,15 +108,23 @@ func usageStatParts(usage model.Usage) []string {
 		return nil
 	}
 	parts := []string{
-		fmt.Sprintf("%d in", usage.InputTokens),
+		fmt.Sprintf("%s in", textutil.FormatCount(usage.InputTokens)),
 	}
 	if usage.CachedInputTokens > 0 {
 		parts = append(
-			parts, fmt.Sprintf("%d cached",
-				usage.CachedInputTokens),
+			parts,
+			fmt.Sprintf(
+				"%s cached",
+				textutil.FormatCount(usage.CachedInputTokens),
+			),
 		)
 	}
-	parts = append(parts, fmt.Sprintf("%d out", usage.OutputTokens))
+	parts = append(
+		parts,
+		fmt.Sprintf(
+			"%s out", textutil.FormatCount(usage.OutputTokens),
+		),
+	)
 
 	return parts
 }

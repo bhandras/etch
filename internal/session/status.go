@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"harness/internal/textutil"
 )
 
 // Status summarizes durable activity recorded in a session log.
@@ -61,6 +63,10 @@ type Status struct {
 	// Usage is the total provider-reported model usage recorded so far.
 	Usage UsageData
 
+	// Metrics is the total provider transport and request-shape metadata
+	// recorded so far.
+	Metrics MetricsData
+
 	// ModelWait is the approximate time between the previous event and
 	// assistant messages.
 	ModelWait time.Duration
@@ -86,6 +92,7 @@ func BuildStatus(events []Event, now time.Time) (Status, error) {
 	}
 
 	previousTime := events[0].Time
+	metricModelCalls := 0
 	for i, event := range events {
 		previousGap := time.Duration(0)
 		if i > 0 {
@@ -150,7 +157,22 @@ func BuildStatus(events []Event, now time.Time) (Status, error) {
 				return Status{}, err
 			}
 			status.Usage = status.Usage.Add(usage)
+
+		case EventModelMetrics:
+			metrics, err := decodeStatusMetrics(event)
+			if err != nil {
+				return Status{}, err
+			}
+			status.Metrics = status.Metrics.Add(metrics)
+			requests := metrics.Requests
+			if requests == 0 && !metrics.Empty() {
+				requests = 1
+			}
+			metricModelCalls += requests
 		}
+	}
+	if metricModelCalls > 0 {
+		status.ModelCalls = metricModelCalls
 	}
 
 	return status, nil
@@ -175,26 +197,42 @@ func FormatStatus(status Status) string {
 	}
 
 	fmt.Fprintf(&out, "\nActivity\n")
-	fmt.Fprintf(&out, "- events: %d\n", status.EventCount)
-	fmt.Fprintf(&out, "- turns: %d\n", status.UserTurns)
-	fmt.Fprintf(&out, "- model calls: %d\n", status.ModelCalls)
 	fmt.Fprintf(
-		&out, "- tool calls: %d requested, %d results\n",
-		status.ToolCalls, status.ToolResults,
+		&out, "- events: %s\n", textutil.FormatCount(status.EventCount),
 	)
 	fmt.Fprintf(
-		&out, "- tool batches: %d (largest %d)\n", status.ToolBatches,
-		status.LargestToolBatch,
+		&out, "- turns: %s\n", textutil.FormatCount(status.UserTurns),
 	)
 	fmt.Fprintf(
-		&out, "- compactions: %d (%d auto, %d manual)\n",
-		status.Compactions, status.AutoCompactions,
-		status.ManualCompactions,
+		&out, "- model calls: %s\n",
+		textutil.FormatCount(status.ModelCalls),
+	)
+	fmt.Fprintf(
+		&out, "- tool calls: %s requested, %s results\n",
+		textutil.FormatCount(status.ToolCalls),
+		textutil.FormatCount(status.ToolResults),
+	)
+	fmt.Fprintf(
+		&out, "- tool batches: %s (largest %s)\n",
+		textutil.FormatCount(status.ToolBatches),
+		textutil.FormatCount(status.LargestToolBatch),
+	)
+	fmt.Fprintf(
+		&out, "- compactions: %s (%s auto, %s manual)\n",
+		textutil.FormatCount(status.Compactions),
+		textutil.FormatCount(status.AutoCompactions),
+		textutil.FormatCount(status.ManualCompactions),
 	)
 
 	fmt.Fprintf(&out, "\nStored Text\n")
-	fmt.Fprintf(&out, "- messages: %d bytes\n", status.MessageBytes)
-	fmt.Fprintf(&out, "- summaries: %d bytes\n", status.SummaryBytes)
+	fmt.Fprintf(
+		&out, "- messages: %s bytes\n",
+		textutil.FormatCount(status.MessageBytes),
+	)
+	fmt.Fprintf(
+		&out, "- summaries: %s bytes\n",
+		textutil.FormatCount(status.SummaryBytes),
+	)
 
 	fmt.Fprintf(&out, "\nRecorded Timing\n")
 	fmt.Fprintf(
@@ -210,22 +248,48 @@ func FormatStatus(status Status) string {
 		fmt.Fprint(&out, "- not recorded yet")
 	} else {
 		fmt.Fprintf(
-			&out, "- input: %d tokens\n", status.Usage.InputTokens,
+			&out, "- input: %s tokens\n",
+			textutil.FormatCount(status.Usage.InputTokens),
 		)
 		fmt.Fprintf(
-			&out, "- cached input: %d tokens\n",
-			status.Usage.CachedInputTokens,
+			&out, "- cached input: %s tokens\n",
+			textutil.FormatCount(status.Usage.CachedInputTokens),
 		)
 		fmt.Fprintf(
-			&out, "- output: %d tokens\n",
-			status.Usage.OutputTokens,
+			&out, "- output: %s tokens\n",
+			textutil.FormatCount(status.Usage.OutputTokens),
 		)
 		fmt.Fprintf(
-			&out, "- reasoning output: %d tokens\n",
-			status.Usage.ReasoningOutputTokens,
+			&out, "- reasoning output: %s tokens\n",
+			textutil.FormatCount(
+				status.Usage.ReasoningOutputTokens,
+			),
 		)
 		fmt.Fprintf(
-			&out, "- total: %d tokens", status.Usage.TotalTokens,
+			&out, "- total: %s tokens",
+			textutil.FormatCount(status.Usage.TotalTokens),
+		)
+	}
+	if !status.Metrics.Empty() {
+		fmt.Fprintf(&out, "\n\nRecorded Transport\n")
+		fmt.Fprintf(
+			&out, "- requests: %s (%s continued)\n",
+			textutil.FormatCount(status.Metrics.Requests),
+			textutil.FormatCount(
+				status.Metrics.ContinuationRequests,
+			),
+		)
+		fmt.Fprintf(
+			&out, "- bytes: %s up, %s down\n",
+			textutil.FormatBytes(status.Metrics.RequestBytes),
+			textutil.FormatBytes(status.Metrics.ResponseBytes),
+		)
+		fmt.Fprintf(
+			&out, "- request shape: %s input messages, %s delta "+
+				"messages, %s tools",
+			textutil.FormatCount(status.Metrics.InputMessages),
+			textutil.FormatCount(status.Metrics.DeltaMessages),
+			textutil.FormatCount(status.Metrics.ToolCount),
 		)
 	}
 
@@ -286,6 +350,17 @@ func decodeStatusUsage(event Event) (UsageData, error) {
 	}
 
 	return usage, nil
+}
+
+// decodeStatusMetrics decodes a model metrics event for status counters.
+func decodeStatusMetrics(event Event) (MetricsData, error) {
+	var metrics MetricsData
+	if err := json.Unmarshal(event.Data, &metrics); err != nil {
+		return MetricsData{}, fmt.Errorf("decode metrics %s: %w",
+			event.ID, err)
+	}
+
+	return metrics, nil
 }
 
 // statusMessageText joins text content parts for session status counters.

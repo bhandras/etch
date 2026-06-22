@@ -166,11 +166,42 @@ func (u Usage) Empty() bool {
 
 // Metrics stores transport-level measurements for one model call.
 type Metrics struct {
+	// Requests is the number of provider HTTP requests represented by this
+	// metric value. Individual stream events normally report one request.
+	Requests int
+
+	// ContinuationRequests is the number of requests that continued from a
+	// provider response ID instead of sending a full model context.
+	ContinuationRequests int
+
 	// RequestBytes is the JSON request body size sent to the provider.
 	RequestBytes int
 
 	// ResponseBytes is the approximate streamed response bytes read.
 	ResponseBytes int
+
+	// InputMessages is the number of neutral model messages selected as
+	// provider input.
+	InputMessages int
+
+	// DeltaMessages is the number of neutral model messages selected from
+	// Request.DeltaMessages for continuation-aware calls.
+	DeltaMessages int
+
+	// ToolCount is the number of tool schemas sent with the request.
+	ToolCount int
+
+	// InstructionBytes is the byte length of provider instruction text sent
+	// outside the ordinary input list when the API has such a field.
+	InstructionBytes int
+
+	// InputBytes is the serialized byte length of the provider input
+	// message payload when it is measured separately from the full body.
+	InputBytes int
+
+	// ToolBytes is the serialized byte length of the provider tool schema
+	// payload when it is measured separately from the full body.
+	ToolBytes int
 
 	// TimeToHeaders is the duration from starting the request until the
 	// provider returned response headers.
@@ -184,8 +215,17 @@ type Metrics struct {
 // Add returns the element-wise sum of two transport metric values.
 func (m Metrics) Add(other Metrics) Metrics {
 	return Metrics{
+		Requests: m.Requests + other.Requests,
+		ContinuationRequests: m.ContinuationRequests +
+			other.ContinuationRequests,
 		RequestBytes:     m.RequestBytes + other.RequestBytes,
 		ResponseBytes:    m.ResponseBytes + other.ResponseBytes,
+		InputMessages:    m.InputMessages + other.InputMessages,
+		DeltaMessages:    m.DeltaMessages + other.DeltaMessages,
+		ToolCount:        m.ToolCount + other.ToolCount,
+		InstructionBytes: m.InstructionBytes + other.InstructionBytes,
+		InputBytes:       m.InputBytes + other.InputBytes,
+		ToolBytes:        m.ToolBytes + other.ToolBytes,
 		TimeToHeaders:    m.TimeToHeaders + other.TimeToHeaders,
 		TimeToFirstEvent: m.TimeToFirstEvent + other.TimeToFirstEvent,
 	}
@@ -193,7 +233,11 @@ func (m Metrics) Add(other Metrics) Metrics {
 
 // Empty reports whether metrics contains no provider measurements.
 func (m Metrics) Empty() bool {
-	return m.RequestBytes == 0 && m.ResponseBytes == 0 &&
+	return m.Requests == 0 && m.ContinuationRequests == 0 &&
+		m.RequestBytes == 0 && m.ResponseBytes == 0 &&
+		m.InputMessages == 0 && m.DeltaMessages == 0 &&
+		m.ToolCount == 0 && m.InstructionBytes == 0 &&
+		m.InputBytes == 0 && m.ToolBytes == 0 &&
 		m.TimeToHeaders == 0 && m.TimeToFirstEvent == 0
 }
 

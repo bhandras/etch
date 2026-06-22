@@ -2,6 +2,20 @@ package textutil
 
 import "testing"
 
+// TestFormatCountRendersCommaGroups verifies large counters are easy to scan
+// in terminal summaries.
+func TestFormatCountRendersCommaGroups(t *testing.T) {
+	if FormatCount(123) != "123" {
+		t.Fatalf("unexpected small count: %q", FormatCount(123))
+	}
+	if FormatCount(1234567) != "1,234,567" {
+		t.Fatalf("unexpected large count: %q", FormatCount(1234567))
+	}
+	if FormatCount(-1234567) != "-1,234,567" {
+		t.Fatalf("unexpected negative count: %q", FormatCount(-1234567))
+	}
+}
+
 // TestTruncateUTF8BytesPreservesRuneBoundaries verifies byte caps do not
 // create invalid UTF-8 strings.
 func TestTruncateUTF8BytesPreservesRuneBoundaries(t *testing.T) {

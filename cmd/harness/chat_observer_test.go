@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"harness/internal/core"
 	"harness/internal/model"
 	"harness/internal/session"
 	"harness/internal/tool"
@@ -242,14 +243,35 @@ func TestChatObserverAddsSubagentUsage(t *testing.T) {
 	}
 	if _, err := child.Append(
 		session.EventModelUsage, "", session.UsageData{
-			InputTokens:       100,
-			CachedInputTokens: 40,
-			OutputTokens:      20,
-			TotalTokens:       120,
+			InputTokens:       1000,
+			CachedInputTokens: 400,
+			OutputTokens:      200,
+			TotalTokens:       1200,
 		},
 	); err != nil {
 
 		t.Fatalf("append child usage: %v", err)
+	}
+	if _, err := child.Append(
+		session.EventAssistantMessage, "", session.AssistantToolCallMessage(
+			"", []session.ToolCallData{{
+				ID:   "call_child",
+				Name: tool.NameRead,
+			}},
+		),
+	); err != nil {
+
+		t.Fatalf("append child tool call: %v", err)
+	}
+	if _, err := child.Append(
+		session.EventModelMetrics, "", session.MetricsData{
+			Requests:      2,
+			RequestBytes:  2048,
+			ResponseBytes: 1024,
+		},
+	); err != nil {
+
+		t.Fatalf("append child metrics: %v", err)
 	}
 	if err := child.Close(); err != nil {
 		t.Fatalf("close child session: %v", err)
@@ -281,15 +303,36 @@ func TestChatObserverAddsSubagentUsage(t *testing.T) {
 		),
 	)
 
-	if observer.usage.InputTokens != 100 ||
-		observer.usage.CachedInputTokens != 40 ||
-		observer.usage.OutputTokens != 20 {
+	if observer.usage.InputTokens != 1000 ||
+		observer.usage.CachedInputTokens != 400 ||
+		observer.usage.OutputTokens != 200 {
 
 		t.Fatalf("subagent usage was not recorded: %#v", observer.usage)
 	}
-	if !strings.Contains(composer.footerText, "100 in") ||
-		!strings.Contains(composer.footerText, "40 cached") ||
-		!strings.Contains(composer.footerText, "20 out") {
+	if observer.toolCalls != 1 {
+		t.Fatalf("subagent tool calls were not recorded: %d",
+			observer.toolCalls)
+	}
+	if observer.timing.ModelCalls != 2 ||
+		observer.timing.RequestBytes != 2048 ||
+		observer.timing.ResponseBytes != 1024 {
+
+		t.Fatalf("subagent timing was not recorded: %#v",
+			observer.timing)
+	}
+	observer.TurnTiming(core.TurnTiming{
+		ModelCalls:   1,
+		RequestBytes: 100,
+	})
+	if observer.timing.ModelCalls != 3 ||
+		observer.timing.RequestBytes != 2148 {
+
+		t.Fatalf("parent timing overwrote subagent timing: %#v",
+			observer.timing)
+	}
+	if !strings.Contains(composer.footerText, "1,000 in") ||
+		!strings.Contains(composer.footerText, "400 cached") ||
+		!strings.Contains(composer.footerText, "200 out") {
 
 		t.Fatalf("subagent usage missing from footer: %q",
 			composer.footerText)

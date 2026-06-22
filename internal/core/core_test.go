@@ -207,6 +207,79 @@ func TestRunTurnPersistsModelUsage(t *testing.T) {
 	}
 }
 
+// TestRunTurnPersistsModelMetrics verifies provider transport measurements are
+// durable session events when a model stream reports them.
+func TestRunTurnPersistsModelMetrics(t *testing.T) {
+	client := &scriptedToolClient{
+		events: [][]model.Event{{
+			{
+				Type: model.EventTextDelta,
+				Text: "hello",
+			},
+			{
+				Type: model.EventMetrics,
+				Metrics: model.Metrics{
+					Requests:             1,
+					ContinuationRequests: 1,
+					RequestBytes:         2048,
+					ResponseBytes:        1024,
+					InputMessages:        2,
+					DeltaMessages:        1,
+					ToolCount:            4,
+					InstructionBytes:     100,
+					InputBytes:           500,
+					ToolBytes:            700,
+					TimeToHeaders:        3 * time.Millisecond,
+					TimeToFirstEvent:     4 * time.Millisecond,
+				},
+			},
+			{
+				Type: model.EventDone,
+			},
+		}},
+	}
+
+	result, err := RunTurn(context.Background(), TurnRequest{
+		Prompt:     "hello",
+		SessionDir: t.TempDir(),
+		CWD:        "/work/project",
+		Model:      client,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err := session.ReadAll(result.SessionPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if events[len(events)-1].Type != session.EventModelMetrics {
+		t.Fatalf("expected metrics event, got %#v", events)
+	}
+	var metrics session.MetricsData
+	if err := json.Unmarshal(
+		events[len(events)-1].Data, &metrics,
+	); err != nil {
+
+		t.Fatal(err)
+	}
+	if metrics.Requests != 1 || metrics.ContinuationRequests != 1 ||
+		metrics.RequestBytes != 2048 || metrics.ResponseBytes != 1024 ||
+		metrics.InputMessages != 2 || metrics.DeltaMessages != 1 ||
+		metrics.ToolCount != 4 || metrics.InstructionBytes != 100 ||
+		metrics.InputBytes != 500 || metrics.ToolBytes != 700 ||
+		metrics.TimeToHeadersMillis != 3 ||
+		metrics.TimeToFirstEventMillis != 4 {
+
+		t.Fatalf("unexpected metrics: %#v", metrics)
+	}
+	if result.Timing.ModelCalls != 1 ||
+		result.Timing.RequestBytes != 2048 ||
+		result.Timing.ResponseBytes != 1024 {
+
+		t.Fatalf("unexpected timing: %#v", result.Timing)
+	}
+}
+
 // TestRunTurnRejectsEmptyPrompt keeps invalid CLI input from creating empty
 // session files.
 func TestRunTurnRejectsEmptyPrompt(t *testing.T) {
@@ -1110,8 +1183,10 @@ func TestRunTurnNotifiesObserver(t *testing.T) {
 		session.EventUserMessage,
 		session.EventModelReasoning,
 		session.EventAssistantMessage,
+		session.EventModelMetrics,
 		session.EventToolMessage,
 		session.EventAssistantMessage,
+		session.EventModelMetrics,
 	}
 	if !equalStrings(got, want) {
 		t.Fatalf("observer event mismatch:\nwant %#v\ngot  %#v", want,

@@ -34,7 +34,8 @@ Harness currently has:
 - OpenAI-compatible streaming through the standard library, including Platform
   API keys, `CODEX_ACCESS_TOKEN`, and ChatGPT/Codex OAuth login
 - frame-oriented OpenAI SSE parsing that reads response chunks, joins multiline
-  `data:` fields, and reports raw request/response byte metrics
+  `data:` fields, and reports raw request/response byte metrics plus
+  continuation request shape
 - project-local TOML config from `.harness/config.toml`
 - pinned project context from `SYSTEM.md` and `AGENTS.md`
 - Agent Skills-style discovery from `.harness/skills/*/SKILL.md` and
@@ -45,8 +46,10 @@ Harness currently has:
   streams
 - durable OpenAI Responses IDs stored as `model.response` events and used for
   conservative `previous_response_id` continuation
-- provider transport timing for OpenAI-compatible HTTP/SSE streams, including
-  request count, payload sizes, response headers, and first-event latency
+- durable provider transport metrics for OpenAI-compatible HTTP/SSE streams,
+  including request count, continuation count, payload sizes, response headers,
+  first-event latency, input-message count, delta-message count, and tool-schema
+  count
 - Responses API prompt cache affinity keyed by the durable local session ID
 - chat steering that lets prompts typed while a turn is running influence the
   next safe model-call boundary
@@ -332,6 +335,9 @@ go run ./cmd/harness tool task \
 
 The parent-visible task result includes the child session id plus `harness show`
 and `harness resume` commands for inspecting or continuing the child transcript.
+Interactive turn summaries and prompt footers fold in completed child-agent
+token usage, provider request counts, byte counters, and tool calls so delegated
+work is visible in the parent turn instead of disappearing into child logs.
 
 ## Sessions and Chat Commands
 
@@ -369,10 +375,15 @@ layers, active summaries, raw replay size, and approximate token counts.
 
 `/status` reports what has already happened in the session: age, turns, model
 calls, tool calls, tool batches, compactions, message bytes, approximate timing
-from JSONL event gaps, and provider-reported token usage. When providers report
-usage, Harness appends `model.usage` events to the JSONL log and sums them for
-`/status`, including input, cached input, output, reasoning output, and total
-tokens when available.
+from JSONL event gaps, provider-reported token usage, and provider transport
+metrics. When providers report usage, Harness appends `model.usage` events to
+the JSONL log and sums them for `/status`, including input, cached input,
+output, reasoning output, and total tokens when available. When providers
+report transport measurements, Harness appends `model.metrics` events with
+request counts, continuation counts, request/response byte totals, first-event
+timing, and request-shape counters. Chat status folds in completed subagent
+sessions referenced by `task` results, including nested child sessions when
+their logs are still present.
 
 Interactive chat uses the active session log for prompt history. Up and Down
 cycle through prior user prompts from the current session, including prompts

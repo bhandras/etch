@@ -126,11 +126,7 @@ func renderRecentSessionPath(path string, limit int, stdout io.Writer) error {
 
 // printSessionStatus renders durable activity statistics for a session.
 func printSessionStatus(path string, stdout io.Writer) error {
-	events, err := session.ReadAll(path)
-	if err != nil {
-		return err
-	}
-	status, err := session.BuildStatus(events, time.Now())
+	status, err := aggregateSessionStatus(path)
 	if err != nil {
 		return err
 	}

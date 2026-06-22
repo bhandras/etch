@@ -56,6 +56,10 @@ type chatObserver struct {
 
 	// timing stores coarse timing reported by the core after the turn.
 	timing core.TurnTiming
+
+	// subagentTiming stores completed child-agent transport counters that
+	// need to be merged with parent timing.
+	subagentTiming core.TurnTiming
 }
 
 // EventAppended renders model-visible assistant and tool events.
@@ -107,7 +111,7 @@ func (o *chatObserver) EventAppended(event session.Event) {
 			return
 		}
 		o.finishSubagentTool(message)
-		o.recordSubagentUsage(message)
+		o.recordSubagentActivity(message)
 		o.renderer.renderToolResult(message)
 
 	default:
@@ -157,7 +161,7 @@ func (o *chatObserver) ToolResultCompleted(call model.ToolCall,
 	}
 	message := session.ToolMessage(call.ID, call.Name, result.Text)
 	o.finishSubagentTool(message)
-	o.recordSubagentUsage(message)
+	o.recordSubagentActivity(message)
 	o.renderer.renderToolResult(message)
 
 	o.mu.Lock()
@@ -240,8 +244,8 @@ func (o *chatObserver) skipPartialSubagentResult(
 	return true
 }
 
-// recordSubagentUsage adds child-session usage to parent-visible counters.
-func (o *chatObserver) recordSubagentUsage(message session.MessageData) {
+// recordSubagentActivity adds child-session counters to parent-visible stats.
+func (o *chatObserver) recordSubagentActivity(message session.MessageData) {
 	if message.Name != tool.NameTask {
 		return
 	}
@@ -254,10 +258,10 @@ func (o *chatObserver) recordSubagentUsage(message session.MessageData) {
 		return
 	}
 	usage := modelUsageFromSessionStatus(status)
-	if usage.Empty() {
-		return
+	if !usage.Empty() {
+		o.addUsage(usage)
 	}
-	o.addUsage(usage)
+	o.addSubagentStats(status)
 }
 
 // addUsage records provider usage and refreshes the prompt footer totals.
@@ -269,6 +273,18 @@ func (o *chatObserver) addUsage(usage model.Usage) {
 	if o.renderer.composer != nil && o.chrome != nil {
 		o.renderer.composer.SetFooter(o.chrome.AddUsage(usage))
 	}
+}
+
+// addSubagentStats records child-agent transport and tool counters for the
+// current parent turn footer.
+func (o *chatObserver) addSubagentStats(status session.Status) {
+	timing := turnTimingFromSessionStatus(status)
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	o.toolCalls += status.ToolCalls
+	o.subagentTiming = addTurnTiming(o.subagentTiming, timing)
+	o.timing = addTurnTiming(o.timing, timing)
 }
 
 // ToolProgress updates live progress rows for long-running tools.
@@ -330,14 +346,43 @@ func (o *chatObserver) AutoCompacted(result core.AutoCompactResult) {
 
 // TurnTiming records coarse timing for the turn footer.
 func (o *chatObserver) TurnTiming(timing core.TurnTiming) {
-	o.timing = timing
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	o.timing = addTurnTiming(timing, o.subagentTiming)
 }
 
 // Finish renders terminal-only end-of-turn decoration.
 func (o *chatObserver) Finish(elapsed time.Duration) {
-	o.renderer.finish(elapsed, liveTurnStats{
+	o.mu.Lock()
+	stats := liveTurnStats{
 		ToolCalls: o.toolCalls,
 		Usage:     o.usage,
 		Timing:    o.timing,
-	})
+	}
+	o.mu.Unlock()
+
+	o.renderer.finish(elapsed, stats)
+}
+
+// addTurnTiming returns the additive merge of two turn timing values.
+func addTurnTiming(left core.TurnTiming,
+	right core.TurnTiming) core.TurnTiming {
+
+	merged := core.TurnTiming{
+		ModelCalls:       left.ModelCalls + right.ModelCalls,
+		ModelDuration:    left.ModelDuration + right.ModelDuration,
+		RequestBytes:     left.RequestBytes + right.RequestBytes,
+		ResponseBytes:    left.ResponseBytes + right.ResponseBytes,
+		TimeToHeaders:    left.TimeToHeaders + right.TimeToHeaders,
+		TimeToFirstEvent: left.TimeToFirstEvent + right.TimeToFirstEvent,
+		ToolDuration:     left.ToolDuration + right.ToolDuration,
+		ToolBatches:      left.ToolBatches + right.ToolBatches,
+		LargestToolBatch: left.LargestToolBatch,
+	}
+	if right.LargestToolBatch > merged.LargestToolBatch {
+		merged.LargestToolBatch = right.LargestToolBatch
+	}
+
+	return merged
 }

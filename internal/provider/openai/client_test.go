@@ -107,8 +107,10 @@ func TestClientStreamsChatCompletions(t *testing.T) {
 		t.Fatalf("unexpected usage event: %#v", got[2])
 	}
 	if got[3].Type != model.EventMetrics ||
+		got[3].Metrics.Requests != 1 ||
 		got[3].Metrics.RequestBytes == 0 ||
 		got[3].Metrics.ResponseBytes == 0 ||
+		got[3].Metrics.InputMessages != 1 ||
 		got[3].Metrics.TimeToHeaders == 0 ||
 		got[3].Metrics.TimeToFirstEvent == 0 {
 
@@ -523,8 +525,16 @@ func TestClientStreamsResponsesAPI(t *testing.T) {
 		t.Fatalf("unexpected usage event: %#v", got[4])
 	}
 	if got[5].Type != model.EventMetrics ||
+		got[5].Metrics.Requests != 1 ||
+		got[5].Metrics.ContinuationRequests != 1 ||
 		got[5].Metrics.RequestBytes == 0 ||
-		got[5].Metrics.ResponseBytes == 0 {
+		got[5].Metrics.ResponseBytes == 0 ||
+		got[5].Metrics.InputMessages != 2 ||
+		got[5].Metrics.DeltaMessages != 2 ||
+		got[5].Metrics.ToolCount != 1 ||
+		got[5].Metrics.InstructionBytes != len("rules") ||
+		got[5].Metrics.InputBytes == 0 ||
+		got[5].Metrics.ToolBytes == 0 {
 
 		t.Fatalf("unexpected metrics event: %#v", got[5])
 	}

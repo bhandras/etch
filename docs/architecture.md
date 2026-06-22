@@ -234,7 +234,11 @@ the Responses API when callers want OpenAI reasoning summaries or richer output
 items. It should measure the existing HTTP/SSE path before we consider a
 WebSocket transport: request body bytes, raw streamed response bytes, time to
 response headers, and time to the first meaningful stream event are reported as
-provider-neutral `metrics` events and folded into turn timing.
+provider-neutral `metrics` events and folded into turn timing. Metrics also
+capture request shape: total provider requests, continuation requests,
+input-message count, delta-message count, tool-schema count, and serialized
+instruction/input/tool payload sizes. Those fields let sessions answer whether
+Responses continuation is actually sending only the safe delta slice.
 
 The OpenAI stream parser is frame-oriented instead of `bufio.Scanner`-based. It
 reads response-body chunks, splits complete server-sent-event frames on blank
@@ -544,7 +548,7 @@ Session status is separate from context projection. The `/status` command reads
 the same JSONL log and reports operational counters such as session age, event
 count, user turns, model calls, tool calls, tool batches, auto/manual
 compactions, message bytes, approximate timing from event gaps, and
-provider-reported token usage when available.
+provider-reported token usage and transport metrics when available.
 
 Model clients should emit provider-reported token usage when available. The
 core stores those counters as `model.usage` JSONL events so `/status` can report
@@ -566,6 +570,15 @@ assistant message and any usage event for the same model pass. That state makes
 sessions auditable and lets Responses providers continue from a prior response
 without resending the whole visible transcript when the local session history is
 still a safe suffix of that response.
+
+Model clients should emit transport and request-shape metrics when available.
+The core stores those counters as `model.metrics` JSONL events chained after the
+assistant message and other metadata for the same model pass. New status output
+uses these events as the authoritative model-request count and falls back to
+assistant-message counts only for older logs. The OpenAI provider records
+request bytes, response bytes, response-header latency, first-event latency,
+continuation count, selected input-message count, selected delta-message count,
+tool-schema count, and serialized instruction/input/tool fragment sizes.
 
 ## OpenAI And Codex Auth
 
@@ -820,9 +833,11 @@ order. Each visible child gets a deterministic terminal-only codename so
 parallel work is easier to scan, for example `Ada / explore: map plugins =>
 read sdk/plugins.go`. Full child output stays in the child JSONL session and
 can be inspected with `harness show <child-id>` or continued with `harness
-resume <child-id>`. A richer future terminal can add more per-subagent
-controls, but it should still avoid streaming every child event into the parent
-transcript by default.
+resume <child-id>`. Completed child sessions are folded into parent turn
+chrome: token usage, provider request counts, request/response bytes, and child
+tool calls are added to the parent-visible footer and final `Worked for` line.
+A richer future terminal can add more per-subagent controls, but it should
+still avoid streaming every child event into the parent transcript by default.
 
 ## Plugins
 

@@ -52,6 +52,10 @@ const (
 	// call.
 	EventModelResponse = "model.response"
 
+	// EventModelMetrics records transport and request-shape measurements
+	// for one model call.
+	EventModelMetrics = "model.metrics"
+
 	// RoleUser identifies user messages in message event payloads.
 	RoleUser = "user"
 
@@ -225,6 +229,55 @@ type ResponseData struct {
 	ProviderResponseID string `json:"providerResponseId"`
 }
 
+// MetricsData is provider transport and request-shape metadata for one model
+// call.
+type MetricsData struct {
+	// Requests is the number of provider HTTP requests represented by this
+	// payload. New events normally store one request.
+	Requests int `json:"requests,omitempty"`
+
+	// ContinuationRequests is the subset of requests that continued from a
+	// provider response ID.
+	ContinuationRequests int `json:"continuationRequests,omitempty"`
+
+	// RequestBytes is the serialized request body size in bytes.
+	RequestBytes int `json:"requestBytes,omitempty"`
+
+	// ResponseBytes is the approximate streamed response size in bytes.
+	ResponseBytes int `json:"responseBytes,omitempty"`
+
+	// InputMessages is the count of neutral messages selected as provider
+	// input.
+	InputMessages int `json:"inputMessages,omitempty"`
+
+	// DeltaMessages is the count of messages selected from the delta slice
+	// for continuation requests.
+	DeltaMessages int `json:"deltaMessages,omitempty"`
+
+	// ToolCount is the number of tool schemas sent with the request.
+	ToolCount int `json:"toolCount,omitempty"`
+
+	// InstructionBytes is the byte size of provider instruction text sent
+	// outside ordinary input messages.
+	InstructionBytes int `json:"instructionBytes,omitempty"`
+
+	// InputBytes is the serialized provider input-message byte size when
+	// measured separately from the full request body.
+	InputBytes int `json:"inputBytes,omitempty"`
+
+	// ToolBytes is the serialized provider tool-schema byte size when
+	// measured separately from the full request body.
+	ToolBytes int `json:"toolBytes,omitempty"`
+
+	// TimeToHeadersMillis is the duration from request start to response
+	// headers in milliseconds.
+	TimeToHeadersMillis int64 `json:"timeToHeadersMillis,omitempty"`
+
+	// TimeToFirstEventMillis is the duration from request start to the
+	// first meaningful stream event in milliseconds.
+	TimeToFirstEventMillis int64 `json:"timeToFirstEventMillis,omitempty"`
+}
+
 // Add returns the element-wise sum of two usage counters.
 func (u UsageData) Add(other UsageData) UsageData {
 	return UsageData{
@@ -242,6 +295,38 @@ func (u UsageData) Empty() bool {
 	return u.InputTokens == 0 && u.CachedInputTokens == 0 &&
 		u.OutputTokens == 0 && u.ReasoningOutputTokens == 0 &&
 		u.TotalTokens == 0
+}
+
+// Add returns the element-wise sum of two metric counter values.
+func (m MetricsData) Add(other MetricsData) MetricsData {
+	return MetricsData{
+		Requests: m.Requests + other.Requests,
+		ContinuationRequests: m.ContinuationRequests +
+			other.ContinuationRequests,
+		RequestBytes:     m.RequestBytes + other.RequestBytes,
+		ResponseBytes:    m.ResponseBytes + other.ResponseBytes,
+		InputMessages:    m.InputMessages + other.InputMessages,
+		DeltaMessages:    m.DeltaMessages + other.DeltaMessages,
+		ToolCount:        m.ToolCount + other.ToolCount,
+		InstructionBytes: m.InstructionBytes + other.InstructionBytes,
+		InputBytes:       m.InputBytes + other.InputBytes,
+		ToolBytes:        m.ToolBytes + other.ToolBytes,
+		TimeToHeadersMillis: m.TimeToHeadersMillis +
+			other.TimeToHeadersMillis,
+		TimeToFirstEventMillis: m.TimeToFirstEventMillis +
+			other.TimeToFirstEventMillis,
+	}
+}
+
+// Empty reports whether metrics contains no recorded provider counters.
+func (m MetricsData) Empty() bool {
+	return m.Requests == 0 && m.ContinuationRequests == 0 &&
+		m.RequestBytes == 0 && m.ResponseBytes == 0 &&
+		m.InputMessages == 0 && m.DeltaMessages == 0 &&
+		m.ToolCount == 0 && m.InstructionBytes == 0 &&
+		m.InputBytes == 0 && m.ToolBytes == 0 &&
+		m.TimeToHeadersMillis == 0 &&
+		m.TimeToFirstEventMillis == 0
 }
 
 // IndexEntry is one summary row in the local session index.
