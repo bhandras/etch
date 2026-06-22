@@ -332,6 +332,40 @@ func TestParseRejectsInvalidSemanticConfig(t *testing.T) {
 			text: "[[plugins]]\ncommand = \"cat\"\n",
 			want: "plugins[1].name must not be empty",
 		},
+		{
+			name: "enabled subagents need profile",
+			text: "[subagents]\nenabled = true\n",
+			want: "subagents.enabled requires at least one enabled",
+		},
+		{
+			name: "subagent model",
+			text: "[subagents]\nenabled = true\n" +
+				"[[subagents.profile]]\nname = \"review\"\n" +
+				"description = \"Review.\"\n" +
+				"provider = \"openai\"\n" +
+				"allowed_tools = [\"read\"]\n",
+			want: "subagents.profile[1].model must not be empty",
+		},
+		{
+			name: "subagent blank model",
+			text: "[subagents]\nenabled = true\n" +
+				"[provider]\nmodel = \"gpt-test\"\n" +
+				"[[subagents.profile]]\nname = \"review\"\n" +
+				"description = \"Review.\"\n" +
+				"model = \"  \"\n" +
+				"allowed_tools = [\"read\"]\n",
+			want: "subagents.profile[1].model must not be blank",
+		},
+		{
+			name: "subagent base url",
+			text: "[subagents]\nenabled = true\n" +
+				"[provider]\nmodel = \"gpt-test\"\n" +
+				"[[subagents.profile]]\nname = \"review\"\n" +
+				"description = \"Review.\"\n" +
+				"base_url = \"://bad\"\n" +
+				"allowed_tools = [\"read\"]\n",
+			want: "subagents.profile[1].base_url:",
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -344,6 +378,18 @@ func TestParseRejectsInvalidSemanticConfig(t *testing.T) {
 					err.Error())
 			}
 		})
+	}
+}
+
+// TestParseRejectsTrailingMultilineContent verifies literal multiline strings
+// do not silently discard invalid trailing text after the closing delimiter.
+func TestParseRejectsTrailingMultilineContent(t *testing.T) {
+	_, err := Parse("[provider]\nname = '''\nopenai''' trailing\n")
+	if err == nil {
+		t.Fatal("expected trailing literal multiline error")
+	}
+	if !strings.Contains(err.Error(), "unexpected trailing content") {
+		t.Fatalf("unexpected multiline error: %v", err)
 	}
 }
 

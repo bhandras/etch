@@ -408,7 +408,12 @@ func collectLiteralMultiline(lines []string, start int) (string, int, error) {
 			return key + " = " + strconv.Quote(out.String()), i, nil
 		}
 		if strings.Contains(line, "'''") {
-			before, _, _ := strings.Cut(line, "'''")
+			before, after, _ := strings.Cut(line, "'''")
+			if strings.TrimSpace(after) != "" {
+				return "", start, fmt.Errorf("unexpected " +
+					"trailing content after literal " +
+					"multiline string")
+			}
 			out.WriteString(before)
 
 			return key + " = " + strconv.Quote(out.String()), i, nil

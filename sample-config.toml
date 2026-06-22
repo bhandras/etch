@@ -335,8 +335,13 @@
 # Subagent profiles are named child-agent flavors. The parent model sees the
 # names and descriptions in the task tool schema, then chooses which profile to
 # spawn for a delegated task. Empty provider/model/OpenAI fields inherit from
-# the parent chat configuration. The parent model cannot override
+# the parent chat configuration; OpenAI-compatible profiles need either a
+# profile model or provider.model. The parent model cannot override
 # max_tool_rounds at runtime; subagent loop budgets are owned by config.
+#
+# Profiles whose allowed_tools are all read-only may run in parallel with other
+# read-only work. Profiles that can write, edit, run bash, or call other
+# side-effectful tools are treated as serial barriers by the parent scheduler.
 #
 # Each subagent runs in its own JSONL child session. The parent receives only a
 # compact task result plus the child session id; the full child transcript can be

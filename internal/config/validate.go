@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"regexp"
 	"strings"
 )
@@ -90,7 +91,7 @@ func Validate(cfg Config) error {
 	}
 	errors = append(errors, validateHooks(cfg.Hooks)...)
 	errors = append(errors, validatePlugins(cfg.Plugins)...)
-	errors = append(errors, validateSubagents(cfg.Subagents)...)
+	errors = append(errors, validateSubagents(cfg)...)
 	if len(errors) > 0 {
 		return fmt.Errorf("invalid config: %s",
 			strings.Join(errors, "; "))
@@ -165,8 +166,18 @@ func validatePlugins(plugins []PluginConfig) []string {
 }
 
 // validateSubagents reports semantic errors for child-agent profiles.
-func validateSubagents(subagents SubagentConfig) []string {
+func validateSubagents(cfg Config) []string {
 	var errors []string
+	subagents := cfg.Subagents
+	if !subagents.Enabled {
+		return nil
+	}
+	if subagents.Enabled && len(activeSubagentProfiles(subagents)) == 0 {
+		errors = append(
+			errors, "subagents.enabled requires at least one "+
+				"enabled subagents.profile",
+		)
+	}
 	names := map[string]bool{}
 	for i, profile := range subagents.Profiles {
 		prefix := fmt.Sprintf("subagents.profile[%d]", i+1)
@@ -196,6 +207,22 @@ func validateSubagents(subagents SubagentConfig) []string {
 				prefix+".allowed_tools must not be empty",
 			)
 		}
+		if subagentProfileNeedsModel(cfg, profile) &&
+			strings.TrimSpace(profile.Model) == "" &&
+			strings.TrimSpace(cfg.Provider.Model) == "" {
+
+			errors = append(
+				errors, prefix+".model must not be empty "+
+					"when provider.model is unset",
+			)
+		}
+		if strings.TrimSpace(profile.Model) == "" &&
+			profile.Model != "" {
+
+			errors = append(
+				errors, prefix+".model must not be blank",
+			)
+		}
 		if strings.TrimSpace(profile.SystemPrompt) != "" &&
 			strings.TrimSpace(profile.SystemPromptFile) != "" {
 
@@ -210,6 +237,17 @@ func validateSubagents(subagents SubagentConfig) []string {
 	}
 
 	return errors
+}
+
+// subagentProfileNeedsModel reports whether profile resolves to a provider
+// whose client requires an explicit model name.
+func subagentProfileNeedsModel(cfg Config, profile SubagentProfileConfig) bool {
+	provider := strings.TrimSpace(profile.Provider)
+	if provider == "" {
+		provider = strings.TrimSpace(cfg.Provider.Name)
+	}
+
+	return provider == providerOpenAIName
 }
 
 // validateSubagentProvider reports semantic profile provider errors.
@@ -246,6 +284,14 @@ func validateSubagentProvider(prefix string,
 			),
 		)
 	}
+	if value := strings.TrimSpace(profile.BaseURL); value != "" {
+		if err := validateHTTPURL(value); err != nil {
+			errors = append(
+				errors,
+				fmt.Sprintf("%s.base_url: %v", prefix, err),
+			)
+		}
+	}
 	if value := strings.TrimSpace(profile.ReasoningEffort); value != "" &&
 		!stringIn(value, validReasoningEfforts()) {
 
@@ -278,6 +324,34 @@ func validateSubagentProvider(prefix string,
 	}
 
 	return errors
+}
+
+// activeSubagentProfiles returns enabled profile configs for validation.
+func activeSubagentProfiles(subagents SubagentConfig) []SubagentProfileConfig {
+	var profiles []SubagentProfileConfig
+	for _, profile := range subagents.Profiles {
+		if !profile.Disabled {
+			profiles = append(profiles, profile)
+		}
+	}
+
+	return profiles
+}
+
+// validateHTTPURL reports malformed provider base URL overrides.
+func validateHTTPURL(value string) error {
+	parsed, err := url.Parse(value)
+	if err != nil {
+		return err
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return fmt.Errorf("scheme must be http or https")
+	}
+	if parsed.Host == "" {
+		return fmt.Errorf("host must not be empty")
+	}
+
+	return nil
 }
 
 // validateHookMatcher reports malformed hook matcher regular expressions.
