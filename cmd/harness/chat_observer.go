@@ -160,7 +160,8 @@ func (o *chatObserver) startSubagentTool(call model.ToolCall) {
 	o.renderer.setActiveSubagents(len(o.activeSubagents))
 	if display, ok := parseSubagentCall(call.Arguments); ok {
 		o.renderer.startSubagentStatus(
-			call.ID, display.Profile, display.Task, "starting",
+			call.ID, subagentCodename(call.ID), display.Profile,
+			display.Task, "starting",
 		)
 	}
 }

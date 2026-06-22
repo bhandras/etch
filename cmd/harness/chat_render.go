@@ -158,6 +158,9 @@ type terminalTone struct {
 
 // subagentLiveStatus stores one ephemeral child-agent row.
 type subagentLiveStatus struct {
+	// Codename is the terminal-only friendly name for this child run.
+	Codename string
+
 	// Profile identifies the configured child-agent profile.
 	Profile string
 
@@ -501,8 +504,8 @@ func (r *liveChatRenderer) setActiveSubagents(count int) {
 }
 
 // startSubagentStatus registers a live child-agent status row.
-func (r *liveChatRenderer) startSubagentStatus(callID string, profile string,
-	task string, message string) {
+func (r *liveChatRenderer) startSubagentStatus(callID string, codename string,
+	profile string, task string, message string) {
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -517,9 +520,10 @@ func (r *liveChatRenderer) startSubagentStatus(callID string, profile string,
 		r.subagentOrder = append(r.subagentOrder, callID)
 	}
 	r.subagentStatuses[callID] = subagentLiveStatus{
-		Profile: nonEmptyStatusProfile(profile),
-		Task:    subagentStatusTaskFragment(task),
-		Message: nonEmptyStatusMessage(message),
+		Codename: strings.TrimSpace(codename),
+		Profile:  nonEmptyStatusProfile(profile),
+		Task:     subagentStatusTaskFragment(task),
+		Message:  nonEmptyStatusMessage(message),
 	}
 	r.refreshSubagentStatusRowsLocked()
 }
@@ -594,7 +598,7 @@ func (r *liveChatRenderer) subagentStatusRowsLocked() []string {
 
 // subagentStatusRow renders one live child-agent status list item.
 func subagentStatusRow(status subagentLiveStatus) string {
-	label := status.Profile
+	label := subagentDisplayName(status.Codename, status.Profile)
 	if status.Task != "" {
 		label += ": " + status.Task
 	}

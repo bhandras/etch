@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"strings"
 
 	"harness/internal/model"
@@ -13,6 +14,9 @@ import (
 
 // subagentCallDisplay stores the terminal-facing fields from a task tool call.
 type subagentCallDisplay struct {
+	// Codename is the terminal-only friendly name for this child run.
+	Codename string
+
 	// Profile is the configured child-agent profile name.
 	Profile string
 
@@ -25,6 +29,9 @@ type subagentCallDisplay struct {
 
 // subagentResultDisplay stores the terminal-facing fields from a task result.
 type subagentResultDisplay struct {
+	// Codename is the terminal-only friendly name for this child run.
+	Codename string
+
 	// Profile is the configured child-agent profile name.
 	Profile string
 
@@ -53,10 +60,48 @@ type subagentResultDisplay struct {
 	Resume string
 }
 
+// subagentCodenames is the terminal-only roster of friendly child-agent names.
+var subagentCodenames = []string{
+	"Ada",
+	"Alan",
+	"Grace",
+	"Katherine",
+	"Hedy",
+	"Margaret",
+	"Claude",
+	"Donald",
+	"Barbara",
+	"Radia",
+	"Ken",
+	"Dennis",
+	"Linus",
+	"Tim",
+	"Vint",
+	"Frances",
+	"Sophie",
+	"Emmy",
+	"Marie",
+	"Nikola",
+	"Albert",
+	"Isaac",
+	"Galileo",
+	"Hypatia",
+	"Archimedes",
+	"Rosalind",
+	"Chien-Shiung",
+	"Vera",
+	"Dorothy",
+	"Maryam",
+	"Shafi",
+	"Edsger",
+}
+
 // liveToolCallLabel returns the concise line shown when a tool starts.
 func liveToolCallLabel(call model.ToolCall) string {
 	if call.Name == tool.NameTask {
 		if display, ok := parseSubagentCall(call.Arguments); ok {
+			display.Codename = subagentCodename(call.ID)
+
 			return subagentCallLabel(display)
 		}
 	}
@@ -94,16 +139,13 @@ func parseSubagentCall(raw string) (subagentCallDisplay, bool) {
 
 // subagentCallLabel formats one task invocation as child-agent activity.
 func subagentCallLabel(display subagentCallDisplay) string {
-	profile := display.Profile
-	if profile == "" {
-		profile = "subagent"
-	}
+	label := subagentDisplayName(display.Codename, display.Profile)
 	task := compactOneLine(display.Task)
 	if task == "" {
-		return "Started subagent " + profile
+		return "Started subagent " + label
 	}
 
-	return fmt.Sprintf("Started subagent %s: %s", profile,
+	return fmt.Sprintf("Started subagent %s: %s", label,
 		truncateRunes(task, 100))
 }
 
@@ -116,6 +158,7 @@ func (r *liveChatRenderer) renderSubagentToolCall(call model.ToolCall) bool {
 	if !ok {
 		return false
 	}
+	display.Codename = subagentCodename(call.ID)
 
 	r.renderSubagentCallDisplay(display)
 
@@ -145,12 +188,8 @@ func (r *liveChatRenderer) renderSubagentCallDisplay(
 
 // subagentStartHeader returns the first visible task-call line.
 func subagentStartHeader(display subagentCallDisplay) string {
-	profile := display.Profile
-	if profile == "" {
-		profile = "subagent"
-	}
-
-	return "Started subagent " + profile
+	return "Started subagent " +
+		subagentDisplayName(display.Codename, display.Profile)
 }
 
 // subagentCalls extracts display data for task calls in call order.
@@ -162,6 +201,7 @@ func subagentCalls(calls []model.ToolCall) []subagentCallDisplay {
 		}
 		display, ok := parseSubagentCall(call.Arguments)
 		if ok {
+			display.Codename = subagentCodename(call.ID)
 			displays = append(displays, display)
 		}
 	}
@@ -193,6 +233,7 @@ func (r *liveChatRenderer) renderSubagentToolResult(
 	if !ok {
 		return false
 	}
+	display.Codename = subagentCodename(message.ToolCallID)
 
 	header := subagentResultHeader(display)
 	fmt.Fprintln(r.stdout, "• "+header)
@@ -285,11 +326,11 @@ func collectSubagentResult(lines []string) string {
 
 // subagentResultHeader returns the first visible task-result line.
 func subagentResultHeader(display subagentResultDisplay) string {
-	profile := display.Profile
-	if profile == "" {
-		profile = "subagent"
+	parts := []string{
+		"Subagent " +
+			subagentDisplayName(display.Codename, display.Profile) +
+			" completed",
 	}
-	parts := []string{"Subagent " + profile + " completed"}
 	if display.Duration != "" {
 		parts = append(parts, display.Duration)
 	}
@@ -333,6 +374,32 @@ func subagentMetadataLines(display subagentResultDisplay) []string {
 	}
 
 	return lines
+}
+
+// subagentDisplayName combines a friendly codename with the configured profile.
+func subagentDisplayName(codename string, profile string) string {
+	codename = strings.TrimSpace(codename)
+	profile = strings.TrimSpace(profile)
+	if profile == "" {
+		profile = "subagent"
+	}
+	if codename == "" {
+		return profile
+	}
+
+	return codename + " / " + profile
+}
+
+// subagentCodename returns a deterministic terminal-only name for a child call.
+func subagentCodename(callID string) string {
+	callID = strings.TrimSpace(callID)
+	if callID == "" {
+		return ""
+	}
+	hash := fnv.New64a()
+	_, _ = hash.Write([]byte(callID))
+
+	return subagentCodenames[hash.Sum64()%uint64(len(subagentCodenames))]
 }
 
 // trimField removes a fixed field label and surrounding whitespace.

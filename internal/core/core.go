@@ -1211,37 +1211,75 @@ type toolExecutionResult struct {
 	Duration time.Duration
 }
 
-// toolExecutionGroups splits tool calls into parallel read-only groups and
-// serial side-effect barriers.
+// toolExecutionClass describes how one call participates in local batching.
+type toolExecutionClass int
+
+const (
+	// toolExecutionSerialClass marks calls that must run as single
+	// barriers.
+	toolExecutionSerialClass toolExecutionClass = iota
+
+	// toolExecutionReadClass marks ordinary read-only or isolated tool
+	// calls.
+	toolExecutionReadClass
+
+	// toolExecutionTaskClass marks subagent calls, which may overlap each
+	// other.
+	toolExecutionTaskClass
+)
+
+// toolExecutionGroups splits tool calls into parallel-safe groups and serial
+// side-effect barriers.
 func toolExecutionGroups(calls []model.ToolCall,
 	registry *tool.Registry) [][]model.ToolCall {
 
 	var groups [][]model.ToolCall
-	var readonly []model.ToolCall
-	flushReadonly := func() {
-		if len(readonly) == 0 {
+	var pending []model.ToolCall
+	pendingClass := toolExecutionSerialClass
+	flushPending := func() {
+		if len(pending) == 0 {
 			return
 		}
-		groups = append(groups, readonly)
-		readonly = nil
+		groups = append(groups, pending)
+		pending = nil
+		pendingClass = toolExecutionSerialClass
 	}
 	for _, call := range calls {
-		if parallelReadOnlyTool(call, registry) {
-			readonly = append(readonly, call)
+		class := toolParallelClass(call, registry)
+		if class == toolExecutionSerialClass {
+			flushPending()
+			groups = append(groups, []model.ToolCall{call})
 
 			continue
 		}
-		flushReadonly()
-		groups = append(groups, []model.ToolCall{call})
+		if len(pending) > 0 && pendingClass != class {
+			flushPending()
+		}
+		pending = append(pending, call)
+		pendingClass = class
 	}
-	flushReadonly()
+	flushPending()
 
 	return groups
 }
 
-// parallelReadOnlyTool reports whether a call can execute inside a concurrent
-// read-only block without mingling with writes or shell side effects.
-func parallelReadOnlyTool(call model.ToolCall, registry *tool.Registry) bool {
+// toolParallelClass returns the compatible local batching class for call.
+func toolParallelClass(call model.ToolCall,
+	registry *tool.Registry) toolExecutionClass {
+
+	if !parallelSafeTool(call, registry) {
+		return toolExecutionSerialClass
+	}
+	if call.Name == tool.NameTask {
+		return toolExecutionTaskClass
+	}
+
+	return toolExecutionReadClass
+}
+
+// parallelSafeTool reports whether a call can execute inside a concurrent
+// block under the tool's own isolation and concurrency rules.
+func parallelSafeTool(call model.ToolCall, registry *tool.Registry) bool {
 	if registry == nil {
 		return tool.ReadOnlyToolName(call.Name)
 	}
@@ -1296,12 +1334,12 @@ func executeToolGroup(ctx context.Context, req TurnRequest,
 	return results, nil
 }
 
-// parallelExecutionGroup reports whether every call in group is read-only.
+// parallelExecutionGroup reports whether every call in group is parallel-safe.
 func parallelExecutionGroup(calls []model.ToolCall,
 	registry *tool.Registry) bool {
 
 	for _, call := range calls {
-		if !parallelReadOnlyTool(call, registry) {
+		if !parallelSafeTool(call, registry) {
 			return false
 		}
 	}

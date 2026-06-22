@@ -473,6 +473,34 @@ func TestToolExecutionGroupsHonorPerCallSafety(t *testing.T) {
 	}
 }
 
+// TestToolExecutionGroupsSeparateTaskBatchesFromReads verifies subagent calls
+// can overlap each other without mingling with parent read-only batches.
+func TestToolExecutionGroupsSeparateTaskBatchesFromReads(t *testing.T) {
+	registry := tool.DefaultRegistry()
+	registry.Register(taskSafetyTool{})
+	groups := toolExecutionGroups([]model.ToolCall{
+		{ID: "call_1", Name: tool.NameRead},
+		{ID: "call_2", Name: tool.NameTask},
+		{ID: "call_3", Name: tool.NameTask},
+		{ID: "call_4", Name: tool.NameGrep},
+	}, registry)
+
+	if len(groups) != 3 {
+		t.Fatalf("expected three execution groups, got %#v", groups)
+	}
+	if len(groups[0]) != 1 || groups[0][0].ID != "call_1" {
+		t.Fatalf("unexpected leading read group: %#v", groups[0])
+	}
+	if len(groups[1]) != 2 || groups[1][0].ID != "call_2" ||
+		groups[1][1].ID != "call_3" {
+
+		t.Fatalf("unexpected task group: %#v", groups[1])
+	}
+	if len(groups[2]) != 1 || groups[2][0].ID != "call_4" {
+		t.Fatalf("unexpected trailing read group: %#v", groups[2])
+	}
+}
+
 // TestRunTurnExecutesReadOnlyToolGroupConcurrently verifies model-requested
 // read-only batches overlap in wall time while preserving ordered results.
 func TestRunTurnExecutesReadOnlyToolGroupConcurrently(t *testing.T) {
@@ -1401,6 +1429,9 @@ type blockingReadTool struct {
 // callSafetyTool classifies each call's parallel safety from its arguments.
 type callSafetyTool struct{}
 
+// taskSafetyTool classifies task calls as parallel-safe for grouping tests.
+type taskSafetyTool struct{}
+
 // Spec returns the schema for the context-recording test tool.
 func (t *contextRecordingTool) Spec() model.ToolSpec {
 	return model.ToolSpec{
@@ -1482,6 +1513,27 @@ func (callSafetyTool) Execute(ctx context.Context, arguments string) (
 // ParallelSafe reports whether the test call carries safe:true.
 func (callSafetyTool) ParallelSafe(call model.ToolCall) bool {
 	return strings.Contains(call.Arguments, `"safe":true`)
+}
+
+// Spec returns the schema for the task grouping test tool.
+func (taskSafetyTool) Spec() model.ToolSpec {
+	return model.ToolSpec{
+		Name:        tool.NameTask,
+		Description: "Test subagent task grouping.",
+		Parameters:  json.RawMessage(`{"type":"object"}`),
+	}
+}
+
+// Execute returns a placeholder result for the task grouping test tool.
+func (taskSafetyTool) Execute(ctx context.Context, arguments string) (
+	tool.Result, error) {
+
+	return tool.Result{Text: arguments}, nil
+}
+
+// ParallelSafe reports that task calls can overlap other task calls.
+func (taskSafetyTool) ParallelSafe(call model.ToolCall) bool {
+	return true
 }
 
 // Stream returns the next scripted event stream.

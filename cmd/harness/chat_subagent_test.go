@@ -19,8 +19,11 @@ func TestLiveToolCallLabelRendersTaskAsSubagent(t *testing.T) {
 		Arguments: `{"profile":"explore","task":"Read the repo\n` +
 			`and summarize it."}`,
 	})
+	name := subagentDisplayName(subagentCodename("call_1"), "explore")
 
-	if label != "Started subagent explore: Read the repo and summarize it." {
+	if label != "Started subagent "+name+
+		": Read the repo and summarize it." {
+
 		t.Fatalf("unexpected task label: %q", label)
 	}
 	if strings.Contains(label, "{") {
@@ -47,8 +50,9 @@ func TestRenderSubagentToolCallShowsFullPrompt(t *testing.T) {
 	})
 
 	got := stdout.String()
+	name := subagentDisplayName(subagentCodename("call_1"), "review")
 	for _, want := range []string{
-		"• Started subagent review",
+		"• Started subagent " + name,
 		"  Task:",
 		"  " + longTask,
 		"  Context:",
@@ -86,11 +90,13 @@ func TestRenderSubagentToolBatchShowsEachPrompt(t *testing.T) {
 	})
 
 	got := stdout.String()
+	review := subagentDisplayName(subagentCodename("call_1"), "review")
+	explore := subagentDisplayName(subagentCodename("call_2"), "explore")
 	for _, want := range []string{
 		"• Starting 2 subagents",
-		"• Started subagent review",
+		"• Started subagent " + review,
 		"  Review core.",
-		"• Started subagent explore",
+		"• Started subagent " + explore,
 		"  Map CLI.",
 	} {
 		if !strings.Contains(got, want) {
@@ -135,8 +141,10 @@ func TestRenderSubagentToolResultSummarizesChildRun(t *testing.T) {
 	)
 
 	got := stdout.String()
+	name := subagentDisplayName(subagentCodename("call_1"), "review")
 	for _, want := range []string{
-		"• Subagent review completed · 12s · 3 model calls · 9 tools",
+		"• Subagent " + name +
+			" completed · 12s · 3 model calls · 9 tools",
 		"  Session: child-123",
 		"  Result:",
 		"  Found one issue.",

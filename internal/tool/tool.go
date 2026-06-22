@@ -120,10 +120,10 @@ type CallExecutor interface {
 }
 
 // ParallelSafetyChecker lets stateful tools decide whether one concrete call
-// may run inside a parallel read-only execution group.
+// may run inside a parallel execution group.
 type ParallelSafetyChecker interface {
-	// ParallelSafe reports whether call has no workspace side effects and
-	// may overlap other parallel-safe calls.
+	// ParallelSafe reports whether call may overlap other parallel-safe
+	// calls under the tool's own concurrency and isolation rules.
 	ParallelSafe(call model.ToolCall) bool
 }
 
@@ -206,7 +206,7 @@ func (r *Registry) Specs() []model.ToolSpec {
 	return specs
 }
 
-// ParallelSafe reports whether call may run in a concurrent read-only group.
+// ParallelSafe reports whether call may run in a concurrent execution group.
 func (r *Registry) ParallelSafe(call model.ToolCall) bool {
 	registered, ok := r.tools[call.Name]
 	if !ok {

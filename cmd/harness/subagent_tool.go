@@ -176,7 +176,8 @@ func (t *taskTool) ExecuteCall(ctx context.Context, call model.ToolCall) (
 	return tool.Result{Text: formatTaskResult(result)}, nil
 }
 
-// ParallelSafe reports whether the requested child profile is read-only.
+// ParallelSafe reports whether the requested child profile may run
+// concurrently.
 func (t *taskTool) ParallelSafe(call model.ToolCall) bool {
 	var args taskArguments
 	if strings.TrimSpace(call.Arguments) != "" {
@@ -186,12 +187,13 @@ func (t *taskTool) ParallelSafe(call model.ToolCall) bool {
 			return false
 		}
 	}
-	profile, err := findSubagentProfile(t.cfg.subagents, args.Profile)
-	if err != nil {
+	if _, err := findSubagentProfile(
+		t.cfg.subagents, args.Profile,
+	); err != nil {
 		return false
 	}
 
-	return subagentProfileReadOnly(profile)
+	return true
 }
 
 // subagentRunResult stores the compact outcome returned to the parent.
@@ -225,7 +227,7 @@ func (t *taskTool) runChild(ctx context.Context, callID string,
 	if err != nil {
 		return subagentRunResult{}, err
 	}
-	childRegistry, err := childToolRegistry(t.registry, profile)
+	childRegistry, err := t.childToolRegistry(profile)
 	if err != nil {
 		return subagentRunResult{}, err
 	}
@@ -408,50 +410,44 @@ func (t *taskTool) pruneTurnCountsLocked() {
 }
 
 // childToolRegistry returns an allowlisted registry for one child profile.
-func childToolRegistry(registry *tool.Registry,
+func (t *taskTool) childToolRegistry(
 	profile harnessconfig.SubagentProfileConfig) (*tool.Registry, error) {
 
-	allowed := filteredChildToolNames(profile.AllowedTools)
+	allowed, allowTask := filteredChildToolNames(profile.AllowedTools)
 	if len(allowed) == 0 {
 		return nil, fmt.Errorf("subagent profile %q has no "+
 			"allowed tools", profile.Name)
 	}
-	child, missing := registry.Subset(allowed)
+	child, missing := t.registry.Subset(allowed)
 	if len(missing) > 0 {
 		return nil, fmt.Errorf("subagent profile %q allows unknown "+
 			"tools: %s", profile.Name, strings.Join(missing, ", "))
+	}
+	if allowTask {
+		child.Register(newTaskTool(t.cfg, t.cwd, child))
 	}
 
 	return child, nil
 }
 
-// filteredChildToolNames removes nested delegation from child allowlists.
-func filteredChildToolNames(names []string) []string {
+// filteredChildToolNames separates direct child tools from nested delegation.
+func filteredChildToolNames(names []string) ([]string, bool) {
 	filtered := make([]string, 0, len(names))
+	allowTask := false
 	for _, name := range names {
 		name = strings.TrimSpace(name)
-		if name == "" || name == tool.NameTask {
+		if name == "" {
+			continue
+		}
+		if name == tool.NameTask {
+			allowTask = true
+
 			continue
 		}
 		filtered = append(filtered, name)
 	}
 
-	return filtered
-}
-
-// subagentProfileReadOnly reports whether every child tool is parallel-safe.
-func subagentProfileReadOnly(profile harnessconfig.SubagentProfileConfig) bool {
-	allowed := filteredChildToolNames(profile.AllowedTools)
-	if len(allowed) == 0 {
-		return false
-	}
-	for _, name := range allowed {
-		if !tool.ReadOnlyToolName(name) {
-			return false
-		}
-	}
-
-	return true
+	return filtered, allowTask
 }
 
 // childPrompt formats the user prompt admitted into the child session.
@@ -472,7 +468,8 @@ You are a configured child agent delegated by a parent agent.
 Work independently in this child session and return a concise result for the parent.
 Do not assume the parent saw your tool outputs.
 Mention important files, symbols, and verification steps when useful.
-Do not spawn further subagents.
+Only spawn further subagents if the task tool is available and delegation would
+materially improve the result.
 `)
 }
 

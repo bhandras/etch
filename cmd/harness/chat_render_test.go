@@ -201,11 +201,12 @@ func TestStatusTextWithSubagentsAddsActivitySuffix(t *testing.T) {
 // read like a small roster of delegated prompts and current activity.
 func TestSubagentStatusRowRendersPromptFragment(t *testing.T) {
 	got := subagentStatusRow(subagentLiveStatus{
-		Profile: "explore",
-		Task:    "map the repository",
-		Message: "read README.md",
+		Codename: "Ada",
+		Profile:  "explore",
+		Task:     "map the repository",
+		Message:  "read README.md",
 	})
-	want := "• explore: map the repository => read README.md"
+	want := "• Ada / explore: map the repository => read README.md"
 	if got != want {
 		t.Fatalf("subagent row mismatch:\nwant %q\ngot  %q", want, got)
 	}

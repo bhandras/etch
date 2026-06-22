@@ -339,9 +339,11 @@
 # profile model or provider.model. The parent model cannot override
 # max_tool_rounds at runtime; subagent loop budgets are owned by config.
 #
-# Profiles whose allowed_tools are all read-only may run in parallel with other
-# read-only work. Profiles that can write, edit, run bash, or call other
-# side-effectful tools are treated as serial barriers by the parent scheduler.
+# allowed_tools is the child capability boundary. Profiles may include
+# mutation-capable tools such as write, edit, or bash when the operator trusts
+# that child profile. Parallel child execution is governed by max_concurrent.
+# If a profile includes task, nested subagents inherit a registry capped by the
+# parent profile allowlist.
 #
 # Each subagent runs in its own JSONL child session. The parent receives only a
 # compact task result plus the child session id; the full child transcript can be

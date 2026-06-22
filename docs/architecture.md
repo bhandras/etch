@@ -117,15 +117,14 @@ lower the bound with `--max-tool-rounds` or `.harness/config.toml`.
 Tool execution preserves provider-visible order while allowing safe local
 parallelism. The core partitions each assistant tool-call batch into execution
 groups: consecutive read-only or isolated calls such as `ls`, `read`, `find`,
-`grep`, read-only `task` calls, and known Go-introspection tools can run
-concurrently, while side-effectful calls such as `write`, `edit`, `bash`, and
-unknown plugin tools act as serial barriers. Stateful tools may classify each
-concrete call; the `task` tool is parallel only when the selected subagent
-profile's child tool allowlist is itself read-only. Tool results are appended
-to JSONL and sent back to the model in the original assistant-call order even
-when the local executions overlap. This gives subagent and read-heavy review
-batches real parallelism without letting reads and writes observe an
-interleaved filesystem state.
+`grep`, and known Go-introspection tools can run concurrently, consecutive
+`task` calls run as their own concurrent subagent batch, and side-effectful
+parent calls such as `write`, `edit`, `bash`, and unknown plugin tools act as
+serial barriers. Stateful tools may classify each concrete call; the `task`
+tool treats child runs as isolated work whose overlap is governed by the
+operator's subagent `max_concurrent` setting and each profile's `allowed_tools`.
+Tool results are appended to JSONL and sent back to the model in the original
+assistant-call order even when local executions overlap.
 
 Pi appears to treat tool use as part of the broader agent lifecycle: it tracks
 tool calls for session statistics and relies on stop reasons, cancellation,
@@ -798,14 +797,14 @@ stores the full exploration, tool calls, reasoning summaries, usage, and
 compaction events.
 
 Tool access is allowlist-based. A profile can allow built-in tools and
-configured plugin tools by model-facing name. The first implementation removes
-`task` from child allowlists, so subagents do not spawn nested subagents even if
-the profile lists it. Subagent tool-loop budgets are config-owned: the parent
-model can choose the profile and task, but it cannot lower or raise
-`max_tool_rounds` at runtime. Profiles whose allowlist contains only read-only
-tools can run concurrently with other read-only work; profiles that can invoke
-`write`, `edit`, `bash`, or any other side-effectful tool are treated as serial
-barriers by the parent scheduler.
+configured plugin tools by model-facing name. Subagents can use any tool their
+profile allows, including mutation-capable tools such as `write`, `edit`, and
+`bash`; this is an operator trust decision rather than a scheduler inference.
+If a profile includes `task`, the child receives a nested delegation tool whose
+registry is capped by the parent profile's allowlist, so nested subagents cannot
+gain tools their parent child did not have. Subagent tool-loop budgets are
+config-owned: the parent model can choose the profile and task, but it cannot
+lower or raise `max_tool_rounds` at runtime.
 
 The terminal presentation should stay compact while making delegation legible.
 The parent UI renders each `task` start as a subagent activity block containing
@@ -815,11 +814,13 @@ count of active subagents and bounded ephemeral rows for each child agent's
 current activity, such as its latest reasoning status or tool call. These rows
 are live UI hints, not durable parent transcript events, and they are cleared
 from live tool-completion callbacks rather than waiting for parent transcript
-append order. Full child output stays in the child JSONL session and can be
-inspected with `harness show <child-id>` or continued with `harness resume
-<child-id>`. A richer future terminal can add more per-subagent controls, but
-it should still avoid streaming every child event into the parent transcript by
-default.
+append order. Each visible child gets a deterministic terminal-only codename so
+parallel work is easier to scan, for example `Ada / explore: map plugins =>
+read sdk/plugins.go`. Full child output stays in the child JSONL session and
+can be inspected with `harness show <child-id>` or continued with `harness
+resume <child-id>`. A richer future terminal can add more per-subagent
+controls, but it should still avoid streaming every child event into the parent
+transcript by default.
 
 ## Plugins
 
