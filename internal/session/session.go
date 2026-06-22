@@ -79,6 +79,12 @@ const (
 	titleEllipsis = "..."
 )
 
+var (
+	// indexMu serializes best-effort index.jsonl appends within this
+	// process while session logs remain independently append-only.
+	indexMu sync.Mutex
+)
+
 // Event is one durable JSONL record in a session log.
 type Event struct {
 	// Type identifies the event schema stored in Data.
@@ -663,6 +669,9 @@ func indexPath(dir string) string {
 
 // appendIndexEntry appends one summary row to the session index.
 func appendIndexEntry(dir string, entry IndexEntry) error {
+	indexMu.Lock()
+	defer indexMu.Unlock()
+
 	file, err := os.OpenFile(
 		indexPath(dir), os.O_CREATE|os.O_WRONLY|os.O_APPEND,
 		filePermissions,
