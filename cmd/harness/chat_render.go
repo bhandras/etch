@@ -24,6 +24,10 @@ const (
 	// liveDiffOutputLimit caps live terminal diff output blocks.
 	liveDiffOutputLimit = 160
 
+	// liveSubagentResultLimit caps child-agent final-result lines shown in
+	// the parent terminal log.
+	liveSubagentResultLimit = 24
+
 	// statusPulseFrameCount is the number of brightness steps in one status
 	// pulse.
 	statusPulseFrameCount = 8
@@ -280,12 +284,9 @@ func (r *liveChatRenderer) renderToolCall(call model.ToolCall) {
 	r.renderWithOutputLocked(func() {
 		r.closeStreamLocked()
 		r.printSeparator()
-		label := "Ran " + render.ToolCallText(session.ToolCallData{
-			ID:        call.ID,
-			Name:      call.Name,
-			Arguments: call.Arguments,
-		})
-		r.renderDotBlock([]string{label}, terminalTone{})
+		r.renderDotBlock(
+			[]string{liveToolCallLabel(call)}, terminalTone{},
+		)
 	})
 }
 
@@ -304,12 +305,10 @@ func (r *liveChatRenderer) renderToolBatch(calls []model.ToolCall) {
 		lines := []string{fmt.Sprintf("Running %d tools", len(calls))}
 		for _, call := range calls {
 			lines = append(
-				lines,
-				"  "+render.ToolCallText(session.ToolCallData{
-					ID:        call.ID,
-					Name:      call.Name,
-					Arguments: call.Arguments,
-				}),
+				lines, "  "+strings.TrimPrefix(
+					liveToolCallLabel(call),
+					"Ran ",
+				),
 			)
 		}
 		r.renderDotBlock(lines, terminalTone{})
@@ -324,6 +323,9 @@ func (r *liveChatRenderer) renderToolResult(message session.MessageData) {
 	r.renderWithOutputLocked(func() {
 		r.closeStreamLocked()
 		r.printSeparator()
+		if r.renderSubagentToolResult(message) {
+			return
+		}
 		if r.renderMutationToolResult(message) {
 			return
 		}
