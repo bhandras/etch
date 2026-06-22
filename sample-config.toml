@@ -317,4 +317,46 @@
 # name = "example"
 # command = "go run ./plugins/example/main.go"
 # timeout_seconds = 30
-# disabled = false
+# disabled = true
+
+[subagents]
+# Enable configured child-agent profiles through the parent model's task tool.
+# At least one enabled [[subagents.profile]] entry is also required.
+# enabled = false
+
+# Maximum task tool calls accepted during one parent turn.
+# max_per_turn = 4
+
+# Maximum child agents that may execute at the same time. The first
+# implementation runs tool calls through the normal tool batch path and uses
+# this value as an advertised configuration limit.
+# max_concurrent = 2
+
+# Subagent profiles are named child-agent flavors. The parent model sees the
+# names and descriptions in the task tool schema, then chooses which profile to
+# spawn for a delegated task. Empty provider/model/OpenAI fields inherit from
+# the parent chat configuration. Runtime task calls may lower max_tool_rounds
+# but cannot raise the configured profile limit.
+#
+# Each subagent runs in its own JSONL child session. The parent receives only a
+# compact task result plus the child session id; the full child transcript can be
+# inspected with harness show or resumed with harness resume.
+#
+# [[subagents.profile]]
+# name = "explore"
+# description = "Read-only codebase exploration for finding relevant files and likely causes."
+# provider = "openai"
+# model = "gpt-5.5"
+# base_url = "https://api.openai.com/v1"
+# openai_api = "responses"
+# reasoning_effort = "medium"
+# reasoning_summary = "auto"
+# system_prompt = "Explore independently and return concise findings for the parent."
+# system_prompt_file = ".harness/subagents/explore.md"
+# allowed_tools = ["ls", "read", "find", "grep", "go_package_symbols", "go_symbol"]
+# max_tool_rounds = 16
+# auto_compact = true
+# auto_compact_threshold_tokens = 80000
+# keep_messages = 12
+# keep_recent_tokens = 20000
+# disabled = true

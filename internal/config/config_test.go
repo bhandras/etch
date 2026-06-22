@@ -102,6 +102,74 @@ disabled = true
 	}
 }
 
+// TestParseReadsSubagentProfiles verifies configured child-agent profiles map
+// through the dependency-free TOML subset.
+func TestParseReadsSubagentProfiles(t *testing.T) {
+	cfg, err := Parse(`
+[subagents]
+enabled = true
+max_per_turn = 3
+max_concurrent = 2
+
+[[subagents.profile]]
+name = "review"
+description = "Read-only reviewer."
+provider = "openai"
+model = "gpt-5.5"
+openai_api = "responses"
+reasoning_effort = "medium"
+reasoning_summary = "auto"
+system_prompt = "Review carefully."
+allowed_tools = ["ls", "read", "grep"]
+max_tool_rounds = 12
+auto_compact = true
+auto_compact_threshold_tokens = 80000
+keep_messages = 8
+keep_recent_tokens = 12000
+
+[[subagents.profile]]
+name = "disabled"
+description = "Hidden profile."
+allowed_tools = ["ls"]
+disabled = true
+`)
+	if err != nil {
+		t.Fatalf("parse config: %v", err)
+	}
+	if !cfg.Subagents.Enabled ||
+		cfg.Subagents.MaxPerTurn != 3 ||
+		cfg.Subagents.MaxConcurrent != 2 {
+
+		t.Fatalf("unexpected subagent config: %#v", cfg.Subagents)
+	}
+	if len(cfg.Subagents.Profiles) != 2 {
+		t.Fatalf("expected two profiles, got %d",
+			len(cfg.Subagents.Profiles))
+	}
+	review := cfg.Subagents.Profiles[0]
+	if review.Name != "review" || review.Model != "gpt-5.5" ||
+		review.OpenAIAPI != "responses" ||
+		review.ReasoningSummary != "auto" ||
+		review.SystemPrompt != "Review carefully." {
+
+		t.Fatalf("unexpected review profile: %#v", review)
+	}
+	if strings.Join(review.AllowedTools, ",") != "ls,read,grep" {
+		t.Fatalf("unexpected allowed tools: %#v", review.AllowedTools)
+	}
+	if !review.AutoCompact ||
+		review.AutoCompactThresholdTokens != 80000 ||
+		review.KeepMessages != 8 ||
+		review.KeepRecentTokens != 12000 {
+
+		t.Fatalf("unexpected compaction config: %#v", review)
+	}
+	if !cfg.Subagents.Profiles[1].Disabled {
+		t.Fatalf("disabled profile flag was not parsed: %#v",
+			cfg.Subagents.Profiles[1])
+	}
+}
+
 // TestParseAllowsHooksNamespace verifies [hooks] can group event hook arrays
 // without creating a hook entry on its own.
 func TestParseAllowsHooksNamespace(t *testing.T) {
@@ -447,6 +515,12 @@ func sampleConfigKeyGroup(table string, arrayTable bool) (string, bool) {
 
 	case table == "plugins":
 		return "plugins", true
+
+	case table == "subagents":
+		return "subagents", true
+
+	case table == "subagents.profile":
+		return "subagents.profile", true
 
 	case strings.HasPrefix(table, "hooks.") ||
 		(table == "hooks" && arrayTable):

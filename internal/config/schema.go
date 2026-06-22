@@ -17,6 +17,10 @@ const (
 
 	// valueBool identifies boolean values in the config schema.
 	valueBool valueKind = "boolean"
+
+	// valueStringList identifies a single-line TOML array of quoted string
+	// values.
+	valueStringList valueKind = "string list"
 )
 
 const (
@@ -59,23 +63,26 @@ type tableKind int
 // parsedValue stores one TOML scalar after schema-directed parsing.
 type parsedValue struct {
 	text    string
+	texts   []string
 	integer int
 	boolean bool
 }
 
 // configScope stores the active schema target for subsequent assignments.
 type configScope struct {
-	cfg    *Config
-	table  string
-	hook   *HookConfig
-	plugin *PluginConfig
+	cfg     *Config
+	table   string
+	hook    *HookConfig
+	plugin  *PluginConfig
+	profile *SubagentProfileConfig
 }
 
 // assignmentTarget carries the config object currently receiving a field.
 type assignmentTarget struct {
-	cfg    *Config
-	hook   *HookConfig
-	plugin *PluginConfig
+	cfg     *Config
+	hook    *HookConfig
+	plugin  *PluginConfig
+	profile *SubagentProfileConfig
 }
 
 // configField describes one assignable scalar in the config schema.
@@ -339,6 +346,226 @@ func schemaTables() map[string]tableSchema {
 			},
 		},
 	)
+	addSchemaTable(tables, "subagents", tableNormal, nil, []configField{
+		{
+			key:  "enabled",
+			kind: valueBool,
+			description: "Whether configured subagent profiles are " +
+				"available through the task tool.",
+			apply: func(target *assignmentTarget,
+				value parsedValue) {
+
+				target.cfg.Subagents.Enabled = value.boolean
+			},
+		},
+		{
+			key:  "max_per_turn",
+			kind: valuePositiveInt,
+			description: "Maximum subagent tasks the parent may " +
+				"delegate during one turn.",
+			apply: func(target *assignmentTarget,
+				value parsedValue) {
+
+				target.cfg.Subagents.MaxPerTurn = value.integer
+			},
+		},
+		{
+			key:  "max_concurrent",
+			kind: valuePositiveInt,
+			description: "Maximum child agents that may run at the " +
+				"same time.",
+			apply: func(target *assignmentTarget,
+				value parsedValue) {
+
+				target.cfg.Subagents.MaxConcurrent = value.integer
+			},
+		},
+	})
+	addSchemaTable(
+		tables, "subagents.profile", tableArray,
+		beginSubagentProfileArray,
+		[]configField{
+			{
+				key:         "name",
+				kind:        valueString,
+				description: "Model-facing profile name.",
+				apply: func(target *assignmentTarget,
+					value parsedValue) {
+
+					target.profile.Name = value.text
+				},
+			},
+			{
+				key:  "description",
+				kind: valueString,
+				description: "When the parent model should delegate " +
+					"to this profile.",
+				apply: func(target *assignmentTarget,
+					value parsedValue) {
+
+					target.profile.Description = value.text
+				},
+			},
+			{
+				key:  "provider",
+				kind: valueString,
+				description: "Optional provider override for this " +
+					"profile.",
+				apply: func(target *assignmentTarget,
+					value parsedValue) {
+
+					target.profile.Provider = value.text
+				},
+			},
+			{
+				key:  "model",
+				kind: valueString,
+				description: "Optional model override for this " +
+					"profile.",
+				apply: func(target *assignmentTarget,
+					value parsedValue) {
+
+					target.profile.Model = value.text
+				},
+			},
+			{
+				key:  "base_url",
+				kind: valueString,
+				description: "Optional OpenAI-compatible base URL " +
+					"override.",
+				apply: func(target *assignmentTarget,
+					value parsedValue) {
+
+					target.profile.BaseURL = value.text
+				},
+			},
+			{
+				key:         "openai_api",
+				kind:        valueString,
+				description: "Optional OpenAI API shape override.",
+				apply: func(target *assignmentTarget,
+					value parsedValue) {
+
+					target.profile.OpenAIAPI = value.text
+				},
+			},
+			{
+				key:         "reasoning_effort",
+				kind:        valueString,
+				description: "Optional reasoning effort override.",
+				apply: func(target *assignmentTarget,
+					value parsedValue) {
+
+					target.profile.ReasoningEffort = value.text
+				},
+			},
+			{
+				key:         "reasoning_summary",
+				kind:        valueString,
+				description: "Optional reasoning summary override.",
+				apply: func(target *assignmentTarget,
+					value parsedValue) {
+
+					target.profile.ReasoningSummary = value.text
+				},
+			},
+			{
+				key:         "system_prompt",
+				kind:        valueString,
+				description: "Inline child-agent instructions.",
+				apply: func(target *assignmentTarget,
+					value parsedValue) {
+
+					target.profile.SystemPrompt = value.text
+				},
+			},
+			{
+				key:         "system_prompt_file",
+				kind:        valueString,
+				description: "Path to child-agent instructions.",
+				apply: func(target *assignmentTarget,
+					value parsedValue) {
+
+					target.profile.SystemPromptFile = value.text
+				},
+			},
+			{
+				key:         "allowed_tools",
+				kind:        valueStringList,
+				description: "Tool names this profile may call.",
+				apply: func(target *assignmentTarget,
+					value parsedValue) {
+
+					target.profile.AllowedTools = value.texts
+				},
+			},
+			{
+				key:  "max_tool_rounds",
+				kind: valuePositiveInt,
+				description: "Maximum model/tool exchange rounds for " +
+					"this child.",
+				apply: func(target *assignmentTarget,
+					value parsedValue) {
+
+					target.profile.MaxToolRounds = value.integer
+				},
+			},
+			{
+				key:         "auto_compact",
+				kind:        valueBool,
+				description: "Whether this child profile auto-compacts.",
+				apply: func(target *assignmentTarget,
+					value parsedValue) {
+
+					target.profile.AutoCompact = value.boolean
+				},
+			},
+			{
+				key:  "auto_compact_threshold_tokens",
+				kind: valuePositiveInt,
+				description: "Approximate child context token " +
+					"threshold for auto compaction.",
+				apply: func(target *assignmentTarget,
+					value parsedValue) {
+
+					target.profile.AutoCompactThresholdTokens =
+						value.integer
+				},
+			},
+			{
+				key:  "keep_messages",
+				kind: valuePositiveInt,
+				description: "Recent message events retained by child " +
+					"compaction fallback.",
+				apply: func(target *assignmentTarget,
+					value parsedValue) {
+
+					target.profile.KeepMessages = value.integer
+				},
+			},
+			{
+				key:  "keep_recent_tokens",
+				kind: valuePositiveInt,
+				description: "Approximate recent raw context retained " +
+					"after child compaction.",
+				apply: func(target *assignmentTarget,
+					value parsedValue) {
+
+					target.profile.KeepRecentTokens = value.integer
+				},
+			},
+			{
+				key:         "disabled",
+				kind:        valueBool,
+				description: "Keep the profile configured but hidden.",
+				apply: func(target *assignmentTarget,
+					value parsedValue) {
+
+					target.profile.Disabled = value.boolean
+				},
+			},
+		},
+	)
 
 	return tables
 }
@@ -415,7 +642,7 @@ func applySchemaAssignment(scope configScope, key string, value string) error {
 		return fmt.Errorf("unknown table %q", scope.table)
 	}
 	if schema.kind != tableNormal && scope.hook == nil &&
-		scope.plugin == nil {
+		scope.plugin == nil && scope.profile == nil {
 		return fmt.Errorf("%s setting %q must be inside %s",
 			schema.name, key, schema.assignmentHeader())
 	}
@@ -428,9 +655,10 @@ func applySchemaAssignment(scope configScope, key string, value string) error {
 		return fmt.Errorf("%s.%s: %w", field.table, field.key, err)
 	}
 	field.apply(&assignmentTarget{
-		cfg:    scope.cfg,
-		hook:   scope.hook,
-		plugin: scope.plugin,
+		cfg:     scope.cfg,
+		hook:    scope.hook,
+		plugin:  scope.plugin,
+		profile: scope.profile,
 	}, parsed)
 
 	return nil
@@ -471,6 +699,22 @@ func beginPluginArray(cfg *Config, name string) (configScope, error) {
 	}, nil
 }
 
+// beginSubagentProfileArray appends the subagent profile represented by name.
+func beginSubagentProfileArray(cfg *Config, name string) (configScope, error) {
+	if name != "subagents.profile" {
+		return configScope{}, fmt.Errorf("unknown array table %q", name)
+	}
+	cfg.Subagents.Profiles = append(
+		cfg.Subagents.Profiles, SubagentProfileConfig{},
+	)
+
+	return configScope{
+		cfg:     cfg,
+		table:   "subagents.profile",
+		profile: &cfg.Subagents.Profiles[len(cfg.Subagents.Profiles)-1],
+	}, nil
+}
+
 // assignmentHeader returns the TOML array-table form required for schema.
 func (s tableSchema) assignmentHeader() string {
 	switch s.kind {
@@ -502,6 +746,11 @@ func parseSchemaValue(kind valueKind, value string) (parsedValue, error) {
 		boolean, err := parseBool(value)
 
 		return parsedValue{boolean: boolean}, err
+
+	case valueStringList:
+		texts, err := parseStringList(value)
+
+		return parsedValue{texts: texts}, err
 
 	default:
 		return parsedValue{}, fmt.Errorf("unsupported config "+

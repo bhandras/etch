@@ -40,6 +40,10 @@ type Config struct {
 
 	// Plugins stores explicitly configured plugin processes in file order.
 	Plugins []PluginConfig
+
+	// Subagents stores named child-agent profiles available to the parent
+	// model through the task delegation tool.
+	Subagents SubagentConfig
 }
 
 // SessionConfig stores defaults for local session handling.
@@ -129,6 +133,79 @@ type PluginConfig struct {
 	TimeoutSeconds int
 
 	// Disabled leaves the plugin definition in config without starting it.
+	Disabled bool
+}
+
+// SubagentConfig stores global controls and configured child-agent profiles.
+type SubagentConfig struct {
+	// Enabled exposes the task delegation tool when true and at least one
+	// enabled profile exists.
+	Enabled bool
+
+	// MaxPerTurn caps how many subagents the parent may request in one
+	// turn. Zero means the runtime uses its default.
+	MaxPerTurn int
+
+	// MaxConcurrent caps how many child agents may run at the same time.
+	// Zero means the runtime uses its default.
+	MaxConcurrent int
+
+	// Profiles stores named child-agent configurations in file order.
+	Profiles []SubagentProfileConfig
+}
+
+// SubagentProfileConfig describes one configured child-agent flavor.
+type SubagentProfileConfig struct {
+	// Name is the model-facing profile identifier.
+	Name string
+
+	// Description explains when the parent model should choose this
+	// profile.
+	Description string
+
+	// Provider optionally overrides the parent provider for this profile.
+	Provider string
+
+	// Model optionally overrides the parent model for this profile.
+	Model string
+
+	// BaseURL optionally overrides the OpenAI-compatible base URL.
+	BaseURL string
+
+	// OpenAIAPI optionally overrides the OpenAI API shape.
+	OpenAIAPI string
+
+	// ReasoningEffort optionally overrides OpenAI reasoning effort.
+	ReasoningEffort string
+
+	// ReasoningSummary optionally overrides OpenAI reasoning summaries.
+	ReasoningSummary string
+
+	// SystemPrompt stores profile-specific child-agent instructions.
+	SystemPrompt string
+
+	// SystemPromptFile stores a path to profile-specific instructions.
+	SystemPromptFile string
+
+	// AllowedTools lists model-facing tools this child may call.
+	AllowedTools []string
+
+	// MaxToolRounds caps model/tool exchange rounds for this child.
+	MaxToolRounds int
+
+	// AutoCompact enables automatic compaction for this child profile.
+	AutoCompact bool
+
+	// AutoCompactThresholdTokens controls child automatic compaction.
+	AutoCompactThresholdTokens int
+
+	// KeepMessages controls child compaction message retention.
+	KeepMessages int
+
+	// KeepRecentTokens controls child compaction raw context retention.
+	KeepRecentTokens int
+
+	// Disabled keeps the profile configured without advertising it.
 	Disabled bool
 }
 
@@ -327,6 +404,84 @@ func parseString(value string) (string, error) {
 	}
 
 	return "", fmt.Errorf("expected quoted string")
+}
+
+// parseStringList parses a single-line TOML array of quoted string values.
+func parseStringList(value string) ([]string, error) {
+	if !strings.HasPrefix(value, "[") || !strings.HasSuffix(value, "]") {
+		return nil, fmt.Errorf("expected string array")
+	}
+	body := strings.TrimSpace(
+		strings.TrimSuffix(
+			strings.TrimPrefix(value, "["),
+			"]",
+		),
+	)
+	if body == "" {
+		return nil, nil
+	}
+
+	var values []string
+	for len(body) > 0 {
+		body = strings.TrimSpace(body)
+		text, rest, err := parseStringListItem(body)
+		if err != nil {
+			return nil, err
+		}
+		values = append(values, text)
+		rest = strings.TrimSpace(rest)
+		if rest == "" {
+			break
+		}
+		if !strings.HasPrefix(rest, ",") {
+			return nil, fmt.Errorf("expected comma between strings")
+		}
+		body = strings.TrimSpace(strings.TrimPrefix(rest, ","))
+		if body == "" {
+			return nil, fmt.Errorf("trailing comma is not " +
+				"supported")
+		}
+	}
+
+	return values, nil
+}
+
+// parseStringListItem parses one quoted string from the start of value.
+func parseStringListItem(value string) (string, string, error) {
+	if strings.HasPrefix(value, `"`) {
+		escaped := false
+		for i := 1; i < len(value); i++ {
+			if escaped {
+				escaped = false
+
+				continue
+			}
+			if value[i] == '\\' {
+				escaped = true
+
+				continue
+			}
+			if value[i] == '"' {
+				text, err := parseString(value[:i+1])
+
+				return text, value[i+1:], err
+			}
+		}
+
+		return "", "", fmt.Errorf("unterminated string")
+	}
+	if strings.HasPrefix(value, "'") {
+		index := strings.Index(value[1:], "'")
+		if index < 0 {
+			return "", "", fmt.Errorf("unterminated string")
+		}
+		end := index + 2
+		text, err := parseString(value[:end])
+
+		return text, value[end:], err
+	}
+
+	return "", "", fmt.Errorf("expected quoted string")
 }
 
 // parsePositiveInt parses a positive integer value.

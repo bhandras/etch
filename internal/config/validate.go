@@ -90,6 +90,7 @@ func Validate(cfg Config) error {
 	}
 	errors = append(errors, validateHooks(cfg.Hooks)...)
 	errors = append(errors, validatePlugins(cfg.Plugins)...)
+	errors = append(errors, validateSubagents(cfg.Subagents)...)
 	if len(errors) > 0 {
 		return fmt.Errorf("invalid config: %s",
 			strings.Join(errors, "; "))
@@ -163,6 +164,122 @@ func validatePlugins(plugins []PluginConfig) []string {
 	return errors
 }
 
+// validateSubagents reports semantic errors for child-agent profiles.
+func validateSubagents(subagents SubagentConfig) []string {
+	var errors []string
+	names := map[string]bool{}
+	for i, profile := range subagents.Profiles {
+		prefix := fmt.Sprintf("subagents.profile[%d]", i+1)
+		name := strings.TrimSpace(profile.Name)
+		if name == "" {
+			errors = append(
+				errors, prefix+".name must not be empty",
+			)
+		} else if names[name] {
+			errors = append(
+				errors,
+				prefix+".name duplicates "+strconvQuote(name),
+			)
+		}
+		names[name] = true
+		if profile.Disabled {
+			continue
+		}
+		if strings.TrimSpace(profile.Description) == "" {
+			errors = append(
+				errors, prefix+".description must not be empty",
+			)
+		}
+		if len(profile.AllowedTools) == 0 {
+			errors = append(
+				errors,
+				prefix+".allowed_tools must not be empty",
+			)
+		}
+		if strings.TrimSpace(profile.SystemPrompt) != "" &&
+			strings.TrimSpace(profile.SystemPromptFile) != "" {
+
+			errors = append(
+				errors, prefix+" must set only one of "+
+					"system_prompt or system_prompt_file",
+			)
+		}
+		errors = append(
+			errors, validateSubagentProvider(prefix, profile)...,
+		)
+	}
+
+	return errors
+}
+
+// validateSubagentProvider reports semantic profile provider errors.
+func validateSubagentProvider(prefix string,
+	profile SubagentProfileConfig) []string {
+
+	var errors []string
+	if value := strings.TrimSpace(profile.Provider); value != "" &&
+		!stringIn(value, validProviders()) {
+
+		errors = append(
+			errors,
+			fmt.Sprintf(
+				"%s.provider must be one of %s, got %q", prefix,
+				joinOptions(
+					validProviders(),
+				),
+				value,
+			),
+		)
+	}
+	if value := strings.TrimSpace(profile.OpenAIAPI); value != "" &&
+		!stringIn(value, validOpenAIAPIs()) {
+
+		errors = append(
+			errors,
+			fmt.Sprintf(
+				"%s.openai_api must be one of %s, got %q",
+				prefix,
+				joinOptions(
+					validOpenAIAPIs(),
+				),
+				value,
+			),
+		)
+	}
+	if value := strings.TrimSpace(profile.ReasoningEffort); value != "" &&
+		!stringIn(value, validReasoningEfforts()) {
+
+		errors = append(
+			errors,
+			fmt.Sprintf(
+				"%s.reasoning_effort must be one of %s, got %q",
+				prefix,
+				joinOptions(
+					validReasoningEfforts(),
+				),
+				value,
+			),
+		)
+	}
+	if value := strings.TrimSpace(profile.ReasoningSummary); value != "" &&
+		!stringIn(value, validReasoningSummaries()) {
+
+		errors = append(
+			errors,
+			fmt.Sprintf(
+				"%s.reasoning_summary must be one of %s, "+
+					"got %q", prefix,
+				joinOptions(
+					validReasoningSummaries(),
+				),
+				value,
+			),
+		)
+	}
+
+	return errors
+}
+
 // validateHookMatcher reports malformed hook matcher regular expressions.
 func validateHookMatcher(matcher string) error {
 	if matcher == "" || matcher == "*" {
@@ -173,6 +290,11 @@ func validateHookMatcher(matcher string) error {
 	}
 
 	return nil
+}
+
+// strconvQuote returns a quoted string without importing it at call sites.
+func strconvQuote(value string) string {
+	return fmt.Sprintf("%q", value)
 }
 
 // validProviders returns provider names accepted by project config.
