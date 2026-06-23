@@ -94,7 +94,8 @@ func TestClientStreamsResponsesWebSocketReusesConnection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if events := collectEvents(first); len(events) == 0 {
+	firstEvents := collectEvents(first)
+	if len(firstEvents) == 0 {
 		t.Fatalf("first stream returned no events")
 	}
 	second, err := client.Stream(contextBackground(), model.Request{
@@ -112,8 +113,33 @@ func TestClientStreamsResponsesWebSocketReusesConnection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if events := collectEvents(second); len(events) == 0 {
+	secondEvents := collectEvents(second)
+	if len(secondEvents) == 0 {
 		t.Fatalf("second stream returned no events")
+	}
+	if firstEvents[len(firstEvents)-2].Type != model.EventMetrics ||
+		firstEvents[len(firstEvents)-2].Metrics.Transport !=
+			TransportWebSocket ||
+		firstEvents[len(firstEvents)-2].Metrics.WebSocketConnections !=
+			1 ||
+		firstEvents[len(firstEvents)-2].Metrics.WebSocketReuses != 0 {
+
+		t.Fatalf("unexpected first websocket metrics: %#v", firstEvents)
+	}
+	if secondEvents[len(secondEvents)-2].Type != model.EventMetrics ||
+		secondEvents[len(secondEvents)-2].Metrics.Transport !=
+			TransportWebSocket ||
+		secondEvents[len(secondEvents)-
+			2].Metrics.WebSocketConnections !=
+			0 ||
+		secondEvents[len(secondEvents)-2].Metrics.WebSocketReuses !=
+			1 ||
+		secondEvents[len(secondEvents)-
+			2].Metrics.ContinuationRequests !=
+			1 {
+
+		t.Fatalf("unexpected second websocket metrics: %#v",
+			secondEvents)
 	}
 
 	mu.Lock()

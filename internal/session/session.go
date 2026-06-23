@@ -127,6 +127,14 @@ type StartedData struct {
 
 	// SubagentProfile records the configured child-agent profile name.
 	SubagentProfile string `json:"subagentProfile,omitempty"`
+
+	// ForkSessionPath records the parent JSONL log used as inherited
+	// context for a forked child session.
+	ForkSessionPath string `json:"forkSessionPath,omitempty"`
+
+	// ForkBeforeEventID records the parent event that was excluded from the
+	// inherited fork context.
+	ForkBeforeEventID string `json:"forkBeforeEventId,omitempty"`
 }
 
 // ContentPart is one typed piece of message content.
@@ -252,9 +260,21 @@ type ProviderItemData struct {
 // MetricsData is provider transport and request-shape metadata for one model
 // call.
 type MetricsData struct {
+	// Transport is the provider transport used by the latest metric event
+	// folded into this value.
+	Transport string `json:"transport,omitempty"`
+
 	// Requests is the number of provider HTTP requests represented by this
 	// payload. New events normally store one request.
 	Requests int `json:"requests,omitempty"`
+
+	// WebSocketConnections is the number of new WebSocket connections
+	// opened.
+	WebSocketConnections int `json:"webSocketConnections,omitempty"`
+
+	// WebSocketReuses is the number of requests sent over an already-open
+	// WebSocket connection.
+	WebSocketReuses int `json:"webSocketReuses,omitempty"`
 
 	// ContinuationRequests is the subset of requests that continued from a
 	// provider response ID.
@@ -332,7 +352,11 @@ func (u UsageData) Empty() bool {
 // Add returns the element-wise sum of two metric counter values.
 func (m MetricsData) Add(other MetricsData) MetricsData {
 	return MetricsData{
-		Requests: m.Requests + other.Requests,
+		Transport: mergeMetricsString(m.Transport, other.Transport),
+		Requests:  m.Requests + other.Requests,
+		WebSocketConnections: m.WebSocketConnections +
+			other.WebSocketConnections,
+		WebSocketReuses: m.WebSocketReuses + other.WebSocketReuses,
 		ContinuationRequests: m.ContinuationRequests +
 			other.ContinuationRequests,
 		ContinuationFallbacks: m.ContinuationFallbacks +
@@ -362,7 +386,11 @@ func (m MetricsData) Add(other MetricsData) MetricsData {
 
 // Empty reports whether metrics contains no recorded provider counters.
 func (m MetricsData) Empty() bool {
-	return m.Requests == 0 && m.ContinuationRequests == 0 &&
+	return m.Transport == "" &&
+		m.Requests == 0 &&
+		m.WebSocketConnections == 0 &&
+		m.WebSocketReuses == 0 &&
+		m.ContinuationRequests == 0 &&
 		m.ContinuationFallbacks == 0 &&
 		m.ContinuationFallbackStatus == 0 &&
 		m.ContinuationFallbackError == "" &&
@@ -427,6 +455,14 @@ type CreateOptions struct {
 
 	// SubagentProfile records the configured child-agent profile name.
 	SubagentProfile string
+
+	// ForkSessionPath records the parent JSONL log used as inherited
+	// context for a forked child session.
+	ForkSessionPath string
+
+	// ForkBeforeEventID records the parent event that was excluded from the
+	// inherited fork context.
+	ForkBeforeEventID string
 }
 
 // Store appends events to one session file and tracks the current leaf event.
@@ -477,10 +513,12 @@ func CreateWithOptions(dir string, opts CreateOptions) (*Store, *Event, error) {
 		file: file,
 	}
 	event, err := store.Append(EventSessionStarted, "", StartedData{
-		CWD:              opts.CWD,
-		ParentSessionID:  opts.ParentSessionID,
-		ParentToolCallID: opts.ParentToolCallID,
-		SubagentProfile:  opts.SubagentProfile,
+		CWD:               opts.CWD,
+		ParentSessionID:   opts.ParentSessionID,
+		ParentToolCallID:  opts.ParentToolCallID,
+		SubagentProfile:   opts.SubagentProfile,
+		ForkSessionPath:   opts.ForkSessionPath,
+		ForkBeforeEventID: opts.ForkBeforeEventID,
 	})
 	if err != nil {
 		closeErr := file.Close()

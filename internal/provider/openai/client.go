@@ -267,6 +267,7 @@ func (c *Client) newRequest(ctx context.Context, req model.Request) (
 	c.addCommonHeaders(httpReq)
 
 	return httpReq, model.Metrics{
+		Transport:     TransportHTTP,
 		Requests:      1,
 		RequestBytes:  requestContentLength(httpReq),
 		InputMessages: len(req.Messages),
@@ -337,6 +338,7 @@ func (c *Client) responsesRequestBody(req model.Request,
 	}
 
 	metrics := model.Metrics{
+		Transport:        TransportHTTP,
 		Requests:         1,
 		RequestBytes:     len(body),
 		InputMessages:    len(inputMessages),

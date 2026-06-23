@@ -200,9 +200,21 @@ func (u Usage) Empty() bool {
 
 // Metrics stores transport-level measurements for one model call.
 type Metrics struct {
+	// Transport is the provider transport used for this request, such as
+	// http or websocket.
+	Transport string
+
 	// Requests is the number of provider HTTP requests represented by this
 	// metric value. Individual stream events normally report one request.
 	Requests int
+
+	// WebSocketConnections is the number of new WebSocket connections
+	// opened for this metric value.
+	WebSocketConnections int
+
+	// WebSocketReuses is the number of requests that reused an existing
+	// WebSocket connection.
+	WebSocketReuses int
 
 	// ContinuationRequests is the number of requests that continued from a
 	// provider response ID instead of sending a full model context.
@@ -261,7 +273,11 @@ type Metrics struct {
 // Add returns the element-wise sum of two transport metric values.
 func (m Metrics) Add(other Metrics) Metrics {
 	return Metrics{
-		Requests: m.Requests + other.Requests,
+		Transport: mergeMetricString(m.Transport, other.Transport),
+		Requests:  m.Requests + other.Requests,
+		WebSocketConnections: m.WebSocketConnections +
+			other.WebSocketConnections,
+		WebSocketReuses: m.WebSocketReuses + other.WebSocketReuses,
 		ContinuationRequests: m.ContinuationRequests +
 			other.ContinuationRequests,
 		ContinuationFallbacks: m.ContinuationFallbacks +
@@ -289,7 +305,11 @@ func (m Metrics) Add(other Metrics) Metrics {
 
 // Empty reports whether metrics contains no provider measurements.
 func (m Metrics) Empty() bool {
-	return m.Requests == 0 && m.ContinuationRequests == 0 &&
+	return m.Transport == "" &&
+		m.Requests == 0 &&
+		m.WebSocketConnections == 0 &&
+		m.WebSocketReuses == 0 &&
+		m.ContinuationRequests == 0 &&
 		m.ContinuationFallbacks == 0 &&
 		m.ContinuationFallbackStatus == 0 &&
 		m.ContinuationFallbackError == "" &&

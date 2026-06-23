@@ -35,8 +35,10 @@ const (
 	// websocketMaxMessageBytes bounds one reassembled server text message.
 	websocketMaxMessageBytes = 8 * 1024 * 1024
 
-	// websocketCacheTTL keeps idle session connections briefly reusable.
-	websocketCacheTTL = 5 * time.Minute
+	// websocketCacheTTL keeps idle session connections reusable across
+	// subagent-heavy turns where the parent may wait for several minutes
+	// before its next model call.
+	websocketCacheTTL = 15 * time.Minute
 )
 
 const (
@@ -105,6 +107,12 @@ func (c *Client) streamResponsesWebSocket(ctx context.Context,
 		return nil, err
 	}
 	requestMetrics.RequestBytes = len(body)
+	requestMetrics.Transport = TransportWebSocket
+	if reused {
+		requestMetrics.WebSocketReuses = 1
+	} else {
+		requestMetrics.WebSocketConnections = 1
+	}
 	if err := lease.conn.WriteText(ctx, body); err != nil {
 		lease.release(false)
 

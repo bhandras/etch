@@ -141,7 +141,10 @@ func TestBuildStatusUsesMetricRequestCounts(t *testing.T) {
 		statusEvent(
 			t, EventModelMetrics, "3", "2",
 			startedAt.Add(2*time.Second), MetricsData{
+				Transport:                  "websocket",
 				Requests:                   2,
+				WebSocketConnections:       1,
+				WebSocketReuses:            1,
 				ContinuationRequests:       1,
 				ContinuationFallbacks:      1,
 				ContinuationFallbackStatus: http.StatusBadRequest,
@@ -177,6 +180,12 @@ func TestBuildStatusUsesMetricRequestCounts(t *testing.T) {
 	) {
 
 		t.Fatalf("missing request counts: %q", text)
+	}
+	if !strings.Contains(text, "- latest transport: websocket") {
+		t.Fatalf("missing transport name: %q", text)
+	}
+	if !strings.Contains(text, "- websocket: 1 connections, 1 reuses") {
+		t.Fatalf("missing websocket counters: %q", text)
 	}
 	if !strings.Contains(
 		text, "- last continuation fallback: HTTP 400, 400 Bad "+

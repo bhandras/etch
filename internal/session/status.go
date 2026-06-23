@@ -272,6 +272,12 @@ func FormatStatus(status Status) string {
 	}
 	if !status.Metrics.Empty() {
 		fmt.Fprintf(&out, "\n\nRecorded Transport\n")
+		if status.Metrics.Transport != "" {
+			fmt.Fprintf(
+				&out, "- latest transport: %s\n",
+				status.Metrics.Transport,
+			)
+		}
 		fmt.Fprintf(
 			&out, "- requests: %s (%s continuation attempts, %s "+
 				"fallbacks)\n",
@@ -283,6 +289,19 @@ func FormatStatus(status Status) string {
 				status.Metrics.ContinuationFallbacks,
 			),
 		)
+		if status.Metrics.WebSocketConnections > 0 ||
+			status.Metrics.WebSocketReuses > 0 {
+
+			fmt.Fprintf(
+				&out, "- websocket: %s connections, %s "+
+					"reuses\n", textutil.FormatCount(
+					status.Metrics.WebSocketConnections,
+				),
+				textutil.FormatCount(
+					status.Metrics.WebSocketReuses,
+				),
+			)
+		}
 		if status.Metrics.ContinuationFallbackError != "" {
 			fmt.Fprintf(
 				&out, "- last continuation fallback: HTTP "+
