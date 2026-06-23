@@ -78,13 +78,13 @@ func TestSystemTextIncludesConfigPromptBeforeProjectFiles(t *testing.T) {
 
 	project, err := LoadProjectContextWithOptions(
 		dir, ProjectContextOptions{
-			SystemPrompt: "prefer go_symbols",
+			SystemPrompt: "prefer go_inspect",
 		},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	configIndex := strings.Index(project.SystemText, "prefer go_symbols")
+	configIndex := strings.Index(project.SystemText, "prefer go_inspect")
 	systemIndex := strings.Index(project.SystemText, "system identity")
 	rulesIndex := strings.Index(project.SystemText, "repo rules")
 	if configIndex < 0 || systemIndex < 0 || rulesIndex < 0 {

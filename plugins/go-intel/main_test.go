@@ -8,11 +8,11 @@ import (
 	"testing"
 )
 
-// TestRunGoSymbolsListsExportedSymbols verifies the empty filter shape returns
+// TestRunGoInspectListsExportedSymbols verifies the empty filter shape returns
 // a compact symbol map while respecting exported-only defaults.
-func TestRunGoSymbolsListsExportedSymbols(t *testing.T) {
+func TestRunGoInspectListsExportedSymbols(t *testing.T) {
 	dir := goFixture(t)
-	text, err := runGoSymbols(json.RawMessage(
+	text, err := runGoInspect(json.RawMessage(
 		`{"paths":[` + jsonQuote(dir) + `],"detail":"none"}`,
 	))
 	if err != nil {
@@ -34,11 +34,11 @@ func TestRunGoSymbolsListsExportedSymbols(t *testing.T) {
 	}
 }
 
-// TestRunGoSymbolsFiltersByFileRegex verifies file regexes replace the old
+// TestRunGoInspectFiltersByFileRegex verifies file regexes replace the old
 // file-specific symbol tool.
-func TestRunGoSymbolsFiltersByFileRegex(t *testing.T) {
+func TestRunGoInspectFiltersByFileRegex(t *testing.T) {
 	dir := goFixture(t)
-	text, err := runGoSymbols(json.RawMessage(
+	text, err := runGoInspect(json.RawMessage(
 		`{"paths":[` + jsonQuote(dir) +
 			`],"file":"extra\\.go$","detail":"none"}`,
 	))
@@ -53,12 +53,12 @@ func TestRunGoSymbolsFiltersByFileRegex(t *testing.T) {
 	}
 }
 
-// TestRunGoSymbolsFiltersByWorkspaceFileRegex verifies file regexes match the
+// TestRunGoInspectFiltersByWorkspaceFileRegex verifies file regexes match the
 // displayed repo-relative path even when paths points at a nested package.
-func TestRunGoSymbolsFiltersByWorkspaceFileRegex(t *testing.T) {
+func TestRunGoInspectFiltersByWorkspaceFileRegex(t *testing.T) {
 	dir := goFixture(t)
 	t.Chdir(dir)
-	text, err := runGoSymbols(json.RawMessage(
+	text, err := runGoInspect(json.RawMessage(
 		`{"paths":["sample"],"file":"sample/extra\\.go$",` +
 			`"detail":"none"}`,
 	))
@@ -73,11 +73,11 @@ func TestRunGoSymbolsFiltersByWorkspaceFileRegex(t *testing.T) {
 	}
 }
 
-// TestRunGoSymbolsFiltersByPackageRegex verifies package regexes can select a
+// TestRunGoInspectFiltersByPackageRegex verifies package regexes can select a
 // package by relative directory.
-func TestRunGoSymbolsFiltersByPackageRegex(t *testing.T) {
+func TestRunGoInspectFiltersByPackageRegex(t *testing.T) {
 	dir := goFixture(t)
-	text, err := runGoSymbols(json.RawMessage(
+	text, err := runGoInspect(json.RawMessage(
 		`{"paths":[` + jsonQuote(dir) +
 			`],"package":"other","detail":"none"}`,
 	))
@@ -92,11 +92,11 @@ func TestRunGoSymbolsFiltersByPackageRegex(t *testing.T) {
 	}
 }
 
-// TestRunGoSymbolsPackageDetailMapsFilesAndSymbols verifies package mode gives
+// TestRunGoInspectPackageDetailMapsFilesAndSymbols verifies package mode gives
 // agents a compact package/file map before broad file reads.
-func TestRunGoSymbolsPackageDetailMapsFilesAndSymbols(t *testing.T) {
+func TestRunGoInspectPackageDetailMapsFilesAndSymbols(t *testing.T) {
 	dir := goFixture(t)
-	text, err := runGoSymbols(json.RawMessage(
+	text, err := runGoInspect(json.RawMessage(
 		`{"paths":[` + jsonQuote(dir) +
 			`],"detail":"package","includeUnexported":true}`,
 	))
@@ -117,13 +117,13 @@ func TestRunGoSymbolsPackageDetailMapsFilesAndSymbols(t *testing.T) {
 	}
 }
 
-// TestRunGoSymbolsSearchesMultiplePaths verifies one call can inspect several
+// TestRunGoInspectSearchesMultiplePaths verifies one call can inspect several
 // roots while keeping result paths unambiguous.
-func TestRunGoSymbolsSearchesMultiplePaths(t *testing.T) {
+func TestRunGoInspectSearchesMultiplePaths(t *testing.T) {
 	dir := goFixture(t)
 	sample := filepath.Join(dir, "sample")
 	other := filepath.Join(dir, "other")
-	text, err := runGoSymbols(json.RawMessage(
+	text, err := runGoInspect(json.RawMessage(
 		`{"paths":[` + jsonQuote(sample) + `,` +
 			jsonQuote(other) +
 			`],"name":"Duplicate","detail":"none","limit":10}`,
@@ -142,11 +142,11 @@ func TestRunGoSymbolsSearchesMultiplePaths(t *testing.T) {
 	}
 }
 
-// TestRunGoSymbolsSummaryReturnsCompactDeclarations verifies summary mode
+// TestRunGoInspectSummaryReturnsCompactDeclarations verifies summary mode
 // returns godoc and compact declarations without function bodies.
-func TestRunGoSymbolsSummaryReturnsCompactDeclarations(t *testing.T) {
+func TestRunGoInspectSummaryReturnsCompactDeclarations(t *testing.T) {
 	dir := goFixture(t)
-	text, err := runGoSymbols(json.RawMessage(
+	text, err := runGoInspect(json.RawMessage(
 		`{"paths":[` + jsonQuote(dir) +
 			`],"name":"^(Widget|NewWidget|NameText)$",` +
 			`"includeUnexported":true}`,
@@ -173,11 +173,11 @@ func TestRunGoSymbolsSummaryReturnsCompactDeclarations(t *testing.T) {
 	}
 }
 
-// TestRunGoSymbolsRendersConstDeclarations verifies const symbols include the
+// TestRunGoInspectRendersConstDeclarations verifies const symbols include the
 // declaration token in both compact and full detail modes.
-func TestRunGoSymbolsRendersConstDeclarations(t *testing.T) {
+func TestRunGoInspectRendersConstDeclarations(t *testing.T) {
 	dir := goFixture(t)
-	summary, err := runGoSymbols(json.RawMessage(
+	summary, err := runGoInspect(json.RawMessage(
 		`{"paths":[` + jsonQuote(dir) +
 			`],"name":"^Answer$","detail":"summary"}`,
 	))
@@ -189,7 +189,7 @@ func TestRunGoSymbolsRendersConstDeclarations(t *testing.T) {
 			summary)
 	}
 
-	full, err := runGoSymbols(json.RawMessage(
+	full, err := runGoInspect(json.RawMessage(
 		`{"paths":[` + jsonQuote(dir) +
 			`],"name":"^Answer$","detail":"full"}`,
 	))
@@ -207,11 +207,11 @@ func TestRunGoSymbolsRendersConstDeclarations(t *testing.T) {
 	}
 }
 
-// TestRunGoSymbolsFullModeIncludesOnlyFullDeclaration verifies full mode uses
+// TestRunGoInspectFullModeIncludesOnlyFullDeclaration verifies full mode uses
 // the source declaration as the only declaration-shaped output.
-func TestRunGoSymbolsFullModeIncludesOnlyFullDeclaration(t *testing.T) {
+func TestRunGoInspectFullModeIncludesOnlyFullDeclaration(t *testing.T) {
 	dir := goFixture(t)
-	text, err := runGoSymbols(json.RawMessage(
+	text, err := runGoInspect(json.RawMessage(
 		`{"paths":[` + jsonQuote(dir) +
 			`],"name":"^NewWidget$","detail":"full"}`,
 	))
@@ -238,11 +238,11 @@ func TestRunGoSymbolsFullModeIncludesOnlyFullDeclaration(t *testing.T) {
 	}
 }
 
-// TestRunGoSymbolsNameRegexIsCaseInsensitive verifies symbol regex matching is
+// TestRunGoInspectNameRegexIsCaseInsensitive verifies symbol regex matching is
 // forgiving without adding a model-facing ignoreCase option.
-func TestRunGoSymbolsNameRegexIsCaseInsensitive(t *testing.T) {
+func TestRunGoInspectNameRegexIsCaseInsensitive(t *testing.T) {
 	dir := goFixture(t)
-	text, err := runGoSymbols(json.RawMessage(
+	text, err := runGoInspect(json.RawMessage(
 		`{"paths":[` + jsonQuote(dir) +
 			`],"name":"^newwidget$","detail":"none"}`,
 	))
@@ -254,11 +254,11 @@ func TestRunGoSymbolsNameRegexIsCaseInsensitive(t *testing.T) {
 	}
 }
 
-// TestRunGoSymbolsIncludesUnexported verifies private helpers stay hidden
+// TestRunGoInspectIncludesUnexported verifies private helpers stay hidden
 // until callers explicitly ask for package internals.
-func TestRunGoSymbolsIncludesUnexported(t *testing.T) {
+func TestRunGoInspectIncludesUnexported(t *testing.T) {
 	dir := goFixture(t)
-	text, err := runGoSymbols(json.RawMessage(
+	text, err := runGoInspect(json.RawMessage(
 		`{"paths":[` + jsonQuote(dir) +
 			`],"name":"hidden","includeUnexported":true,` +
 			`"detail":"none"}`,
@@ -271,11 +271,11 @@ func TestRunGoSymbolsIncludesUnexported(t *testing.T) {
 	}
 }
 
-// TestRunGoSymbolsReportsNoMatches verifies empty result sets are explicit and
+// TestRunGoInspectReportsNoMatches verifies empty result sets are explicit and
 // still include the active filter context.
-func TestRunGoSymbolsReportsNoMatches(t *testing.T) {
+func TestRunGoInspectReportsNoMatches(t *testing.T) {
 	dir := goFixture(t)
-	text, err := runGoSymbols(json.RawMessage(
+	text, err := runGoInspect(json.RawMessage(
 		`{"paths":[` + jsonQuote(dir) +
 			`],"name":"PluginSupervisor"}`,
 	))
@@ -299,10 +299,10 @@ func TestRunGoSymbolsReportsNoMatches(t *testing.T) {
 	}
 }
 
-// TestRunGoSymbolsRejectsInvalidRegex verifies malformed model regexes fail
+// TestRunGoInspectRejectsInvalidRegex verifies malformed model regexes fail
 // before any broad code parsing work.
-func TestRunGoSymbolsRejectsInvalidRegex(t *testing.T) {
-	if _, err := runGoSymbols(
+func TestRunGoInspectRejectsInvalidRegex(t *testing.T) {
+	if _, err := runGoInspect(
 		json.RawMessage(`{"name":"Client("}`),
 	); err == nil {
 
@@ -310,9 +310,9 @@ func TestRunGoSymbolsRejectsInvalidRegex(t *testing.T) {
 	}
 }
 
-// TestRunGoSymbolsRejectsTooManyPaths verifies one call cannot fan out across
+// TestRunGoInspectRejectsTooManyPaths verifies one call cannot fan out across
 // an unbounded number of roots.
-func TestRunGoSymbolsRejectsTooManyPaths(t *testing.T) {
+func TestRunGoInspectRejectsTooManyPaths(t *testing.T) {
 	dir := t.TempDir()
 	paths := make([]string, maxSymbolPaths+1)
 	for i := range paths {
@@ -326,7 +326,7 @@ func TestRunGoSymbolsRejectsTooManyPaths(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := runGoSymbols(raw); err == nil {
+	if _, err := runGoInspect(raw); err == nil {
 		t.Fatal("expected oversized path list to fail")
 	}
 }

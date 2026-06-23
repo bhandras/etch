@@ -384,7 +384,7 @@ max_concurrent = 2
 [[subagents.profile]]
 name = "explore"
 description = "Read-only codebase exploration."
-allowed_tools = ["ls", "read", "find", "grep", "go_symbols"]
+allowed_tools = ["ls", "read", "find", "grep", "go_inspect"]
 max_tool_rounds = 16
 auto_compact = true
 ```
@@ -833,7 +833,7 @@ openai_api = "responses"
 reasoning_effort = "medium"
 reasoning_summary = "auto"
 system_prompt_file = ".harness/subagents/review.md"
-allowed_tools = ["ls", "read", "find", "grep", "go_symbols"]
+allowed_tools = ["ls", "read", "find", "grep", "go_inspect"]
 max_tool_rounds = 20
 auto_compact = true
 auto_compact_threshold_tokens = 80000
@@ -968,7 +968,7 @@ Plugin tool names must be provider-compatible identifiers matching
 optional `parallelSafety` field may be `serial`, `read_only`, or
 `parallel_safe`; omitted values default to serial barriers. This keeps unknown
 plugin behavior conservative while allowing read-only tools such as
-`go_symbols` to overlap other safe calls. One plugin process still serializes
+`go_inspect` to overlap other safe calls. One plugin process still serializes
 its own request/response loop in this protocol version. The scheduler therefore
 places calls backed by the same plugin process into a shared execution lane:
 they may appear in an otherwise parallel-safe batch, but they do not enter the
@@ -1000,22 +1000,27 @@ It is its own Go module, imports `harness/sdk`, and exposes two tools:
 The repository also carries a Go intelligence plugin under `plugins/go-intel`.
 It is deliberately a plugin rather than core behavior. The plugin uses only the
 Go standard library parser packages plus `harness/sdk` to expose one
-model-facing `go_symbols` tool. The tool accepts `paths` plus optional
-case-insensitive Go regular expressions for `package`, `file`, and `name`.
-Omitted filters match everything, and all provided filters must match. The
-`file` filter matches displayed repo-relative paths, root-relative paths, and
-raw paths so callers can search with labels such as `internal/plugins/client.go`
-even when `paths` points at `internal/plugins`. Methods are named
-`Receiver.Method`, so a caller can ask for `^Client\\.` to inspect a type's
-method surface or `^Client\\.call$` to fetch one implementation.
+model-facing `go_inspect` tool. The name is intentionally source-oriented: the
+tool can map Go packages and symbols, but it can also read selected Go source
+declarations directly. It accepts `paths` plus optional case-insensitive Go
+regular expressions for `package`, `file`, and `name`. Omitted filters match
+everything, and all provided filters must match. The `file` filter matches
+displayed repo-relative paths, root-relative paths, and raw paths so callers can
+search with labels such as `internal/plugins/client.go` even when `paths`
+points at `internal/plugins`. Methods are named `Receiver.Method`, so a caller
+can ask for `^Client\\.` to inspect a type's method surface or
+`^Client\\.call$` to fetch one implementation.
 
-`go_symbols` has four detail levels. `package` returns package/file/symbol maps
+`go_inspect` has four detail levels. `package` returns package/file/symbol maps
 and is the preferred first pass for broad package exploration. `none` returns
 compact symbol rows for file or symbol maps. `summary` is the default and
 returns metadata, godoc, and compact declarations such as function signatures
 or `type T struct { ... }`; callers should use it after narrowing with `file`
-or `name`. `full` returns source declarations with line numbers and should be
-used only for exact implementations where bodies are necessary. Zero-result
+or `name`. `full` returns the actual Go source declaration with line numbers;
+for functions and methods this includes the complete body. Once a caller knows
+the package, file, or symbol it needs, `detail:"full"` should usually replace a
+separate `read` call. The generic `read` tool remains useful for non-Go files,
+large surrounding ranges, or context outside a declaration. Zero-result
 responses include parsed symbol counts, sample file labels, sample symbol names,
 and a hint about the file-path matching rules so a model can repair an
 over-specific query without falling back to broad reads. This single-tool shape

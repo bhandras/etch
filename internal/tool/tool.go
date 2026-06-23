@@ -419,7 +419,7 @@ func (readTool) Spec() model.ToolSpec {
 			"offset and limit for large files. When you already know " +
 			"multiple relevant files or ranges, pass files=[...] in " +
 			"one call instead of making repeated read calls. Prefer " +
-			"grep/find/go symbol tools to locate relevant ranges " +
+			"grep/find/go_inspect tools to locate relevant ranges " +
 			"before reading broad files, and do not reread the same " +
 			"range.",
 		Parameters: json.RawMessage(`{

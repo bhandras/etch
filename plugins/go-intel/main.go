@@ -21,8 +21,8 @@ import (
 )
 
 const (
-	// toolGoSymbols finds and renders Go symbols from one compact schema.
-	toolGoSymbols = "go_symbols"
+	// toolGoInspect inspects Go source through one compact schema.
+	toolGoInspect = "go_inspect"
 
 	// defaultSymbolLimit bounds symbol output when no caller limit is
 	// supplied.
@@ -50,7 +50,7 @@ const (
 	detailFull = "full"
 )
 
-// symbolsArgs stores the single model-facing Go symbol query.
+// symbolsArgs stores the single model-facing Go source inspection query.
 type symbolsArgs struct {
 	// Paths are Go files or directories to inspect. Empty means current
 	// directory.
@@ -113,7 +113,7 @@ type symbolRegex struct {
 	compiled *regexp.Regexp
 }
 
-// symbolFilters stores compiled filters for one go_symbols call.
+// symbolFilters stores compiled filters for one go_inspect call.
 type symbolFilters struct {
 	packageRegex symbolRegex
 	fileRegex    symbolRegex
@@ -126,7 +126,7 @@ func main() {
 	if err := sdk.ServePlugin(sdk.Plugin{
 		Name: "go-intel",
 		Tools: []sdk.Tool{
-			goSymbolsSpec(),
+			goInspectSpec(),
 		},
 	}); err != nil {
 
@@ -134,17 +134,18 @@ func main() {
 	}
 }
 
-// goSymbolsSpec returns the schema for the single Go symbol search tool.
-func goSymbolsSpec() sdk.Tool {
+// goInspectSpec returns the schema for the single Go source inspection tool.
+func goInspectSpec() sdk.Tool {
 	return sdk.Tool{
-		Name: toolGoSymbols,
-		Description: "Find Go symbols with case-insensitive Go regex " +
-			"filters over package, file, and symbol name. Omit a " +
-			"filter to match everything. Methods are named " +
-			"Receiver.Method. Use detail=package first for package " +
-			"and file maps, none for compact symbol rows, summary " +
-			"after narrowing by file or name, and full only for " +
-			"exact implementations that need source bodies.",
+		Name: toolGoInspect,
+		Description: "Inspect Go packages, files, symbols, and source " +
+			"declarations with case-insensitive Go regex filters " +
+			"over package, file, and symbol name. Omit a filter to " +
+			"match everything. Methods are named Receiver.Method. " +
+			"Use detail=package or none to map code, summary after " +
+			"narrowing, and full to read actual Go source " +
+			"declarations, including function bodies, without a " +
+			"separate read call.",
 		ParallelSafety: sdk.ParallelSafetyReadOnly,
 		Parameters: map[string]any{
 			"type": "object",
@@ -194,8 +195,12 @@ func goSymbolsSpec() sdk.Tool {
 						"Defaults to summary. For " +
 						"broad maps use package or " +
 						"none; use summary only " +
-						"after narrowing; use full " +
-						"for exact implementations.",
+						"after narrowing. Use full " +
+						"to read matching Go " +
+						"source declarations " +
+						"directly; for functions " +
+						"and methods this includes " +
+						"the complete body.",
 				),
 				"limit": integerSchema(
 					"Maximum symbols to render. " +
@@ -206,7 +211,7 @@ func goSymbolsSpec() sdk.Tool {
 				),
 			},
 		},
-		Handler: handleGoSymbols,
+		Handler: handleGoInspect,
 	}
 }
 
@@ -236,14 +241,14 @@ func integerSchema(description string) map[string]any {
 	return map[string]any{"type": "integer", "description": description}
 }
 
-// handleGoSymbols executes go_symbols through the SDK handler.
-func handleGoSymbols(ctx context.Context,
+// handleGoInspect executes go_inspect through the SDK handler.
+func handleGoInspect(ctx context.Context,
 	call sdk.ToolCall) (sdk.ToolResult, error) {
 
 	if err := ctx.Err(); err != nil {
 		return sdk.ToolResult{}, err
 	}
-	text, err := runGoSymbols(call.Arguments)
+	text, err := runGoInspect(call.Arguments)
 	if err != nil {
 		return sdk.ToolResult{}, err
 	}
@@ -251,8 +256,8 @@ func handleGoSymbols(ctx context.Context,
 	return sdk.TextResult(text), nil
 }
 
-// runGoSymbols finds and renders Go symbols matching regex filters.
-func runGoSymbols(raw json.RawMessage) (string, error) {
+// runGoInspect finds and renders Go source declarations matching regex filters.
+func runGoInspect(raw json.RawMessage) (string, error) {
 	var args symbolsArgs
 	if err := decodeArguments(raw, &args); err != nil {
 		return "", err

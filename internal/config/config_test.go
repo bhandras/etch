@@ -25,7 +25,7 @@ keep_recent_tokens = 500
 
 [prompt]
 system_prompt = '''
-Prefer go_symbols for Go code.
+Prefer go_inspect for Go code.
 '''
 
 [provider]
@@ -76,7 +76,7 @@ disabled = true
 
 		t.Fatalf("unexpected context config: %#v", cfg.Context)
 	}
-	if cfg.Prompt.SystemPrompt != "Prefer go_symbols for Go code.\n" {
+	if cfg.Prompt.SystemPrompt != "Prefer go_inspect for Go code.\n" {
 		t.Fatalf("unexpected prompt config: %#v", cfg.Prompt)
 	}
 	if cfg.Provider.Name != "openai" || cfg.Provider.Model != "gpt-5.5" {

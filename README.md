@@ -302,13 +302,16 @@ go run ./cmd/harness tool project_files --args '{"path":".","limit":200}'
 The repository also includes a standard-library-only Go intelligence plugin at
 `plugins/go-intel`. It is intentionally a plugin, not core harness behavior. It
 uses `go/parser`, `go/ast`, and `go/token` to expose one model-facing
-`go_symbols` tool. The tool searches package paths, displayed repo-relative
+`go_inspect` tool. The tool searches package paths, displayed repo-relative
 file paths, root-relative file paths, and symbol names with case-insensitive Go
-regular expressions, then returns either compact symbol rows, summary
-declarations, package maps, or full source declarations. Use
+regular expressions, then returns either package maps, compact symbol rows,
+summary declarations, or full source declarations. `go_inspect` is also the
+preferred Go source reader once a caller can narrow by package, file, or symbol:
+`detail:"full"` returns the actual Go source declaration, including complete
+function and method bodies, without a separate `read` call. Use
 `detail:"package"` or `detail:"none"` first for broad maps, `summary` after
-narrowing by file or name, and `full` only for exact implementations that need
-source bodies:
+narrowing by file or name, and `full` for exact declarations that need source
+bodies:
 
 ```toml
 [[plugins]]
@@ -318,12 +321,12 @@ timeout_seconds = 30
 ```
 
 ```bash
-go run ./cmd/harness tool go_symbols --args '{"paths":["internal/session"],"detail":"none"}'
-go run ./cmd/harness tool go_symbols --args '{"paths":["internal/session"],"detail":"package","includeUnexported":true}'
-go run ./cmd/harness tool go_symbols --args '{"paths":["internal/session"],"file":"internal/session/store\\.go$","detail":"none"}'
-go run ./cmd/harness tool go_symbols --args '{"paths":["internal/session"],"name":"^Store\\.","includeUnexported":true}'
-go run ./cmd/harness tool go_symbols --args '{"paths":["cmd/harness","internal/config"],"package":"config|main","name":"plugin","includeUnexported":true}'
-go run ./cmd/harness tool go_symbols --args '{"paths":["internal/session"],"name":"^Store\\.Append$","includeUnexported":true,"detail":"full"}'
+go run ./cmd/harness tool go_inspect --args '{"paths":["internal/session"],"detail":"none"}'
+go run ./cmd/harness tool go_inspect --args '{"paths":["internal/session"],"detail":"package","includeUnexported":true}'
+go run ./cmd/harness tool go_inspect --args '{"paths":["internal/session"],"file":"internal/session/store\\.go$","detail":"none"}'
+go run ./cmd/harness tool go_inspect --args '{"paths":["internal/session"],"name":"^Store\\.","includeUnexported":true}'
+go run ./cmd/harness tool go_inspect --args '{"paths":["cmd/harness","internal/config"],"package":"config|main","name":"plugin","includeUnexported":true}'
+go run ./cmd/harness tool go_inspect --args '{"paths":["internal/session"],"name":"^Store\\.Append$","includeUnexported":true,"detail":"full"}'
 ```
 
 ## Subagents
@@ -347,7 +350,7 @@ max_concurrent = 2
 name = "explore"
 description = "Read-only exploration for finding relevant files and likely causes."
 system_prompt = "Explore independently and return concise findings for the parent."
-allowed_tools = ["ls", "read", "find", "grep", "go_symbols"]
+allowed_tools = ["ls", "read", "find", "grep", "go_inspect"]
 max_tool_rounds = 16
 auto_compact = true
 ```
