@@ -54,7 +54,9 @@ func openChatRuntime(cfg cliConfig) (*chatRuntime, error) {
 	if err != nil {
 		return nil, err
 	}
-	projectContext, err := promptctx.LoadProjectContext(cwd)
+	projectContext, err := promptctx.LoadProjectContextWithOptions(
+		cwd, projectContextOptions(cfg),
+	)
 	if err != nil {
 		return nil, err
 	}

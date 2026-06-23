@@ -175,6 +175,32 @@ func schemaTables() map[string]tableSchema {
 			},
 		},
 	})
+	addSchemaTable(tables, "prompt", tableNormal, nil, []configField{
+		{
+			key:  "system_prompt",
+			kind: valueString,
+			description: "Inline project-level prompt text appended " +
+				"after the compiled base prompt and before " +
+				"SYSTEM.md/AGENTS.md files.",
+			apply: func(target *assignmentTarget,
+				value parsedValue) {
+
+				target.cfg.Prompt.SystemPrompt = value.text
+			},
+		},
+		{
+			key:  "system_prompt_file",
+			kind: valueString,
+			description: "Path to project-level prompt text appended " +
+				"after the compiled base prompt and before " +
+				"SYSTEM.md/AGENTS.md files.",
+			apply: func(target *assignmentTarget,
+				value parsedValue) {
+
+				target.cfg.Prompt.SystemPromptFile = value.text
+			},
+		},
+	})
 	addSchemaTable(tables, "provider", tableNormal, nil, []configField{
 		{
 			key:         "name",

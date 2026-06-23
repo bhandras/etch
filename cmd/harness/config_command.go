@@ -113,6 +113,17 @@ func formatEffectiveConfig(cfg harnessconfig.Config) string {
 		cfg.Context.KeepRecentTokens,
 	)
 	fmt.Fprintln(&out)
+	fmt.Fprintln(&out, "Prompt")
+	writeEffectiveString(
+		&out, "system prompt", defaults.promptConfig.SystemPrompt,
+		cfg.Prompt.SystemPrompt,
+	)
+	writeEffectiveString(
+		&out, "system prompt file",
+		defaults.promptConfig.SystemPromptFile,
+		cfg.Prompt.SystemPromptFile,
+	)
+	fmt.Fprintln(&out)
 	fmt.Fprintln(&out, "Provider")
 	writeEffectiveString(&out, "name", defaults.provider, cfg.Provider.Name)
 	writeEffectiveString(&out, "model", defaults.model, cfg.Provider.Model)
@@ -200,6 +211,16 @@ func writeRawConfigSections(out *strings.Builder, cfg harnessconfig.Config) {
 	fmt.Fprintf(
 		out, "- keep recent tokens: %s\n",
 		displayInt(cfg.Context.KeepRecentTokens),
+	)
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "Prompt")
+	fmt.Fprintf(
+		out, "- system prompt: %s\n",
+		displayString(cfg.Prompt.SystemPrompt),
+	)
+	fmt.Fprintf(
+		out, "- system prompt file: %s\n",
+		displayString(cfg.Prompt.SystemPromptFile),
 	)
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "Provider")

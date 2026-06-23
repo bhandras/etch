@@ -46,6 +46,20 @@ type ProjectContext struct {
 	Skills []Skill
 }
 
+// ProjectContextOptions supplies config-derived prompt extensions without
+// coupling prompt loading to the config package.
+type ProjectContextOptions struct {
+	// ConfigPath is the loaded TOML config path used to resolve relative
+	// config prompt files.
+	ConfigPath string
+
+	// SystemPrompt is inline project-level prompt text from config.
+	SystemPrompt string
+
+	// SystemPromptFile is a path to project-level prompt text from config.
+	SystemPromptFile string
+}
+
 // SystemText returns base instructions plus discovered project instructions.
 func SystemText(cwd string) (string, error) {
 	project, err := LoadProjectContext(cwd)
@@ -58,6 +72,18 @@ func SystemText(cwd string) (string, error) {
 
 // LoadProjectContext returns pinned instructions and summarized skills.
 func LoadProjectContext(cwd string) (ProjectContext, error) {
+	return LoadProjectContextWithOptions(cwd, ProjectContextOptions{})
+}
+
+// LoadProjectContextWithOptions returns pinned instructions, config prompt
+// extensions, and summarized skills.
+func LoadProjectContextWithOptions(cwd string,
+	opts ProjectContextOptions) (ProjectContext, error) {
+
+	configPrompt, configPromptPath, err := loadConfigPrompt(cwd, opts)
+	if err != nil {
+		return ProjectContext{}, err
+	}
 	systemFiles, err := LoadSystemFiles(cwd)
 	if err != nil {
 		return ProjectContext{}, err
@@ -73,6 +99,16 @@ func LoadProjectContext(cwd string) (ProjectContext, error) {
 
 	var out strings.Builder
 	out.WriteString(BaseSystemPrompt)
+	if strings.TrimSpace(configPrompt) != "" {
+		out.WriteString("\n\nProject prompt from ")
+		if configPromptPath != "" {
+			out.WriteString(configPromptPath)
+		} else {
+			out.WriteString("config")
+		}
+		out.WriteString(":\n")
+		out.WriteString(strings.TrimRight(configPrompt, "\n"))
+	}
 	for _, file := range systemFiles {
 		out.WriteString("\n\nProject system prompt from ")
 		out.WriteString(file.Path)
@@ -93,6 +129,58 @@ func LoadProjectContext(cwd string) (ProjectContext, error) {
 		InstructionFiles: append([]InstructionFile{}, files...),
 		Skills:           append([]Skill{}, skills...),
 	}, nil
+}
+
+// loadConfigPrompt reads inline or file-backed prompt text from options.
+func loadConfigPrompt(cwd string, opts ProjectContextOptions) (string, string,
+	error) {
+
+	if strings.TrimSpace(opts.SystemPrompt) != "" &&
+		strings.TrimSpace(opts.SystemPromptFile) != "" {
+		return "", "", fmt.Errorf("project prompt must set only one " +
+			"of system_prompt or system_prompt_file")
+	}
+	if strings.TrimSpace(opts.SystemPromptFile) == "" {
+		return opts.SystemPrompt, "", nil
+	}
+	path, err := resolveConfigPromptPath(
+		cwd, opts.ConfigPath, opts.SystemPromptFile,
+	)
+	if err != nil {
+		return "", "", err
+	}
+	// #nosec G304 -- project prompt files are explicit user config.
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return "", "", fmt.Errorf("read project prompt %s: %w", path,
+			err)
+	}
+
+	return string(content), path, nil
+}
+
+// resolveConfigPromptPath resolves prompt paths like other config-local file
+// references: absolute paths stay absolute, ~ expands to home, relative paths
+// are anchored to the config file directory when available.
+func resolveConfigPromptPath(cwd string, configPath string,
+	path string) (string, error) {
+
+	if strings.HasPrefix(path, "~") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("resolve home directory: %w", err)
+		}
+		path = filepath.Join(home, strings.TrimPrefix(path, "~"))
+	}
+	if filepath.IsAbs(path) {
+		return path, nil
+	}
+	base := cwd
+	if configPath != "" {
+		base = filepath.Dir(configPath)
+	}
+
+	return filepath.Join(base, path), nil
 }
 
 // appendSkillCatalog adds compact skill metadata without full skill bodies.

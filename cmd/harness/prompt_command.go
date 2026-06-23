@@ -29,7 +29,9 @@ func runPrompt(cfg cliConfig, stdout io.Writer, stderr io.Writer) int {
 
 		return 1
 	}
-	projectContext, err := promptctx.LoadProjectContext(cwd)
+	projectContext, err := promptctx.LoadProjectContextWithOptions(
+		cwd, projectContextOptions(cfg),
+	)
 	if err != nil {
 		fmt.Fprintln(stderr, "error:", err)
 

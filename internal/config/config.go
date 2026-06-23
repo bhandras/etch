@@ -35,6 +35,9 @@ type Config struct {
 	// Context stores defaults for prompt context management.
 	Context ContextConfig
 
+	// Prompt stores project-level system prompt extensions.
+	Prompt PromptConfig
+
 	// Hooks stores configured external process hooks in file order.
 	Hooks []HookConfig
 
@@ -71,6 +74,17 @@ type ContextConfig struct {
 	// KeepRecentTokens is the approximate amount of recent raw context to
 	// retain after compaction.
 	KeepRecentTokens int
+}
+
+// PromptConfig stores project-level model instruction extensions.
+type PromptConfig struct {
+	// SystemPrompt stores inline prompt text appended after the compiled
+	// base prompt and before SYSTEM.md/AGENTS.md files.
+	SystemPrompt string
+
+	// SystemPromptFile stores a path to prompt text appended after the
+	// compiled base prompt and before SYSTEM.md/AGENTS.md files.
+	SystemPromptFile string
 }
 
 // ProviderConfig stores provider defaults shared across provider backends.

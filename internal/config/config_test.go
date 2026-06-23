@@ -23,6 +23,11 @@ auto_compact = true
 auto_compact_threshold_tokens = 1000
 keep_recent_tokens = 500
 
+[prompt]
+system_prompt = '''
+Prefer go_symbols for Go code.
+'''
+
 [provider]
 name = "openai"
 model = "gpt-5.5"
@@ -70,6 +75,9 @@ disabled = true
 		cfg.Context.KeepRecentTokens != 500 {
 
 		t.Fatalf("unexpected context config: %#v", cfg.Context)
+	}
+	if cfg.Prompt.SystemPrompt != "Prefer go_symbols for Go code.\n" {
+		t.Fatalf("unexpected prompt config: %#v", cfg.Prompt)
 	}
 	if cfg.Provider.Name != "openai" || cfg.Provider.Model != "gpt-5.5" {
 		t.Fatalf("unexpected provider config: %#v", cfg.Provider)
@@ -432,6 +440,23 @@ env = ["OPEN AI KEY"]
 	}
 }
 
+// TestParseRejectsPromptTextAndFile verifies project prompt config has one
+// source of truth.
+func TestParseRejectsPromptTextAndFile(t *testing.T) {
+	_, err := Parse(`
+[prompt]
+system_prompt = "inline"
+system_prompt_file = ".harness/SYSTEM.md"
+`)
+	if err == nil || !strings.Contains(
+		err.Error(),
+		"prompt must set only one",
+	) {
+
+		t.Fatalf("expected prompt source conflict, got %v", err)
+	}
+}
+
 // TestSampleConfigDocumentsSupportedKeys verifies CI fails when a config field
 // is not represented in the sample configuration file.
 func TestSampleConfigDocumentsSupportedKeys(t *testing.T) {
@@ -499,9 +524,19 @@ func documentedSampleConfigKeys(text string) (map[sampleConfigKey]bool,
 	var materialized strings.Builder
 	var table string
 	arrayTable := false
+	inMultilineString := false
 	for _, raw := range strings.Split(text, "\n") {
 		line := uncommentSampleConfigLine(raw)
 		if line == "" {
+			continue
+		}
+		if inMultilineString {
+			materialized.WriteString(line)
+			materialized.WriteByte('\n')
+			if sampleConfigLineEndsMultilineString(line) {
+				inMultilineString = false
+			}
+
 			continue
 		}
 
@@ -528,6 +563,9 @@ func documentedSampleConfigKeys(text string) (map[sampleConfigKey]bool,
 		documented[sampleConfigKey{Table: group, Key: key}] = true
 		materialized.WriteString(line)
 		materialized.WriteByte('\n')
+		if sampleConfigLineStartsMultilineString(line) {
+			inMultilineString = true
+		}
 	}
 
 	return documented, materialized.String()
@@ -542,6 +580,24 @@ func uncommentSampleConfigLine(line string) string {
 	}
 
 	return line
+}
+
+// sampleConfigLineStartsMultilineString reports whether a materialized sample
+// key opens a TOML multiline string that continues onto later sample lines.
+func sampleConfigLineStartsMultilineString(line string) bool {
+	return sampleConfigTripleQuoteCount(line)%2 == 1
+}
+
+// sampleConfigLineEndsMultilineString reports whether a materialized sample
+// line closes the current TOML multiline string.
+func sampleConfigLineEndsMultilineString(line string) bool {
+	return sampleConfigTripleQuoteCount(line)%2 == 1
+}
+
+// sampleConfigTripleQuoteCount counts TOML multiline string delimiters used by
+// the sample file.
+func sampleConfigTripleQuoteCount(line string) int {
+	return strings.Count(line, "'''") + strings.Count(line, "\"\"\"")
 }
 
 // sampleConfigTable returns the table name and array-table flag from a TOML
@@ -585,7 +641,7 @@ func sampleConfigTableIsMaterialized(table string, arrayTable bool) bool {
 func sampleConfigKeyGroup(table string, arrayTable bool) (string, bool) {
 	switch {
 	case table == "session" || table == "context" ||
-		table == "provider" || table == "openai":
+		table == "prompt" || table == "provider" || table == "openai":
 		return table, true
 
 	case table == "plugins":

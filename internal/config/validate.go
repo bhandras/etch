@@ -103,6 +103,14 @@ func Validate(cfg Config) error {
 			),
 		)
 	}
+	if strings.TrimSpace(cfg.Prompt.SystemPrompt) != "" &&
+		strings.TrimSpace(cfg.Prompt.SystemPromptFile) != "" {
+
+		errors = append(
+			errors, "prompt must set only one of system_prompt "+
+				"or system_prompt_file",
+		)
+	}
 	errors = append(errors, validateHooks(cfg.Hooks)...)
 	errors = append(errors, validatePlugins(cfg.Plugins)...)
 	errors = append(errors, validateSubagents(cfg)...)

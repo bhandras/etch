@@ -483,6 +483,7 @@ Harness builds prompt context in layers:
 
 ```text
 base system prompt
+project prompt from .harness/config.toml, when configured
 SYSTEM.md files, parent directory before child directory
 AGENTS.md files, parent directory before child directory
 compact skill catalog
@@ -490,10 +491,12 @@ latest compacted session summary, when present
 recent raw session messages
 ```
 
-Use `SYSTEM.md` for project-specific agent identity and durable behavior. Use
+Use `[prompt]` in `.harness/config.toml` for project/operator prompt policy
+that belongs next to provider, tool, plugin, and subagent configuration. Use
+`SYSTEM.md` for project-specific agent identity and durable behavior. Use
 `AGENTS.md` for repository workflow, coding, documentation, verification, and
-commit-message rules. Both files are pinned ahead of compacted conversation
-history and capped at 32KB per file.
+commit-message rules. These layers are pinned ahead of compacted conversation
+history, and instruction files are capped at 32KB per file.
 
 Manual compaction is available through `/compact` and `harness compact`.
 Automatic compaction can be enabled in `.harness/config.toml`:

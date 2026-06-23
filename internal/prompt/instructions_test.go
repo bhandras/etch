@@ -69,6 +69,55 @@ func TestSystemTextLoadsSystemFilesBeforeInstructions(t *testing.T) {
 	}
 }
 
+// TestSystemTextIncludesConfigPromptBeforeProjectFiles verifies config prompt
+// text extends the base prompt before SYSTEM.md and AGENTS.md layers.
+func TestSystemTextIncludesConfigPromptBeforeProjectFiles(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "SYSTEM.md"), "system identity\n")
+	writeFile(t, filepath.Join(dir, "AGENTS.md"), "repo rules\n")
+
+	project, err := LoadProjectContextWithOptions(
+		dir, ProjectContextOptions{
+			SystemPrompt: "prefer go_symbols",
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	configIndex := strings.Index(project.SystemText, "prefer go_symbols")
+	systemIndex := strings.Index(project.SystemText, "system identity")
+	rulesIndex := strings.Index(project.SystemText, "repo rules")
+	if configIndex < 0 || systemIndex < 0 || rulesIndex < 0 {
+		t.Fatalf("missing prompt layer: %q", project.SystemText)
+	}
+	if configIndex >= systemIndex || systemIndex >= rulesIndex {
+		t.Fatalf("prompt layers out of order: %q", project.SystemText)
+	}
+}
+
+// TestSystemTextLoadsConfigPromptFile verifies config prompt files resolve
+// relative to the config file location.
+func TestSystemTextLoadsConfigPromptFile(t *testing.T) {
+	root := t.TempDir()
+	configDir := filepath.Join(root, ".harness")
+	writeFile(t, filepath.Join(configDir, "agent-policy.md"), "use tools\n")
+
+	project, err := LoadProjectContextWithOptions(
+		root, ProjectContextOptions{
+			ConfigPath: filepath.Join(
+				configDir, "config.toml",
+			),
+			SystemPromptFile: "agent-policy.md",
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(project.SystemText, "use tools") {
+		t.Fatalf("missing config prompt file: %q", project.SystemText)
+	}
+}
+
 // TestLoadInstructionFilesTruncatesLargeFiles verifies that large instruction
 // files cannot dominate the first prompt context.
 func TestLoadInstructionFilesTruncatesLargeFiles(t *testing.T) {

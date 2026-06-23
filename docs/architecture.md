@@ -484,15 +484,18 @@ the active session messages and instruction files into provider-neutral model
 messages.
 
 The first context builder is deliberately small. It prepends a base coding-agent
-system prompt with tool-use guidance, then loads `SYSTEM.md` and `AGENTS.md`
-files from the current working directory and its ancestors. Parent files appear
-before child files so more local files can refine broader rules. `SYSTEM.md`
-extends the agent's project-specific identity and durable behavior, while
-`AGENTS.md` carries repository workflow, coding, documentation, and verification
-instructions. Each file is capped at 32KB to keep project guidance from
-dominating the first context implementation. These files are pinned context:
-they are prepended before any compacted conversation summary and are not removed
-by session compaction.
+system prompt with Harness invariants and broad tool-use guidance, then appends
+optional `[prompt]` text from `.harness/config.toml`, then loads `SYSTEM.md` and
+`AGENTS.md` files from the current working directory and its ancestors. Parent
+files appear before child files so more local files can refine broader rules.
+Config prompt text is for operator or project policy that belongs next to
+provider, tool, plugin, and subagent configuration. `SYSTEM.md` extends the
+agent's project-specific identity and durable behavior, while `AGENTS.md`
+carries repository workflow, coding, documentation, and verification
+instructions. Each instruction file is capped at 32KB to keep project guidance
+from dominating the first context implementation. These files are pinned
+context: they are prepended before any compacted conversation summary and are
+not removed by session compaction.
 
 Skill packages follow the Agent Skills `SKILL.md` convention and are discovered
 as metadata, not eagerly loaded as full prompt text. The first supported project

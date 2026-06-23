@@ -236,7 +236,9 @@ func printContextStats(path string, cfg cliConfig, stdout io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("get working directory: %w", err)
 	}
-	projectContext, err := promptctx.LoadProjectContext(cwd)
+	projectContext, err := promptctx.LoadProjectContextWithOptions(
+		cwd, projectContextOptions(cfg),
+	)
 	if err != nil {
 		return err
 	}

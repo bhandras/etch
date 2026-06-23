@@ -361,7 +361,9 @@ func (t *taskTool) childConfig(
 func (t *taskTool) childSystemText(
 	profile harnessconfig.SubagentProfileConfig) (string, error) {
 
-	projectContext, err := promptctx.LoadProjectContext(t.cwd)
+	projectContext, err := promptctx.LoadProjectContextWithOptions(
+		t.cwd, projectContextOptions(t.cfg),
+	)
 	if err != nil {
 		return "", err
 	}

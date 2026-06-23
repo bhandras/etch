@@ -103,6 +103,7 @@ type cliConfig struct {
 	configEffective     bool
 	hooks               []harnessconfig.HookConfig
 	plugins             []harnessconfig.PluginConfig
+	promptConfig        harnessconfig.PromptConfig
 	subagents           harnessconfig.SubagentConfig
 	configPath          string
 }
