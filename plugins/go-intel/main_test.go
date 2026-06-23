@@ -8,22 +8,22 @@ import (
 	"testing"
 )
 
-// TestRunGoListSymbolsListsExportedSymbols verifies recursive symbol listing
-// discovers top-level exported declarations from a fixture package.
-func TestRunGoListSymbolsListsExportedSymbols(t *testing.T) {
+// TestRunGoSymbolsListsExportedSymbols verifies the empty filter shape returns
+// a compact symbol map while respecting exported-only defaults.
+func TestRunGoSymbolsListsExportedSymbols(t *testing.T) {
 	dir := goFixture(t)
-	text, err := runGoListSymbols(json.RawMessage(
-		`{"path":` + jsonQuote(dir) + `,"groupBy":"package"}`,
+	text, err := runGoSymbols(json.RawMessage(
+		`{"paths":[` + jsonQuote(dir) + `],"detail":"none"}`,
 	))
 	if err != nil {
 		t.Fatalf("list go symbols: %v", err)
 	}
 	for _, want := range []string{
-		"package sample",
-		"struct Widget",
-		"func NewWidget",
-		"method Widget.Name",
-		"const Answer",
+		"filters: none",
+		"struct Widget sample/sample.go:7-9",
+		"func NewWidget sample/sample.go:12-14",
+		"method Widget.NameText sample/sample.go:17-19",
+		"const Answer sample/sample.go:4",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("missing %q in output:\n%s", want, text)
@@ -34,18 +34,18 @@ func TestRunGoListSymbolsListsExportedSymbols(t *testing.T) {
 	}
 }
 
-// TestRunGoFileSymbolsListsOneFile verifies file-scoped listings exclude
-// symbols from sibling files.
-func TestRunGoFileSymbolsListsOneFile(t *testing.T) {
+// TestRunGoSymbolsFiltersByFileRegex verifies file regexes replace the old
+// file-specific symbol tool.
+func TestRunGoSymbolsFiltersByFileRegex(t *testing.T) {
 	dir := goFixture(t)
-	path := filepath.Join(dir, "sample", "extra.go")
-	text, err := runGoFileSymbols(json.RawMessage(
-		`{"path":` + jsonQuote(path) + `}`,
+	text, err := runGoSymbols(json.RawMessage(
+		`{"paths":[` + jsonQuote(dir) +
+			`],"file":"extra\\.go$","detail":"none"}`,
 	))
 	if err != nil {
-		t.Fatalf("list file symbols: %v", err)
+		t.Fatalf("filter go symbols by file: %v", err)
 	}
-	if !strings.Contains(text, "func Extra") {
+	if !strings.Contains(text, "func Extra sample/extra.go:4") {
 		t.Fatalf("missing Extra in output:\n%s", text)
 	}
 	if strings.Contains(text, "Widget") {
@@ -53,170 +53,112 @@ func TestRunGoFileSymbolsListsOneFile(t *testing.T) {
 	}
 }
 
-// TestRunGoSearchSymbolsFindsNameMatches verifies substring search finds
-// symbols by exact and partial names before callers know the precise lookup.
-func TestRunGoSearchSymbolsFindsNameMatches(t *testing.T) {
+// TestRunGoSymbolsFiltersByWorkspaceFileRegex verifies file regexes match the
+// displayed repo-relative path even when paths points at a nested package.
+func TestRunGoSymbolsFiltersByWorkspaceFileRegex(t *testing.T) {
 	dir := goFixture(t)
-	text, err := runGoSearchSymbols(json.RawMessage(
-		`{"path":` + jsonQuote(dir) + `,"query":"NameText"}`,
+	t.Chdir(dir)
+	text, err := runGoSymbols(json.RawMessage(
+		`{"paths":["sample"],"file":"sample/extra\\.go$",` +
+			`"detail":"none"}`,
 	))
 	if err != nil {
-		t.Fatalf("search go symbols: %v", err)
+		t.Fatalf("filter go symbols by workspace file: %v", err)
 	}
-	for _, want := range []string{
-		"query: NameText",
-		"symbols: 1",
-		"method Widget.NameText sample/sample.go:17",
-	} {
-		if !strings.Contains(text, want) {
-			t.Fatalf("missing %q in output:\n%s", want, text)
-		}
+	if !strings.Contains(text, "func Extra sample/extra.go:4") {
+		t.Fatalf("missing Extra in output:\n%s", text)
+	}
+	if strings.Contains(text, "sample/sample.go") {
+		t.Fatalf("unexpected sibling file in output:\n%s", text)
 	}
 }
 
-// TestRunGoSearchSymbolsFindsDocMatches verifies search covers godoc so agents
-// can find concepts even when names are not obvious.
-func TestRunGoSearchSymbolsFindsDocMatches(t *testing.T) {
-	dir := goFixture(t)
-	text, err := runGoSearchSymbols(json.RawMessage(
-		`{"path":` + jsonQuote(dir) + `,"query":"display name"}`,
-	))
-	if err != nil {
-		t.Fatalf("search go symbols by doc: %v", err)
-	}
-	if !strings.Contains(text, "struct Widget sample/sample.go:7") {
-		t.Fatalf("missing doc-matched Widget in output:\n%s", text)
-	}
-	if strings.Contains(text, "func hidden") {
-		t.Fatalf("unexported symbol leaked without flag:\n%s", text)
-	}
-}
-
-// TestRunGoSearchSymbolsRequiresQuery verifies empty searches fail before
-// parsing the project.
-func TestRunGoSearchSymbolsRequiresQuery(t *testing.T) {
-	if _, err := runGoSearchSymbols(
-		json.RawMessage(`{"query":"   "}`),
-	); err == nil {
-
-		t.Fatal("expected empty query to fail")
-	}
-}
-
-// TestRunGoSymbolReturnsDocAndDeclaration verifies symbol lookup returns the
-// doc comment and full source declaration for a struct.
-func TestRunGoSymbolReturnsDocAndDeclaration(t *testing.T) {
-	dir := goFixture(t)
-	text, err := runGoSymbol(json.RawMessage(
-		`{"path":` + jsonQuote(dir) + `,"name":"Widget"}`,
-	))
-	if err != nil {
-		t.Fatalf("lookup go symbol: %v", err)
-	}
-	for _, want := range []string{
-		"file: sample/sample.go:7-9",
-		"godoc:\nWidget stores a display name.",
-		"6 | // Widget stores a display name.",
-		"7 | type Widget struct",
-		"8 | \tName string",
-	} {
-		if !strings.Contains(text, want) {
-			t.Fatalf("missing %q in output:\n%s", want, text)
-		}
-	}
-}
-
-// TestRunGoSymbolReturnsFunctionSignature verifies function lookups include a
-// standalone signature, godoc, and the default full declaration.
-func TestRunGoSymbolReturnsFunctionSignature(t *testing.T) {
-	dir := goFixture(t)
-	text, err := runGoSymbol(json.RawMessage(
-		`{"path":` + jsonQuote(dir) + `,"name":"NewWidget"}`,
-	))
-	if err != nil {
-		t.Fatalf("lookup go symbol: %v", err)
-	}
-	for _, want := range []string{
-		"signature:\n```go\nfunc NewWidget(name string) Widget\n```",
-		"godoc:\nNewWidget builds a Widget.",
-		"declaration:",
-		"return Widget{Name: name}",
-	} {
-		if !strings.Contains(text, want) {
-			t.Fatalf("missing %q in output:\n%s", want, text)
-		}
-	}
-}
-
-// TestRunGoSymbolReturnsMethodSignature verifies method lookups render the
-// receiver as part of the structured signature block.
-func TestRunGoSymbolReturnsMethodSignature(t *testing.T) {
-	dir := goFixture(t)
-	text, err := runGoSymbol(json.RawMessage(
-		`{"path":` + jsonQuote(dir) + `,"name":"NameText"}`,
-	))
-	if err != nil {
-		t.Fatalf("lookup go symbol: %v", err)
-	}
-	want := "signature:\n```go\nfunc (w Widget) NameText() string\n```"
-	if !strings.Contains(text, want) {
-		t.Fatalf("missing method signature %q in output:\n%s", want,
-			text)
-	}
-}
-
-// TestRunGoSymbolSignatureModeSkipsFullDeclaration verifies callers can request
-// API shape and godoc without sending the whole declaration body.
-func TestRunGoSymbolSignatureModeSkipsFullDeclaration(t *testing.T) {
-	dir := goFixture(t)
-	text, err := runGoSymbol(json.RawMessage(
-		`{"path":` + jsonQuote(dir) +
-			`,"name":"NewWidget","declaration":"signature"}`,
-	))
-	if err != nil {
-		t.Fatalf("lookup go symbol: %v", err)
-	}
-	if !strings.Contains(text, "func NewWidget(name string) Widget") {
-		t.Fatalf("missing function signature in output:\n%s", text)
-	}
-	if strings.Contains(text, "declaration:") ||
-		strings.Contains(text, "return Widget{Name: name}") {
-
-		t.Fatalf("signature mode leaked full declaration:\n%s", text)
-	}
-}
-
-// TestRunGoSymbolReportsAmbiguousMatches verifies duplicate names ask callers
-// to refine the package or file filter.
-func TestRunGoSymbolReportsAmbiguousMatches(t *testing.T) {
-	dir := goFixture(t)
-	text, err := runGoSymbol(json.RawMessage(
-		`{"path":` + jsonQuote(dir) + `,"name":"Duplicate"}`,
-	))
-	if err != nil {
-		t.Fatalf("lookup ambiguous symbol: %v", err)
-	}
-	if !strings.Contains(text, "ambiguous") {
-		t.Fatalf("expected ambiguity message, got:\n%s", text)
-	}
-}
-
-// TestRunGoSymbolsReturnsBatchSignatures verifies batched lookups parse once
-// and default to signature-sized detail instead of full declarations.
-func TestRunGoSymbolsReturnsBatchSignatures(t *testing.T) {
+// TestRunGoSymbolsFiltersByPackageRegex verifies package regexes can select a
+// package by relative directory.
+func TestRunGoSymbolsFiltersByPackageRegex(t *testing.T) {
 	dir := goFixture(t)
 	text, err := runGoSymbols(json.RawMessage(
-		`{"path":` + jsonQuote(dir) +
-			`,"names":["Widget","NewWidget","NameText"]}`,
+		`{"paths":[` + jsonQuote(dir) +
+			`],"package":"other","detail":"none"}`,
 	))
 	if err != nil {
-		t.Fatalf("lookup go symbols: %v", err)
+		t.Fatalf("filter go symbols by package: %v", err)
+	}
+	if !strings.Contains(text, "func Duplicate other/other.go:4") {
+		t.Fatalf("missing other Duplicate in output:\n%s", text)
+	}
+	if strings.Contains(text, "sample/extra.go") {
+		t.Fatalf("unexpected sample package symbol:\n%s", text)
+	}
+}
+
+// TestRunGoSymbolsPackageDetailMapsFilesAndSymbols verifies package mode gives
+// agents a compact package/file map before broad file reads.
+func TestRunGoSymbolsPackageDetailMapsFilesAndSymbols(t *testing.T) {
+	dir := goFixture(t)
+	text, err := runGoSymbols(json.RawMessage(
+		`{"paths":[` + jsonQuote(dir) +
+			`],"detail":"package","includeUnexported":true}`,
+	))
+	if err != nil {
+		t.Fatalf("map go package symbols: %v", err)
 	}
 	for _, want := range []string{
-		"symbols requested: 3",
-		"symbols resolved: 3",
-		"declaration: signature",
+		"detail: package",
+		"package sample (sample): 2 files, 7 symbols",
+		"files:\n- sample/extra.go\n- sample/sample.go",
+		"symbols:\n- func Extra sample/extra.go:4",
+		"- func hidden sample/sample.go:21",
+		"package other (other): 1 files, 1 symbols",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("missing %q in output:\n%s", want, text)
+		}
+	}
+}
+
+// TestRunGoSymbolsSearchesMultiplePaths verifies one call can inspect several
+// roots while keeping result paths unambiguous.
+func TestRunGoSymbolsSearchesMultiplePaths(t *testing.T) {
+	dir := goFixture(t)
+	sample := filepath.Join(dir, "sample")
+	other := filepath.Join(dir, "other")
+	text, err := runGoSymbols(json.RawMessage(
+		`{"paths":[` + jsonQuote(sample) + `,` +
+			jsonQuote(other) +
+			`],"name":"Duplicate","detail":"none","limit":10}`,
+	))
+	if err != nil {
+		t.Fatalf("search go symbols across paths: %v", err)
+	}
+	for _, want := range []string{
+		"symbols: 2",
+		"func Duplicate " + filepath.ToSlash(sample) + "/extra.go:7",
+		"func Duplicate " + filepath.ToSlash(other) + "/other.go:4",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("missing %q in output:\n%s", want, text)
+		}
+	}
+}
+
+// TestRunGoSymbolsSummaryReturnsCompactDeclarations verifies summary mode
+// returns godoc and compact declarations without function bodies.
+func TestRunGoSymbolsSummaryReturnsCompactDeclarations(t *testing.T) {
+	dir := goFixture(t)
+	text, err := runGoSymbols(json.RawMessage(
+		`{"paths":[` + jsonQuote(dir) +
+			`],"name":"^(Widget|NewWidget|NameText)$",` +
+			`"includeUnexported":true}`,
+	))
+	if err != nil {
+		t.Fatalf("summarize go symbols: %v", err)
+	}
+	for _, want := range []string{
+		"detail: summary",
 		"symbol: Widget",
+		"godoc:\nWidget stores a display name.",
+		"declaration:\n```go\ntype Widget struct { ... }\n```",
 		"symbol: NewWidget",
 		"func NewWidget(name string) Widget",
 		"symbol: Widget.NameText",
@@ -227,29 +169,129 @@ func TestRunGoSymbolsReturnsBatchSignatures(t *testing.T) {
 		}
 	}
 	if strings.Contains(text, "return Widget{Name: name}") {
-		t.Fatalf("batch default leaked full declaration:\n%s", text)
+		t.Fatalf("summary leaked full function body:\n%s", text)
 	}
 }
 
-// TestRunGoSymbolsReportsPartialResults verifies missing and ambiguous names do
-// not discard successful symbol details from the same batch.
-func TestRunGoSymbolsReportsPartialResults(t *testing.T) {
+// TestRunGoSymbolsRendersConstDeclarations verifies const symbols include the
+// declaration token in both compact and full detail modes.
+func TestRunGoSymbolsRendersConstDeclarations(t *testing.T) {
 	dir := goFixture(t)
-	text, err := runGoSymbols(json.RawMessage(
-		`{"path":` + jsonQuote(dir) +
-			`,"names":["NewWidget","Missing","Duplicate"]}`,
+	summary, err := runGoSymbols(json.RawMessage(
+		`{"paths":[` + jsonQuote(dir) +
+			`],"name":"^Answer$","detail":"summary"}`,
 	))
 	if err != nil {
-		t.Fatalf("lookup partial go symbols: %v", err)
+		t.Fatalf("summarize const symbol: %v", err)
+	}
+	if !strings.Contains(summary, "const Answer = 42") {
+		t.Fatalf("summary const declaration missing token:\n%s",
+			summary)
+	}
+
+	full, err := runGoSymbols(json.RawMessage(
+		`{"paths":[` + jsonQuote(dir) +
+			`],"name":"^Answer$","detail":"full"}`,
+	))
+	if err != nil {
+		t.Fatalf("fully render const symbol: %v", err)
 	}
 	for _, want := range []string{
-		"symbols requested: 3",
-		"symbols resolved: 1",
-		"missing:\n- Missing",
-		"ambiguous:\n- Duplicate",
-		"  - func Duplicate other/other.go:4",
-		"  - func Duplicate sample/extra.go:7",
-		"symbol: NewWidget",
+		"3 | // Answer is the test constant.",
+		"4 | const Answer = 42",
+	} {
+		if !strings.Contains(full, want) {
+			t.Fatalf("missing %q in full const output:\n%s", want,
+				full)
+		}
+	}
+}
+
+// TestRunGoSymbolsFullModeIncludesOnlyFullDeclaration verifies full mode uses
+// the source declaration as the only declaration-shaped output.
+func TestRunGoSymbolsFullModeIncludesOnlyFullDeclaration(t *testing.T) {
+	dir := goFixture(t)
+	text, err := runGoSymbols(json.RawMessage(
+		`{"paths":[` + jsonQuote(dir) +
+			`],"name":"^NewWidget$","detail":"full"}`,
+	))
+	if err != nil {
+		t.Fatalf("lookup full go symbol: %v", err)
+	}
+	for _, want := range []string{
+		"detail: full",
+		"11 | // NewWidget builds a Widget.",
+		"12 | func NewWidget(name string) Widget {",
+		"13 | \treturn Widget{Name: name}",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("missing %q in output:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "\ngodoc:\n") {
+		t.Fatalf("full mode duplicated godoc outside declaration:\n%s",
+			text)
+	}
+	if strings.Count(text, "declaration:") != 1 {
+		t.Fatalf("full mode should render one declaration block:\n%s",
+			text)
+	}
+}
+
+// TestRunGoSymbolsNameRegexIsCaseInsensitive verifies symbol regex matching is
+// forgiving without adding a model-facing ignoreCase option.
+func TestRunGoSymbolsNameRegexIsCaseInsensitive(t *testing.T) {
+	dir := goFixture(t)
+	text, err := runGoSymbols(json.RawMessage(
+		`{"paths":[` + jsonQuote(dir) +
+			`],"name":"^newwidget$","detail":"none"}`,
+	))
+	if err != nil {
+		t.Fatalf("case-insensitive go symbol search: %v", err)
+	}
+	if !strings.Contains(text, "func NewWidget sample/sample.go:12-14") {
+		t.Fatalf("case-insensitive regex did not match:\n%s", text)
+	}
+}
+
+// TestRunGoSymbolsIncludesUnexported verifies private helpers stay hidden
+// until callers explicitly ask for package internals.
+func TestRunGoSymbolsIncludesUnexported(t *testing.T) {
+	dir := goFixture(t)
+	text, err := runGoSymbols(json.RawMessage(
+		`{"paths":[` + jsonQuote(dir) +
+			`],"name":"hidden","includeUnexported":true,` +
+			`"detail":"none"}`,
+	))
+	if err != nil {
+		t.Fatalf("include unexported symbols: %v", err)
+	}
+	if !strings.Contains(text, "func hidden sample/sample.go:21") {
+		t.Fatalf("missing hidden helper:\n%s", text)
+	}
+}
+
+// TestRunGoSymbolsReportsNoMatches verifies empty result sets are explicit and
+// still include the active filter context.
+func TestRunGoSymbolsReportsNoMatches(t *testing.T) {
+	dir := goFixture(t)
+	text, err := runGoSymbols(json.RawMessage(
+		`{"paths":[` + jsonQuote(dir) +
+			`],"name":"PluginSupervisor"}`,
+	))
+	if err != nil {
+		t.Fatalf("search missing go symbol: %v", err)
+	}
+	for _, want := range []string{
+		"filters: name=/PluginSupervisor/i",
+		"symbols: 0",
+		"No Go symbols matched.",
+		"Parsed symbols before filters: 8.",
+		"Sample searchable files:",
+		"- sample/extra.go",
+		"Sample searchable symbols:",
+		"- Answer",
+		"Hint: file regexes match displayed repo-relative paths",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("missing %q in output:\n%s", want, text)
@@ -257,46 +299,35 @@ func TestRunGoSymbolsReportsPartialResults(t *testing.T) {
 	}
 }
 
-// TestRunGoSymbolsFullModeIncludesDeclarations verifies callers can explicitly
-// request full declaration bodies for a focused batch.
-func TestRunGoSymbolsFullModeIncludesDeclarations(t *testing.T) {
-	dir := goFixture(t)
-	text, err := runGoSymbols(json.RawMessage(
-		`{"path":` + jsonQuote(dir) +
-			`,"names":["NewWidget"],"declaration":"full"}`,
-	))
-	if err != nil {
-		t.Fatalf("lookup full go symbols: %v", err)
-	}
-	if !strings.Contains(text, "return Widget{Name: name}") {
-		t.Fatalf("full mode omitted declaration body:\n%s", text)
-	}
-}
-
-// TestRunGoSymbolsRequiresNames verifies empty batches fail before parsing the
-// project.
-func TestRunGoSymbolsRequiresNames(t *testing.T) {
+// TestRunGoSymbolsRejectsInvalidRegex verifies malformed model regexes fail
+// before any broad code parsing work.
+func TestRunGoSymbolsRejectsInvalidRegex(t *testing.T) {
 	if _, err := runGoSymbols(
-		json.RawMessage(`{"names":[" ",""]}`),
+		json.RawMessage(`{"name":"Client("}`),
 	); err == nil {
 
-		t.Fatal("expected empty name batch to fail")
+		t.Fatal("expected invalid regex to fail")
 	}
 }
 
-// TestRunGoSymbolsLimitsBatchSize verifies a single detail call cannot request
-// an unbounded number of symbols.
-func TestRunGoSymbolsLimitsBatchSize(t *testing.T) {
-	names := make([]string, maxBatchSymbolNames+1)
-	for i := range names {
-		names[i] = "Widget"
+// TestRunGoSymbolsRejectsTooManyPaths verifies one call cannot fan out across
+// an unbounded number of roots.
+func TestRunGoSymbolsRejectsTooManyPaths(t *testing.T) {
+	dir := t.TempDir()
+	paths := make([]string, maxSymbolPaths+1)
+	for i := range paths {
+		path := filepath.Join(dir, string(rune('a'+i)))
+		if err := os.Mkdir(path, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		paths[i] = path
 	}
-	raw, err := json.Marshal(symbolsArgs{Names: names})
+	raw, err := json.Marshal(symbolsArgs{Paths: paths})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := runGoSymbols(raw); err == nil {
-		t.Fatal("expected oversized name batch to fail")
+		t.Fatal("expected oversized path list to fail")
 	}
 }
 
@@ -320,7 +351,7 @@ func NewWidget(name string) Widget {
 	return Widget{Name: name}
 }
 
-// Name returns the widget name.
+// NameText returns the widget name.
 func (w Widget) NameText() string {
 	return w.Name
 }
