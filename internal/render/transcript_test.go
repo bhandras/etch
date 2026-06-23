@@ -24,6 +24,52 @@ func TestMessageLinesRendersEditCall(t *testing.T) {
 	}
 }
 
+// TestToolCallLinesRendersSingleBatchedRead verifies a one-entry read batch
+// renders like a normal ranged read instead of showing a missing path.
+func TestToolCallLinesRendersSingleBatchedRead(t *testing.T) {
+	lines := ToolCallLines(session.ToolCallData{
+		Name: "read",
+		Arguments: `{"files":[{"path":"internal/plugins/client.go",` +
+			`"offset":49,"limit":20}]}`,
+	})
+	got := strings.Join(lines, "\n")
+	want := "-> read internal/plugins/client.go lines 49-68"
+	if got != want {
+		t.Fatalf("render mismatch:\nwant %q\ngot  %q", want, got)
+	}
+}
+
+// TestToolCallLinesRendersBatchedReadSummary verifies multi-file read batches
+// show a compact file list for live subagent progress rows.
+func TestToolCallLinesRendersBatchedReadSummary(t *testing.T) {
+	lines := ToolCallLines(session.ToolCallData{
+		Name: "read",
+		Arguments: `{"files":[{"path":"internal/plugins/client.go"},` +
+			`{"path":"sdk/plugins.go"},{"path":"README.md"},` +
+			`{"path":"docs/architecture.md"}]}`,
+	})
+	got := strings.Join(lines, "\n")
+	want := "-> read 4 files: internal/plugins/client.go, " +
+		"sdk/plugins.go, README.md, ... 1 more"
+	if got != want {
+		t.Fatalf("render mismatch:\nwant %q\ngot  %q", want, got)
+	}
+}
+
+// TestToolCallLinesRendersBatchedReadWithoutMissingPath verifies empty file
+// entries do not leak a placeholder into otherwise useful batch labels.
+func TestToolCallLinesRendersBatchedReadWithoutMissingPath(t *testing.T) {
+	lines := ToolCallLines(session.ToolCallData{
+		Name:      "read",
+		Arguments: `{"files":[{"path":""},{"path":"README.md"}]}`,
+	})
+	got := strings.Join(lines, "\n")
+	want := "-> read README.md"
+	if got != want {
+		t.Fatalf("render mismatch:\nwant %q\ngot  %q", want, got)
+	}
+}
+
 // TestToolResultLinesRendersEditDiff verifies that edit results keep the diff
 // visible for humans.
 func TestToolResultLinesRendersEditDiff(t *testing.T) {

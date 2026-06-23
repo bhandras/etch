@@ -146,13 +146,25 @@ func intArg(raw string, name string) (int, bool) {
 
 // readTarget renders a read call target with optional line range hints.
 func readTarget(raw string) string {
-	path := stringArg(raw, "path", "")
-	if path == "" {
-		path = "<missing path>"
+	if target, ok := readBatchTarget(raw); ok {
+		return target
 	}
 
 	offset, hasOffset := intArg(raw, "offset")
 	limit, hasLimit := intArg(raw, "limit")
+
+	return readRangeTarget(
+		stringArg(raw, "path", ""), offset, hasOffset, limit, hasLimit,
+	)
+}
+
+// readRangeTarget renders one read path with optional line range hints.
+func readRangeTarget(path string, offset int, hasOffset bool, limit int,
+	hasLimit bool) string {
+
+	if path == "" {
+		path = "<missing path>"
+	}
 	if !hasOffset && !hasLimit {
 		return path
 	}
@@ -165,6 +177,60 @@ func readTarget(raw string) string {
 	}
 
 	return fmt.Sprintf("%s from line %d", path, offset)
+}
+
+// readBatchTarget renders the compact label for batched read arguments.
+func readBatchTarget(raw string) (string, bool) {
+	var args struct {
+		Files []struct {
+			Path   string `json:"path"`
+			Offset int    `json:"offset"`
+			Limit  int    `json:"limit"`
+		} `json:"files"`
+	}
+	if err := json.Unmarshal([]byte(raw), &args); err != nil ||
+		len(args.Files) == 0 {
+		return "", false
+	}
+
+	targets := make([]string, 0, len(args.Files))
+	for _, file := range args.Files {
+		path := strings.TrimSpace(file.Path)
+		if path == "" {
+			continue
+		}
+		targets = append(
+			targets, readRangeTarget(
+				path, file.Offset, file.Offset != 0, file.Limit,
+				file.Limit != 0,
+			),
+		)
+	}
+	if len(targets) == 0 {
+		return "files", true
+	}
+	if len(targets) == 1 {
+		return targets[0], true
+	}
+
+	return readBatchSummary(targets), true
+}
+
+// readBatchSummary renders several file targets without flooding status rows.
+func readBatchSummary(targets []string) string {
+	const maxShownTargets = 3
+
+	shown := targets
+	if len(shown) > maxShownTargets {
+		shown = shown[:maxShownTargets]
+	}
+	text := fmt.Sprintf("%d files: %s", len(targets),
+		strings.Join(shown, ", "))
+	if remaining := len(targets) - len(shown); remaining > 0 {
+		text += fmt.Sprintf(", ... %d more", remaining)
+	}
+
+	return text
 }
 
 // editCountSuffix renders the number of replacement blocks when available.

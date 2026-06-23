@@ -33,6 +33,10 @@ const (
 	// DefaultGrepMaxContext caps before/after context lines around matches.
 	DefaultGrepMaxContext = 5
 
+	// DefaultGrepMaxPaths caps multi-root searches so one call cannot turn
+	// into an unbounded project-wide scan with many roots.
+	DefaultGrepMaxPaths = 8
+
 	// NoGrepMatchesText is returned when literal search finds no matches.
 	NoGrepMatchesText = "(no matches)"
 )
@@ -42,6 +46,10 @@ type GrepRequest struct {
 	// Path is the file or directory where searching starts. Empty means the
 	// current directory.
 	Path string
+
+	// Paths are files or directories to search in one call. When non-empty,
+	// Paths take precedence over Path.
+	Paths []string `json:"paths,omitempty"`
 
 	// Pattern is the non-empty literal text to find.
 	Pattern string
@@ -73,23 +81,84 @@ func Grep(ctx context.Context, req GrepRequest) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	root := strings.TrimSpace(req.Path)
-	if root == "" {
-		root = "."
-	}
-
-	files, skippedDirs, err := grepFiles(ctx, root)
+	roots, err := grepRoots(req)
 	if err != nil {
 		return "", err
 	}
-
-	stats := grepStats{SkippedDirs: skippedDirs}
-	matches, err := grepMatches(ctx, root, files, req, matcher, &stats)
-	if err != nil {
-		return "", err
+	stats := grepStats{}
+	var matches []grepMatch
+	for _, root := range roots {
+		files, skippedDirs, err := grepFiles(ctx, root)
+		if err != nil {
+			return "", err
+		}
+		stats.SkippedDirs += skippedDirs
+		matches, err = grepMatches(
+			ctx, root, files, req, matcher, &stats, matches,
+			len(roots) > 1,
+		)
+		if err != nil {
+			return "", err
+		}
 	}
 
 	return renderGrepResults(matches, stats), nil
+}
+
+// grepRoots returns the caller-selected search roots, including a narrow
+// compatibility path for whitespace-separated roots in Path.
+func grepRoots(req GrepRequest) ([]string, error) {
+	if len(req.Paths) > 0 {
+		return normalizeGrepRoots(req.Paths)
+	}
+	root := strings.TrimSpace(req.Path)
+	if root == "" {
+		return []string{"."}, nil
+	}
+	if _, err := os.Stat(root); err == nil {
+		return []string{root}, nil
+	}
+	fields := strings.Fields(root)
+	if len(fields) <= 1 {
+		return []string{root}, nil
+	}
+	roots, err := normalizeGrepRoots(fields)
+	if err != nil {
+		return []string{root}, nil
+	}
+
+	return roots, nil
+}
+
+// normalizeGrepRoots trims, validates, and caps multi-root grep requests.
+func normalizeGrepRoots(paths []string) ([]string, error) {
+	roots := make([]string, 0, len(paths))
+	seen := make(map[string]bool, len(paths))
+	for index, path := range paths {
+		root := strings.TrimSpace(path)
+		if root == "" {
+			return nil, fmt.Errorf("paths[%d] is empty", index)
+		}
+		if _, err := os.Stat(root); err != nil {
+			return nil, fmt.Errorf("stat search root %q: %w", root,
+				err)
+		}
+		clean := filepath.Clean(root)
+		if seen[clean] {
+			continue
+		}
+		roots = append(roots, root)
+		seen[clean] = true
+	}
+	if len(roots) == 0 {
+		return nil, fmt.Errorf("paths must contain at least one path")
+	}
+	if len(roots) > DefaultGrepMaxPaths {
+		return nil, fmt.Errorf("paths accepts at most %d entries",
+			DefaultGrepMaxPaths)
+	}
+
+	return roots, nil
 }
 
 // grepMatch stores one rendered literal search match.
@@ -195,15 +264,14 @@ func grepFiles(ctx context.Context, root string) ([]string, int, error) {
 
 // grepMatches searches candidate files and records bounded matches.
 func grepMatches(ctx context.Context, root string, files []string,
-	req GrepRequest, matcher grepMatcher,
-	stats *grepStats) ([]grepMatch, error) {
+	req GrepRequest, matcher grepMatcher, stats *grepStats,
+	matches []grepMatch, displayFromCwd bool) ([]grepMatch, error) {
 
 	limit := req.Limit
 	if limit <= 0 {
 		limit = DefaultGrepLimit
 	}
 
-	var matches []grepMatch
 	for _, path := range files {
 		select {
 		case <-ctx.Done():
@@ -211,7 +279,7 @@ func grepMatches(ctx context.Context, root string, files []string,
 
 		default:
 		}
-		display := displayPath(root, path)
+		display := displayPath(root, path, displayFromCwd)
 		if req.Glob != "" {
 			ok, err := matchPathGlob(req.Glob, display)
 			if err != nil {
@@ -462,7 +530,10 @@ func grepMatchCount(rows []grepMatch) int {
 }
 
 // displayPath returns a slash-separated path for model-visible output.
-func displayPath(root string, path string) string {
+func displayPath(root string, path string, displayFromCwd bool) string {
+	if displayFromCwd {
+		return filepath.ToSlash(filepath.Clean(path))
+	}
 	if info, err := os.Stat(root); err == nil && info.IsDir() {
 		if rel, err := filepath.Rel(root, path); err == nil {
 			return filepath.ToSlash(rel)

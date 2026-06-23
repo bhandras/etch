@@ -68,6 +68,105 @@ func TestReadCanDisableLineNumbers(t *testing.T) {
 	}
 }
 
+// TestReadCanBatchIndependentRanges verifies a single read call can retrieve
+// several known file slices without adding another model-facing tool.
+func TestReadCanBatchIndependentRanges(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	writeFile(t, filepath.Join(root, "one.txt"), "alpha\nbeta\ngamma")
+	writeFile(t, filepath.Join(root, "two.txt"), "red\ngreen\nblue")
+
+	got, err := Read(context.Background(), ReadRequest{
+		Files: []ReadRange{{
+			Path:  "one.txt",
+			Limit: 2,
+		}, {
+			Path:   "two.txt",
+			Offset: 2,
+			Limit:  1,
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"--- one.txt (limit=2) ---",
+		"1 | alpha",
+		"[1 more line in file. Use offset=3 to continue.]",
+		"--- two.txt (offset=2, limit=1) ---",
+		"2 | green",
+		"[1 more line in file. Use offset=3 to continue.]",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("batched read missing %q:\n%s", want, got)
+		}
+	}
+}
+
+// TestReadBatchKeepsPerFileErrors verifies one bad path does not discard
+// successful neighboring reads.
+func TestReadBatchKeepsPerFileErrors(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	writeFile(t, filepath.Join(root, "ok.txt"), "alpha")
+
+	got, err := Read(context.Background(), ReadRequest{
+		Files: []ReadRange{{
+			Path: "ok.txt",
+		}, {
+			Path: "missing.txt",
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "1 | alpha") ||
+		!strings.Contains(
+			got, "Read batch completed with 1 per-file error",
+		) ||
+		!strings.Contains(got, "--- missing.txt ---") ||
+		!strings.Contains(got, "error: stat file:") {
+
+		t.Fatalf("unexpected partial batch output:\n%s", got)
+	}
+}
+
+// TestReadBatchPrefersFilesOverSinglePath verifies model-filled batch requests
+// stay useful even when legacy single-file fields are also present.
+func TestReadBatchPrefersFilesOverSinglePath(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	writeFile(t, filepath.Join(root, "one.txt"), "one")
+	writeFile(t, filepath.Join(root, "two.txt"), "two")
+
+	got, err := Read(context.Background(), ReadRequest{
+		Path: "one.txt",
+		Files: []ReadRange{{
+			Path: "two.txt",
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(got, "one") || !strings.Contains(got, "two") {
+		t.Fatalf("read did not prefer files over path:\n%s", got)
+	}
+}
+
+// TestReadBatchCapsFileCount verifies batched reads stay intentionally small.
+func TestReadBatchCapsFileCount(t *testing.T) {
+	req := ReadRequest{
+		Files: make([]ReadRange, DefaultReadMaxFiles+1),
+	}
+	for index := range req.Files {
+		req.Files[index].Path = "file.txt"
+	}
+	_, err := Read(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected too many files error")
+	}
+}
+
 // TestReadRejectsDirectory verifies that read remains a file operation rather
 // than silently listing directories.
 func TestReadRejectsDirectory(t *testing.T) {

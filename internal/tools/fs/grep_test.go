@@ -150,6 +150,61 @@ func TestGrepHonorsGlobFilter(t *testing.T) {
 	}
 }
 
+// TestGrepSearchesMultipleRoots verifies one grep call can search several
+// known roots without treating their names as one filesystem path.
+func TestGrepSearchesMultipleRoots(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	mkdir(t, filepath.Join(dir, "cmd"))
+	mkdir(t, filepath.Join(dir, "internal"))
+	writeFile(t, filepath.Join(dir, "cmd", "main.go"), "needle\n")
+	writeFile(t, filepath.Join(dir, "internal", "core.go"), "needle\n")
+	writeFile(t, filepath.Join(dir, "README.md"), "needle\n")
+
+	got, err := Grep(context.Background(), GrepRequest{
+		Paths:   []string{"cmd", "internal"},
+		Pattern: "needle",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"cmd/main.go:1:needle",
+		"internal/core.go:1:needle",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("multi-root grep missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "README.md") {
+		t.Fatalf("multi-root grep escaped requested roots:\n%s", got)
+	}
+}
+
+// TestGrepSplitsWhitespacePathWhenRootsExist verifies a common model mistake
+// is recovered only when every whitespace-separated root is valid.
+func TestGrepSplitsWhitespacePathWhenRootsExist(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	mkdir(t, filepath.Join(dir, "cmd"))
+	mkdir(t, filepath.Join(dir, "internal"))
+	writeFile(t, filepath.Join(dir, "cmd", "main.go"), "needle\n")
+	writeFile(t, filepath.Join(dir, "internal", "core.go"), "needle\n")
+
+	got, err := Grep(context.Background(), GrepRequest{
+		Path:    "cmd internal",
+		Pattern: "needle",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "cmd/main.go:1:needle") ||
+		!strings.Contains(got, "internal/core.go:1:needle") {
+
+		t.Fatalf("whitespace path was not split into roots:\n%s", got)
+	}
+}
+
 // TestGrepHonorsRootGitignore verifies root .gitignore rules remove noisy
 // files and directories from recursive search.
 func TestGrepHonorsRootGitignore(t *testing.T) {

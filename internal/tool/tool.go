@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -39,6 +40,23 @@ const (
 	NameTask = "task"
 )
 
+const (
+	// ParallelSafetySerial marks tools that must run as serial barriers.
+	ParallelSafetySerial = "serial"
+
+	// ParallelSafetyReadOnly marks tools that read local state without
+	// mutating it and may overlap other safe reads.
+	ParallelSafetyReadOnly = "read_only"
+
+	// ParallelSafetyParallel marks tools that are independently safe to
+	// overlap with other safe calls.
+	ParallelSafetyParallel = "parallel_safe"
+)
+
+// toolNamePattern is the provider-compatible model tool name subset Harness
+// accepts for built-ins and plugins.
+var toolNamePattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+
 // Result is the text returned by a builtin tool execution.
 type Result struct {
 	// Text is the model-visible tool output.
@@ -73,6 +91,14 @@ type ProgressEvent struct {
 
 	// Message is the compact human-readable activity label.
 	Message string
+
+	// Usage carries optional provider token counters reported by a
+	// long-running tool, such as a child agent.
+	Usage model.Usage
+
+	// Metrics carries optional provider transport counters reported by a
+	// long-running tool, such as a child agent.
+	Metrics model.Metrics
 }
 
 // ProgressSink receives live progress updates for one running tool.
@@ -127,6 +153,21 @@ type ParallelSafetyChecker interface {
 	ParallelSafe(call model.ToolCall) bool
 }
 
+// ParallelLaneChecker lets tools serialize calls that share a stateful local
+// resource while still overlapping unrelated parallel-safe tools.
+type ParallelLaneChecker interface {
+	// ParallelLane returns a non-empty lane key for calls that must not
+	// overlap each other inside a parallel execution group.
+	ParallelLane(call model.ToolCall) string
+}
+
+// AvailabilityChecker lets stateful tools hide themselves from future model
+// requests after a fatal local failure.
+type AvailabilityChecker interface {
+	// Available reports whether this tool should still be advertised.
+	Available() bool
+}
+
 // Registry stores builtin tools by name and dispatches model tool calls.
 type Registry struct {
 	tools map[string]Tool
@@ -156,6 +197,18 @@ func NewRegistry() *Registry {
 // Register adds or replaces one tool by its model-facing name.
 func (r *Registry) Register(tool Tool) {
 	r.tools[tool.Spec().Name] = tool
+}
+
+// RegisterStrict adds one tool and reports an error instead of replacing an
+// existing tool with the same model-facing name.
+func (r *Registry) RegisterStrict(tool Tool) error {
+	name := tool.Spec().Name
+	if r.Has(name) {
+		return fmt.Errorf("tool %q is already registered", name)
+	}
+	r.Register(tool)
+
+	return nil
 }
 
 // Has reports whether a model-facing tool name is already registered.
@@ -197,6 +250,11 @@ func (r *Registry) Names() []string {
 func (r *Registry) Specs() []model.ToolSpec {
 	specs := make([]model.ToolSpec, 0, len(r.tools))
 	for _, tool := range r.tools {
+		if checker, ok := tool.(AvailabilityChecker); ok &&
+			!checker.Available() {
+
+			continue
+		}
 		specs = append(specs, tool.Spec())
 	}
 	sort.Slice(specs, func(i, j int) bool {
@@ -219,6 +277,19 @@ func (r *Registry) ParallelSafe(call model.ToolCall) bool {
 	return ReadOnlyToolName(call.Name)
 }
 
+// ParallelLane returns a stateful serialization key for a parallel-safe call.
+func (r *Registry) ParallelLane(call model.ToolCall) string {
+	registered, ok := r.tools[call.Name]
+	if !ok {
+		return ""
+	}
+	if checker, ok := registered.(ParallelLaneChecker); ok {
+		return checker.ParallelLane(call)
+	}
+
+	return ""
+}
+
 // Execute dispatches a complete model tool call to its registered tool.
 func (r *Registry) Execute(ctx context.Context, call model.ToolCall) (Result,
 	error) {
@@ -226,6 +297,10 @@ func (r *Registry) Execute(ctx context.Context, call model.ToolCall) (Result,
 	tool, ok := r.tools[call.Name]
 	if !ok {
 		return Result{}, fmt.Errorf("unknown tool %q", call.Name)
+	}
+	if checker, ok := tool.(AvailabilityChecker); ok &&
+		!checker.Available() {
+		return Result{}, fmt.Errorf("tool %q is unavailable", call.Name)
 	}
 
 	if executor, ok := tool.(CallExecutor); ok {
@@ -244,6 +319,48 @@ func ReadOnlyToolName(name string) bool {
 
 	default:
 		return strings.HasPrefix(name, "go_")
+	}
+}
+
+// ValidName reports whether name is accepted by supported model providers.
+func ValidName(name string) bool {
+	return name == strings.TrimSpace(name) &&
+		toolNamePattern.MatchString(name)
+}
+
+// ValidateName returns a user-facing error when name cannot be registered as a
+// model tool.
+func ValidateName(name string) error {
+	if ValidName(name) {
+		return nil
+	}
+
+	return fmt.Errorf("tool name %q must match %s", name,
+		toolNamePattern.String())
+}
+
+// ParallelSafetyAllowed reports whether safety is a supported plugin tool
+// declaration.
+func ParallelSafetyAllowed(safety string) bool {
+	switch strings.TrimSpace(safety) {
+	case "", ParallelSafetySerial, ParallelSafetyReadOnly,
+		ParallelSafetyParallel:
+		return true
+
+	default:
+		return false
+	}
+}
+
+// ParallelSafetyIsSafe reports whether a declared safety class can run in a
+// parallel-safe execution group.
+func ParallelSafetyIsSafe(safety string) bool {
+	switch strings.TrimSpace(safety) {
+	case ParallelSafetyReadOnly, ParallelSafetyParallel:
+		return true
+
+	default:
+		return false
 	}
 }
 
@@ -297,30 +414,60 @@ type readTool struct{}
 func (readTool) Spec() model.ToolSpec {
 	return model.ToolSpec{
 		Name: NameRead,
-		Description: "Read a local text file. Output is bounded by lines " +
-			"and bytes; use offset and limit to continue through large " +
-			"files.",
+		Description: "Read one local text file or several independent " +
+			"file ranges. Output is bounded by lines and bytes; use " +
+			"offset and limit for large files. When you already know " +
+			"multiple relevant files or ranges, pass files=[...] in " +
+			"one call instead of making repeated read calls. Prefer " +
+			"grep/find/go symbol tools to locate relevant ranges " +
+			"before reading broad files, and do not reread the same " +
+			"range.",
 		Parameters: json.RawMessage(`{
 			"type":"object",
 			"properties":{
 				"path":{
 					"type":"string",
-					"description":"File to read. Relative paths resolve from the current working directory."
+					"description":"Single file to read. Relative paths resolve from the current working directory. If files is non-empty, files wins and this top-level path is ignored."
 				},
 				"offset":{
 					"type":"integer",
-					"description":"1-indexed line number to start reading from."
+					"description":"1-indexed line number to start reading from for a single-file read."
 				},
 				"limit":{
 					"type":"integer",
-					"description":"Maximum lines to return before the default truncation limit is considered."
+					"description":"Maximum lines to return for a single-file read before the default truncation limit is considered."
 				},
 				"lineNumbers":{
 					"type":"boolean",
 					"description":"Whether to prefix each returned line with its source line number. Defaults to true."
+				},
+				"files":{
+					"type":"array",
+					"description":"Independent file ranges to read in one call. Use this for multiple known files or offsets instead of repeated read calls. At most 8 entries are accepted. When files is non-empty, top-level path/offset/limit are ignored.",
+					"items":{
+						"type":"object",
+						"properties":{
+							"path":{
+								"type":"string",
+								"description":"File to read."
+							},
+							"offset":{
+								"type":"integer",
+								"description":"1-indexed line number to start reading from."
+							},
+							"limit":{
+								"type":"integer",
+								"description":"Maximum lines to return for this file."
+							},
+							"lineNumbers":{
+								"type":"boolean",
+								"description":"Whether to prefix lines from this file with source line numbers. Defaults to the top-level value, then true."
+							}
+						},
+						"required":["path"]
+					}
 				}
-			},
-			"required":["path"]
+			}
 		}`),
 	}
 }
@@ -403,14 +550,26 @@ func (grepTool) Spec() model.ToolSpec {
 	return model.ToolSpec{
 		Name: NameGrep,
 		Description: "Search files recursively for literal text and " +
-			"return path:line:text matches. Use this to locate symbols, " +
-			"errors, TODOs, and config keys without external rg/grep.",
+			"return path:line:text matches. Use regex=true for Go " +
+			"RE2 patterns. Prefer speculative grep searches over " +
+			"sequential find+read scans when locating symbols, " +
+			"errors, TODOs, config keys, or cross-file strings; " +
+			"then use read with files=[...] for the relevant ranges. " +
+			"This tool respects .gitignore and does not require " +
+			"external rg/grep.",
 		Parameters: json.RawMessage(`{
 			"type":"object",
 			"properties":{
 				"path":{
 					"type":"string",
-					"description":"File or directory where searching starts. Defaults to the current directory."
+					"description":"File or directory where searching starts. Defaults to the current directory. For multiple roots, use paths instead of space-separated text."
+				},
+				"paths":{
+					"type":"array",
+					"description":"Files or directories to search in one call. Use this for multiple known roots such as [\"cmd/harness\",\"internal/config\"]. When non-empty, paths wins over path. At most 8 entries are accepted.",
+					"items":{
+						"type":"string"
+					}
 				},
 				"pattern":{
 					"type":"string",
