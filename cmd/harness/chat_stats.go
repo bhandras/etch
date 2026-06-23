@@ -162,6 +162,22 @@ func turnTimingFromMetrics(metrics session.MetricsData) core.TurnTiming {
 	}
 }
 
+// turnTimingFromModelMetrics converts live model metrics into footer counters.
+func turnTimingFromModelMetrics(metrics model.Metrics) core.TurnTiming {
+	modelCalls := metrics.Requests
+	if modelCalls == 0 && !metrics.Empty() {
+		modelCalls = 1
+	}
+
+	return core.TurnTiming{
+		ModelCalls:       modelCalls,
+		RequestBytes:     metrics.RequestBytes,
+		ResponseBytes:    metrics.ResponseBytes,
+		TimeToHeaders:    metrics.TimeToHeaders,
+		TimeToFirstEvent: metrics.TimeToFirstEvent,
+	}
+}
+
 // usageStatParts returns compact token counter phrases for terminal chrome.
 func usageStatParts(usage model.Usage) []string {
 	if usage.Empty() {

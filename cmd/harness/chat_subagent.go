@@ -158,7 +158,7 @@ func (r *liveChatRenderer) renderSubagentToolCall(call model.ToolCall) bool {
 	if !ok {
 		return false
 	}
-	display.Codename = subagentCodename(call.ID)
+	display.Codename = r.reserveSubagentCodenameLocked(call.ID)
 
 	r.renderSubagentCallDisplay(display)
 
@@ -192,8 +192,11 @@ func subagentStartHeader(display subagentCallDisplay) string {
 		subagentDisplayName(display.Codename, display.Profile)
 }
 
-// subagentCalls extracts display data for task calls in call order.
-func subagentCalls(calls []model.ToolCall) []subagentCallDisplay {
+// subagentCallsLocked extracts display data for task calls in call order while
+// reserving live-friendly names for each delegated child run.
+func (r *liveChatRenderer) subagentCallsLocked(
+	calls []model.ToolCall) []subagentCallDisplay {
+
 	var displays []subagentCallDisplay
 	for _, call := range calls {
 		if call.Name != tool.NameTask {
@@ -201,7 +204,9 @@ func subagentCalls(calls []model.ToolCall) []subagentCallDisplay {
 		}
 		display, ok := parseSubagentCall(call.Arguments)
 		if ok {
-			display.Codename = subagentCodename(call.ID)
+			display.Codename = r.reserveSubagentCodenameLocked(
+				call.ID,
+			)
 			displays = append(displays, display)
 		}
 	}
@@ -233,7 +238,7 @@ func (r *liveChatRenderer) renderSubagentToolResult(
 	if !ok {
 		return false
 	}
-	display.Codename = subagentCodename(message.ToolCallID)
+	display.Codename = r.subagentCodenameForCallLocked(message.ToolCallID)
 
 	header := subagentResultHeader(display)
 	fmt.Fprintln(r.stdout, "• "+header)
@@ -390,16 +395,113 @@ func subagentDisplayName(codename string, profile string) string {
 	return codename + " / " + profile
 }
 
-// subagentCodename returns a deterministic terminal-only name for a child call.
-func subagentCodename(callID string) string {
+// subagentCodenameForCallLocked returns the display name already associated
+// with callID, falling back to the deterministic hash name for old results.
+func (r *liveChatRenderer) subagentCodenameForCallLocked(callID string) string {
 	callID = strings.TrimSpace(callID)
 	if callID == "" {
 		return ""
 	}
+	if r.subagentCodenamesByCall != nil {
+		if codename := r.subagentCodenamesByCall[callID]; codename != "" {
+			return codename
+		}
+	}
+
+	return subagentCodename(callID)
+}
+
+// reserveSubagentCodenameLocked assigns callID a stable name that is distinct
+// from other currently active child-agent names whenever possible.
+func (r *liveChatRenderer) reserveSubagentCodenameLocked(callID string) string {
+	callID = strings.TrimSpace(callID)
+	if callID == "" {
+		return ""
+	}
+	if r.subagentCodenamesByCall == nil {
+		r.subagentCodenamesByCall = make(map[string]string)
+	}
+	if codename := r.subagentCodenamesByCall[callID]; codename != "" {
+		if r.activeSubagentCodenames == nil {
+			r.activeSubagentCodenames = make(map[string]bool)
+		}
+		r.activeSubagentCodenames[codename] = true
+
+		return codename
+	}
+	codename := r.availableSubagentCodenameLocked(callID)
+	r.subagentCodenamesByCall[callID] = codename
+	if r.activeSubagentCodenames == nil {
+		r.activeSubagentCodenames = make(map[string]bool)
+	}
+	r.activeSubagentCodenames[codename] = true
+
+	return codename
+}
+
+// availableSubagentCodenameLocked chooses the deterministic hash name unless a
+// running child already uses it, then walks the roster for an unused fallback.
+func (r *liveChatRenderer) availableSubagentCodenameLocked(
+	callID string) string {
+
+	preferred, index := subagentCodenameAt(callID)
+	if preferred == "" {
+		return ""
+	}
+	if !r.activeSubagentCodenames[preferred] {
+		return preferred
+	}
+	for offset := 1; offset < len(subagentCodenames); offset++ {
+		candidate := subagentCodenames[(index+offset)%
+			len(subagentCodenames)]
+		if !r.activeSubagentCodenames[candidate] {
+			return candidate
+		}
+	}
+	for suffix := 2; ; suffix++ {
+		candidate := fmt.Sprintf("%s-%d", preferred, suffix)
+		if !r.activeSubagentCodenames[candidate] {
+			return candidate
+		}
+	}
+}
+
+// releaseSubagentCodenameLocked lets future child-agent calls reuse callID's
+// friendly name while preserving the completed call's stable result label.
+func (r *liveChatRenderer) releaseSubagentCodenameLocked(callID string) {
+	callID = strings.TrimSpace(callID)
+	if callID == "" || r.activeSubagentCodenames == nil {
+		return
+	}
+	if codename := r.subagentCodenamesByCall[callID]; codename != "" {
+		delete(r.activeSubagentCodenames, codename)
+	}
+}
+
+// subagentCodename returns a deterministic terminal-only name for a child call.
+func subagentCodename(callID string) string {
+	codename, _ := subagentCodenameAt(callID)
+
+	return codename
+}
+
+// subagentCodenameAt returns the deterministic roster name and index for a
+// child call id.
+func subagentCodenameAt(callID string) (string, int) {
+	callID = strings.TrimSpace(callID)
+	if callID == "" {
+		return "", 0
+	}
 	hash := fnv.New64a()
 	_, _ = hash.Write([]byte(callID))
+	target := hash.Sum64() % uint64(len(subagentCodenames))
+	for index, codename := range subagentCodenames {
+		if uint64(index) == target {
+			return codename, index
+		}
+	}
 
-	return subagentCodenames[hash.Sum64()%uint64(len(subagentCodenames))]
+	return subagentCodenames[0], 0
 }
 
 // trimField removes a fixed field label and surrounding whitespace.

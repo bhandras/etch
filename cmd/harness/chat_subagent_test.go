@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -28,6 +29,42 @@ func TestLiveToolCallLabelRendersTaskAsSubagent(t *testing.T) {
 	}
 	if strings.Contains(label, "{") {
 		t.Fatalf("task label exposed raw JSON: %q", label)
+	}
+}
+
+// TestRendererAssignsUniqueActiveSubagentCodenames verifies hash collisions do
+// not make simultaneous child-agent rows share the same friendly name.
+func TestRendererAssignsUniqueActiveSubagentCodenames(t *testing.T) {
+	firstID, secondID := collidingSubagentCallIDs(t)
+	renderer := &liveChatRenderer{}
+
+	firstName := renderer.reserveSubagentCodenameLocked(firstID)
+	secondName := renderer.reserveSubagentCodenameLocked(secondID)
+	if firstName == secondName {
+		t.Fatalf("active subagents shared codename %q", firstName)
+	}
+	if got := renderer.subagentCodenameForCallLocked(
+		firstID,
+	); got != firstName {
+
+		t.Fatalf("first call label changed: got %q want %q", got,
+			firstName)
+	}
+	if got := renderer.subagentCodenameForCallLocked(
+		secondID,
+	); got != secondName {
+
+		t.Fatalf("second call label changed: got %q want %q", got,
+			secondName)
+	}
+
+	renderer.releaseSubagentCodenameLocked(firstID)
+	if got := renderer.subagentCodenameForCallLocked(
+		firstID,
+	); got != firstName {
+
+		t.Fatalf("completed call label changed: got %q want %q", got,
+			firstName)
 	}
 }
 
@@ -168,4 +205,23 @@ func quoteJSONString(text string) string {
 	}
 
 	return string(encoded)
+}
+
+// collidingSubagentCallIDs finds two deterministic call ids that map to the
+// same hash-based friendly name before live collision avoidance is applied.
+func collidingSubagentCallIDs(t *testing.T) (string, string) {
+	t.Helper()
+
+	seen := make(map[string]string)
+	for i := 0; i < 10000; i++ {
+		id := fmt.Sprintf("call_collision_%d", i)
+		codename := subagentCodename(id)
+		if prior := seen[codename]; prior != "" {
+			return prior, id
+		}
+		seen[codename] = id
+	}
+	t.Fatal("failed to find subagent codename collision")
+
+	return "", ""
 }

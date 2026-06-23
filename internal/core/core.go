@@ -53,6 +53,14 @@ type TurnRequest struct {
 	// this turn belongs to a child agent.
 	SubagentProfile string
 
+	// ForkSessionPath points at a parent session whose events should be
+	// inherited before this turn's own events.
+	ForkSessionPath string
+
+	// ForkBeforeEventID is the parent event excluded from inherited fork
+	// context.
+	ForkBeforeEventID string
+
 	// SystemText stores optional system instructions for the model context.
 	SystemText string
 
@@ -857,25 +865,40 @@ func openTurnStore(req TurnRequest) (*session.Store, []session.Event, error) {
 		if err != nil {
 			return nil, nil, err
 		}
+		history, err := forkedHistoryForEvents(events)
+		if err != nil {
+			_ = store.Close()
 
-		return store, events, nil
+			return nil, nil, err
+		}
+
+		return store, history, nil
 	}
 
 	store, started, err := session.CreateWithOptions(
 		req.SessionDir,
 		session.CreateOptions{
-			CWD:              req.CWD,
-			Title:            req.Prompt,
-			ParentSessionID:  req.ParentSessionID,
-			ParentToolCallID: req.ParentToolCallID,
-			SubagentProfile:  req.SubagentProfile,
+			CWD:               req.CWD,
+			Title:             req.Prompt,
+			ParentSessionID:   req.ParentSessionID,
+			ParentToolCallID:  req.ParentToolCallID,
+			SubagentProfile:   req.SubagentProfile,
+			ForkSessionPath:   req.ForkSessionPath,
+			ForkBeforeEventID: req.ForkBeforeEventID,
 		},
 	)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	return store, []session.Event{*started}, nil
+	history, err := forkedHistoryForEvents([]session.Event{*started})
+	if err != nil {
+		_ = store.Close()
+
+		return nil, nil, err
+	}
+
+	return store, history, nil
 }
 
 // responseContinuation stores a safe provider continuation request slice.
@@ -1388,7 +1411,10 @@ func appendModelMetrics(store *session.Store, parentID string,
 	}
 	event, err := store.Append(session.EventModelMetrics, parentID,
 		session.MetricsData{
+			Transport:             metrics.Transport,
 			Requests:              requests,
+			WebSocketConnections:  metrics.WebSocketConnections,
+			WebSocketReuses:       metrics.WebSocketReuses,
 			ContinuationRequests:  metrics.ContinuationRequests,
 			ContinuationFallbacks: metrics.ContinuationFallbacks,
 			ContinuationFallbackStatus: metrics.
@@ -1571,6 +1597,7 @@ func executeToolGroup(ctx context.Context, req TurnRequest,
 
 	results := make([]toolExecutionResult, len(calls))
 	errs := make([]error, len(calls))
+	laneLocks := parallelLaneLocks(calls, req.Tools)
 	var wg sync.WaitGroup
 	for i, call := range calls {
 		i := i
@@ -1579,6 +1606,8 @@ func executeToolGroup(ctx context.Context, req TurnRequest,
 		go func() {
 			defer wg.Done()
 			defer notifyToolCallFinished(req.Observer, call)
+			unlock := lockToolLane(call, req.Tools, laneLocks)
+			defer unlock()
 			results[i], errs[i] = executeOneToolCall(
 				ctx, req, store, assistantID, blockedCalls,
 				call,
@@ -1598,6 +1627,44 @@ func executeToolGroup(ctx context.Context, req TurnRequest,
 	}
 
 	return results, nil
+}
+
+// parallelLaneLocks builds one mutex per non-empty stateful lane in calls.
+func parallelLaneLocks(calls []model.ToolCall,
+	registry *tool.Registry) map[string]*sync.Mutex {
+
+	locks := make(map[string]*sync.Mutex)
+	if registry == nil {
+		return locks
+	}
+	for _, call := range calls {
+		lane := registry.ParallelLane(call)
+		if lane == "" {
+			continue
+		}
+		if _, ok := locks[lane]; !ok {
+			locks[lane] = &sync.Mutex{}
+		}
+	}
+
+	return locks
+}
+
+// lockToolLane serializes calls sharing a stateful lane and returns an unlock
+// function suitable for defer.
+func lockToolLane(call model.ToolCall, registry *tool.Registry,
+	locks map[string]*sync.Mutex) func() {
+
+	if registry == nil || len(locks) == 0 {
+		return func() {}
+	}
+	lock := locks[registry.ParallelLane(call)]
+	if lock == nil {
+		return func() {}
+	}
+	lock.Lock()
+
+	return lock.Unlock
 }
 
 // parallelExecutionGroup reports whether every call in group is parallel-safe.

@@ -99,8 +99,20 @@ func (t *taskTool) Spec() model.ToolSpec {
 	names := make([]string, 0, len(profiles))
 	var description strings.Builder
 	fmt.Fprintln(
-		&description, "Delegate an isolated task to a configured "+
-			"child-agent profile.",
+		&description, "Delegate a forked task to a configured "+
+			"child-agent profile. Child agents inherit the "+
+			"parent conversation before this task call, then "+
+			"receive the task and context below. When several "+
+			"independent child tasks are useful, request "+
+			"multiple task calls in the same model response so "+
+			"they can run concurrently. Prefer doing a cheap "+
+			"shared orientation pass yourself before "+
+			"delegating when that context would prevent "+
+			"children from rediscovering the same files. Give "+
+			"each child a non-overlapping scope and include "+
+			"known file paths, symbols, or conclusions in "+
+			"context instead of asking multiple children to "+
+			"map the same area.",
 	)
 	fmt.Fprintln(&description)
 	fmt.Fprintln(&description, "Available profiles:")
@@ -260,9 +272,11 @@ func (t *taskTool) runChild(ctx context.Context, callID string,
 		ParentToolCallID: nonEmptyString(
 			meta.ToolCallID, callID,
 		),
-		SubagentProfile: profile.Name,
-		Hooks:           hookRunner,
-		Observer:        progress,
+		ForkSessionPath:   forkSessionPath(meta.SessionPath),
+		ForkBeforeEventID: meta.AssistantEventID,
+		SubagentProfile:   profile.Name,
+		Hooks:             hookRunner,
+		Observer:          progress,
 	})
 	if err != nil {
 		return subagentRunResult{}, err
@@ -279,6 +293,20 @@ func (t *taskTool) runChild(ctx context.Context, callID string,
 		AssistantText: turn.AssistantText,
 		Status:        status,
 	}, nil
+}
+
+// forkSessionPath returns a stable parent session path for child replay.
+func forkSessionPath(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return path
+	}
+
+	return absolute
 }
 
 // childConfig returns parent configuration with profile overrides applied.
@@ -425,7 +453,11 @@ func (t *taskTool) childToolRegistry(
 			"tools: %s", profile.Name, strings.Join(missing, ", "))
 	}
 	if allowTask {
-		child.Register(newTaskTool(t.cfg, t.cwd, child))
+		if err := child.RegisterStrict(
+			newTaskTool(t.cfg, t.cwd, child),
+		); err != nil {
+			return nil, err
+		}
 	}
 
 	return child, nil
@@ -469,6 +501,9 @@ You are a configured child agent delegated by a parent agent.
 Work independently in this child session and return a concise result for the parent.
 Do not assume the parent saw your tool outputs.
 Mention important files, symbols, and verification steps when useful.
+Start from inherited parent context. Avoid rediscovering files, symbols, or
+facts that are already present unless your task explicitly asks you to verify
+one of them.
 Only spawn further subagents if the task tool is available and delegation would
 materially improve the result.
 `)
@@ -526,7 +561,8 @@ func taskParametersSchema(profileNames []string) json.RawMessage {
 			"context": map[string]any{
 				"type": "string",
 				"description": "Optional focused context, files, " +
-					"constraints, or assumptions.",
+					"constraints, or assumptions not already " +
+					"clear from the inherited parent context.",
 			},
 		},
 		"required": []string{

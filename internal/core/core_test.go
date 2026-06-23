@@ -398,6 +398,132 @@ func TestRunTurnContinuesExistingSession(t *testing.T) {
 	}
 }
 
+// TestRunTurnForksParentContext verifies child turns inherit parent messages
+// before the task-call boundary without reusing parent provider continuation.
+func TestRunTurnForksParentContext(t *testing.T) {
+	dir := t.TempDir()
+	parent, _, err := session.Create(dir, "/work/project", "parent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer parent.Close()
+	user, err := parent.Append(
+		session.EventUserMessage, parent.LastID(),
+		session.TextMessage(session.RoleUser, "parent prompt"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assistant, err := parent.Append(
+		session.EventAssistantMessage, user.ID,
+		session.TextMessage(session.RoleAssistant, "parent finding"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := parent.Append(
+		session.EventModelResponse, assistant.ID, session.ResponseData{
+			ProviderResponseID: "resp_parent",
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	boundary, err := parent.Append(
+		session.EventAssistantMessage, response.ID,
+		session.AssistantToolCallMessage("", []session.ToolCallData{{
+			ID:        "call_task",
+			Name:      tool.NameTask,
+			Arguments: `{"profile":"explore","task":"review"}`,
+		}}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	client := &scriptedToolClient{events: [][]model.Event{{
+		{
+			Type: model.EventTextDelta,
+			Text: "child done",
+		},
+		{
+			Type: model.EventDone,
+		},
+	}}}
+	result, err := RunTurn(context.Background(), TurnRequest{
+		SessionDir:        dir,
+		CWD:               "/work/project",
+		Prompt:            "child task",
+		ForkSessionPath:   parent.Path(),
+		ForkBeforeEventID: boundary.ID,
+		Model:             client,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.requests[0].PreviousResponseID != "" {
+		t.Fatalf("child reused parent continuation: %#v",
+			client.requests[0])
+	}
+	messages := client.requests[0].Messages
+	if len(messages) != 3 {
+		t.Fatalf("unexpected child messages: %#v", messages)
+	}
+	if messages[0].Role != model.RoleUser ||
+		messages[0].Content != "parent prompt" ||
+		messages[1].Role != model.RoleAssistant ||
+		messages[1].Content != "parent finding" ||
+		messages[2].Role != model.RoleUser ||
+		messages[2].Content != "child task" {
+
+		t.Fatalf("unexpected forked messages: %#v", messages)
+	}
+	childEvents, err := session.ReadAll(result.SessionPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var started session.StartedData
+	if err := json.Unmarshal(childEvents[0].Data, &started); err != nil {
+		t.Fatal(err)
+	}
+	if started.ForkSessionPath != parent.Path() ||
+		started.ForkBeforeEventID != boundary.ID {
+
+		t.Fatalf("unexpected fork metadata: %#v", started)
+	}
+
+	resumeClient := &scriptedToolClient{events: [][]model.Event{{
+		{
+			Type: model.EventTextDelta,
+			Text: "continued",
+		},
+		{
+			Type: model.EventDone,
+		},
+	}}}
+	_, err = RunTurn(context.Background(), TurnRequest{
+		SessionPath: result.SessionPath,
+		CWD:         "/work/project",
+		Prompt:      "child follow-up",
+		Model:       resumeClient,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resumed := resumeClient.requests[0].Messages
+	if len(resumed) != 5 {
+		t.Fatalf("unexpected resumed child messages: %#v", resumed)
+	}
+	if resumed[0].Content != "parent prompt" ||
+		resumed[1].Content != "parent finding" ||
+		resumed[2].Content != "child task" ||
+		resumed[3].Content != "child done" ||
+		resumed[4].Content != "child follow-up" {
+
+		t.Fatalf("resumed child lost fork context: %#v", resumed)
+	}
+}
+
 // TestRunTurnContinuesWithLifecycleHooks verifies non-context hooks do not
 // force full-context provider requests.
 func TestRunTurnContinuesWithLifecycleHooks(t *testing.T) {
@@ -892,6 +1018,77 @@ func TestRunTurnExecutesReadOnlyToolGroupConcurrently(t *testing.T) {
 
 		t.Fatalf("tool results were not appended in call order: %#v",
 			toolTexts)
+	}
+}
+
+// TestRunTurnSerializesSharedParallelLane verifies stateful parallel-safe
+// tools can opt into a per-resource lane without disabling the whole batch.
+func TestRunTurnSerializesSharedParallelLane(t *testing.T) {
+	laneTool := newLaneBlockingTool()
+	registry := tool.NewRegistry()
+	registry.Register(laneTool)
+	client := &scriptedToolClient{
+		events: [][]model.Event{
+			{
+				{
+					Type: model.EventToolCall,
+					ToolCall: model.ToolCall{
+						ID:        "call_1",
+						Name:      "lane_read",
+						Arguments: `{"path":"one"}`,
+					},
+				},
+				{
+					Type: model.EventToolCall,
+					ToolCall: model.ToolCall{
+						ID:        "call_2",
+						Name:      "lane_read",
+						Arguments: `{"path":"two"}`,
+					},
+				},
+				{
+					Type: model.EventDone,
+				},
+			},
+			{
+				{
+					Type: model.EventTextDelta,
+					Text: "done",
+				},
+				{
+					Type: model.EventDone,
+				},
+			},
+		},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := RunTurn(ctx, TurnRequest{
+			Prompt:     "read both",
+			SessionDir: t.TempDir(),
+			CWD:        "/work/project",
+			Model:      client,
+			Tools:      registry,
+		})
+		done <- err
+	}()
+
+	<-laneTool.started
+	select {
+	case second := <-laneTool.started:
+		t.Fatalf("shared-lane call started concurrently: %s", second)
+
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(laneTool.release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if got := laneTool.StartedCount(); got != 2 {
+		t.Fatalf("expected two serialized starts, got %d", got)
 	}
 }
 
@@ -1728,6 +1925,21 @@ type blockingReadTool struct {
 	started int
 }
 
+// laneBlockingTool records starts while all calls share one parallel lane.
+type laneBlockingTool struct {
+	// started receives one value each time Execute begins.
+	started chan string
+
+	// release lets the first call return so the second lane call may start.
+	release chan struct{}
+
+	// mu protects count.
+	mu sync.Mutex
+
+	// count records how many calls entered Execute.
+	count int
+}
+
 // callSafetyTool classifies each call's parallel safety from its arguments.
 type callSafetyTool struct{}
 
@@ -1765,6 +1977,14 @@ func newBlockingReadTool(expected int) *blockingReadTool {
 	}
 }
 
+// newLaneBlockingTool creates a fixture for shared-lane scheduling tests.
+func newLaneBlockingTool() *laneBlockingTool {
+	return &laneBlockingTool{
+		started: make(chan string, 2),
+		release: make(chan struct{}),
+	}
+}
+
 // Spec returns the read tool schema used by the blocking fixture.
 func (t *blockingReadTool) Spec() model.ToolSpec {
 	return model.ToolSpec{
@@ -1794,6 +2014,54 @@ func (t *blockingReadTool) Execute(ctx context.Context, arguments string) (
 	case <-t.release:
 		return tool.Result{Text: "read " + arguments}, nil
 	}
+}
+
+// StartedCount returns how many lane calls entered Execute.
+func (t *laneBlockingTool) StartedCount() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	return t.count
+}
+
+// Spec returns the schema for the shared-lane test tool.
+func (t *laneBlockingTool) Spec() model.ToolSpec {
+	return model.ToolSpec{
+		Name:        "lane_read",
+		Description: "Block while sharing one parallel lane.",
+		Parameters:  json.RawMessage(`{"type":"object"}`),
+	}
+}
+
+// Execute records entry and blocks the first call until release closes.
+func (t *laneBlockingTool) Execute(ctx context.Context, arguments string) (
+	tool.Result, error) {
+
+	t.mu.Lock()
+	t.count++
+	count := t.count
+	t.mu.Unlock()
+	t.started <- arguments
+	if count == 1 {
+		select {
+		case <-ctx.Done():
+			return tool.Result{}, ctx.Err()
+
+		case <-t.release:
+		}
+	}
+
+	return tool.Result{Text: arguments}, nil
+}
+
+// ParallelSafe reports every lane_read call as locally parallel-safe.
+func (t *laneBlockingTool) ParallelSafe(call model.ToolCall) bool {
+	return true
+}
+
+// ParallelLane returns the shared test lane used to serialize calls.
+func (t *laneBlockingTool) ParallelLane(call model.ToolCall) string {
+	return "lane"
 }
 
 // Spec returns the schema for the per-call safety test tool.

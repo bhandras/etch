@@ -128,6 +128,13 @@ type liveChatRenderer struct {
 	// subagentStatuses stores compact live status by parent tool-call id.
 	subagentStatuses map[string]subagentLiveStatus
 
+	// subagentCodenamesByCall stores stable terminal names for child calls.
+	subagentCodenamesByCall map[string]string
+
+	// activeSubagentCodenames stores friendly names reserved by running
+	// child calls so simultaneously active rows stay visually distinct.
+	activeSubagentCodenames map[string]bool
+
 	// statusFrame is the current pulsing-dot animation frame index.
 	statusFrame int
 
@@ -333,7 +340,7 @@ func (r *liveChatRenderer) renderToolBatch(calls []model.ToolCall) {
 	r.renderWithOutputLocked(func() {
 		r.closeStreamLocked()
 		r.printSeparator()
-		subagents := subagentCalls(calls)
+		subagents := r.subagentCallsLocked(calls)
 		if len(subagents) > 0 {
 			lines := []string{
 				fmt.Sprintf("Starting %d subagents",
@@ -504,8 +511,8 @@ func (r *liveChatRenderer) setActiveSubagents(count int) {
 }
 
 // startSubagentStatus registers a live child-agent status row.
-func (r *liveChatRenderer) startSubagentStatus(callID string, codename string,
-	profile string, task string, message string) {
+func (r *liveChatRenderer) startSubagentStatus(callID string, profile string,
+	task string, message string) {
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -519,6 +526,7 @@ func (r *liveChatRenderer) startSubagentStatus(callID string, codename string,
 	if _, ok := r.subagentStatuses[callID]; !ok {
 		r.subagentOrder = append(r.subagentOrder, callID)
 	}
+	codename := r.reserveSubagentCodenameLocked(callID)
 	r.subagentStatuses[callID] = subagentLiveStatus{
 		Codename: strings.TrimSpace(codename),
 		Profile:  nonEmptyStatusProfile(profile),
@@ -554,6 +562,7 @@ func (r *liveChatRenderer) removeSubagentStatus(callID string) {
 		return
 	}
 	delete(r.subagentStatuses, callID)
+	r.releaseSubagentCodenameLocked(callID)
 	for i, id := range r.subagentOrder {
 		if id == callID {
 			r.subagentOrder = append(
@@ -621,6 +630,7 @@ func (r *liveChatRenderer) stopStatus() {
 	r.activeSubagents = 0
 	r.subagentOrder = nil
 	r.subagentStatuses = nil
+	r.activeSubagentCodenames = nil
 	if r.composer != nil {
 		r.composer.ClearStatus()
 	} else {

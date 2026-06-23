@@ -342,6 +342,105 @@ func TestChatObserverAddsSubagentUsage(t *testing.T) {
 	}
 }
 
+// TestChatObserverAddsLiveSubagentUsageOnce verifies child-agent progress
+// updates the footer before the final task result without double counting.
+func TestChatObserverAddsLiveSubagentUsageOnce(t *testing.T) {
+	child, _, err := session.Create(t.TempDir(), ".", "child")
+	if err != nil {
+		t.Fatalf("create child session: %v", err)
+	}
+	if _, err := child.Append(
+		session.EventModelUsage, "", session.UsageData{
+			InputTokens:       1000,
+			CachedInputTokens: 400,
+			OutputTokens:      200,
+			TotalTokens:       1200,
+		},
+	); err != nil {
+
+		t.Fatalf("append child usage: %v", err)
+	}
+	if _, err := child.Append(
+		session.EventModelMetrics, "", session.MetricsData{
+			Requests:      2,
+			RequestBytes:  2048,
+			ResponseBytes: 1024,
+		},
+	); err != nil {
+
+		t.Fatalf("append child metrics: %v", err)
+	}
+	if err := child.Close(); err != nil {
+		t.Fatalf("close child session: %v", err)
+	}
+
+	var stdout bytes.Buffer
+	composer := &terminalChatInput{stdout: &stdout}
+	chrome := newChatChrome(
+		cliConfig{
+			model: "gpt-test",
+		}, ".",
+		chatChromeStatus{},
+	)
+	renderer := newLiveChatRenderer(&stdout, false)
+	renderer.composer = composer
+	observer := &chatObserver{
+		renderer: renderer,
+		chrome:   chrome,
+	}
+
+	observer.ToolProgress(tool.ProgressEvent{
+		ToolCallID: "call_1",
+		Usage: model.Usage{
+			InputTokens:       1000,
+			CachedInputTokens: 400,
+			OutputTokens:      200,
+			TotalTokens:       1200,
+		},
+	})
+	observer.ToolProgress(tool.ProgressEvent{
+		ToolCallID: "call_1",
+		Metrics: model.Metrics{
+			Requests:      2,
+			RequestBytes:  2048,
+			ResponseBytes: 1024,
+		},
+	})
+	if !strings.Contains(composer.footerText, "1,000 in") ||
+		!strings.Contains(composer.footerText, "2 req") {
+
+		t.Fatalf("live subagent counters missing from footer: %q",
+			composer.footerText)
+	}
+
+	observer.EventAppended(
+		messageEvent(
+			t, session.EventToolMessage, session.ToolMessage(
+				"call_1", tool.NameTask,
+				"Task review completed.\n\nProfile: review\n"+
+					"Session: child\nSession path: "+child.Path()+
+					"\nDuration: 1s\nModel calls: 1\n"+
+					"Tool calls: 0\n\nResult:\ndone\n",
+			),
+		),
+	)
+
+	if observer.usage.InputTokens != 1000 ||
+		observer.usage.CachedInputTokens != 400 ||
+		observer.usage.OutputTokens != 200 {
+
+		t.Fatalf("live subagent usage was double counted: %#v",
+			observer.usage)
+	}
+	if observer.timing.ModelCalls != 2 ||
+		observer.timing.RequestBytes != 2048 ||
+		observer.timing.ResponseBytes != 1024 {
+
+		t.Fatalf("live subagent timing was double counted: %#v",
+			observer.timing)
+	}
+}
+
 // TestChatObserverAddsModelMetrics verifies provider metrics refresh the live
 // prompt footer as each model call is persisted.
 func TestChatObserverAddsModelMetrics(t *testing.T) {

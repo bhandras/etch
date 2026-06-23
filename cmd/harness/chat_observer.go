@@ -38,6 +38,14 @@ type chatObserver struct {
 	// terminal-only parallel completion callbacks.
 	partialSubagentResults map[string]bool
 
+	// liveSubagentUsage stores task calls whose child usage counters were
+	// already folded into the parent footer through progress events.
+	liveSubagentUsage map[string]bool
+
+	// liveSubagentMetrics stores task calls whose child transport counters
+	// were already folded into the parent footer through progress events.
+	liveSubagentMetrics map[string]bool
+
 	// streamedReasoning reports whether reasoning deltas were received.
 	streamedReasoning bool
 
@@ -56,10 +64,6 @@ type chatObserver struct {
 
 	// timing stores coarse timing reported by the core after the turn.
 	timing core.TurnTiming
-
-	// subagentTiming stores completed child-agent transport counters that
-	// need to be merged with parent timing.
-	subagentTiming core.TurnTiming
 }
 
 // EventAppended renders model-visible assistant and tool events.
@@ -201,8 +205,7 @@ func (o *chatObserver) startSubagentTool(call model.ToolCall) {
 	o.renderer.setActiveSubagents(len(o.activeSubagents))
 	if display, ok := parseSubagentCall(call.Arguments); ok {
 		o.renderer.startSubagentStatus(
-			call.ID, subagentCodename(call.ID), display.Profile,
-			display.Task, "starting",
+			call.ID, display.Profile, display.Task, "starting",
 		)
 	}
 }
@@ -271,10 +274,14 @@ func (o *chatObserver) recordSubagentActivity(message session.MessageData) {
 		return
 	}
 	usage := modelUsageFromSessionStatus(status)
-	if !usage.Empty() {
+	if !usage.Empty() &&
+		!o.subagentUsageAlreadyRecorded(message.ToolCallID) {
+
 		o.addUsage(usage)
 	}
-	o.addSubagentStats(status)
+	o.addSubagentStats(
+		status, o.subagentMetricsAlreadyRecorded(message.ToolCallID),
+	)
 }
 
 // addUsage records provider usage and refreshes the prompt footer totals.
@@ -290,17 +297,51 @@ func (o *chatObserver) addUsage(usage model.Usage) {
 
 // addSubagentStats records child-agent transport and tool counters for the
 // current parent turn footer.
-func (o *chatObserver) addSubagentStats(status session.Status) {
+func (o *chatObserver) addSubagentStats(status session.Status,
+	skipTiming bool) {
+
 	timing := turnTimingFromSessionStatus(status)
 	o.mu.Lock()
 	defer o.mu.Unlock()
 
 	o.toolCalls += status.ToolCalls
-	o.subagentTiming = addTurnTiming(o.subagentTiming, timing)
+	if skipTiming {
+		return
+	}
 	o.timing = addTurnTiming(o.timing, timing)
 	if o.renderer.composer != nil && o.chrome != nil {
 		o.renderer.composer.SetFooter(o.chrome.AddTiming(timing))
 	}
+}
+
+// subagentUsageAlreadyRecorded reports whether callID contributed live usage
+// counters and clears that marker for the final task result.
+func (o *chatObserver) subagentUsageAlreadyRecorded(callID string) bool {
+	if strings.TrimSpace(callID) == "" {
+		return false
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	recorded := o.liveSubagentUsage[callID]
+	delete(o.liveSubagentUsage, callID)
+
+	return recorded
+}
+
+// subagentMetricsAlreadyRecorded reports whether callID contributed live
+// transport counters and clears that marker for the final task result.
+func (o *chatObserver) subagentMetricsAlreadyRecorded(callID string) bool {
+	if strings.TrimSpace(callID) == "" {
+		return false
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	recorded := o.liveSubagentMetrics[callID]
+	delete(o.liveSubagentMetrics, callID)
+
+	return recorded
 }
 
 // addTiming records provider transport counters and refreshes the footer.
@@ -316,7 +357,48 @@ func (o *chatObserver) addTiming(timing core.TurnTiming) {
 
 // ToolProgress updates live progress rows for long-running tools.
 func (o *chatObserver) ToolProgress(event tool.ProgressEvent) {
-	o.renderer.updateSubagentStatus(event.ToolCallID, event.Message)
+	if !event.Usage.Empty() {
+		o.recordLiveSubagentUsage(event.ToolCallID, event.Usage)
+	}
+	if !event.Metrics.Empty() {
+		o.recordLiveSubagentMetrics(event.ToolCallID, event.Metrics)
+	}
+	if strings.TrimSpace(event.Message) != "" {
+		o.renderer.updateSubagentStatus(event.ToolCallID, event.Message)
+	}
+}
+
+// recordLiveSubagentUsage folds child-agent token counters into the live parent
+// footer as soon as the child reports them.
+func (o *chatObserver) recordLiveSubagentUsage(callID string,
+	usage model.Usage) {
+
+	if strings.TrimSpace(callID) != "" {
+		o.mu.Lock()
+		if o.liveSubagentUsage == nil {
+			o.liveSubagentUsage = make(map[string]bool)
+		}
+		o.liveSubagentUsage[callID] = true
+		o.mu.Unlock()
+	}
+	o.addUsage(usage)
+}
+
+// recordLiveSubagentMetrics folds child-agent transport counters into the live
+// parent footer as soon as the child reports them.
+func (o *chatObserver) recordLiveSubagentMetrics(callID string,
+	metrics model.Metrics) {
+
+	timing := turnTimingFromModelMetrics(metrics)
+	if strings.TrimSpace(callID) != "" {
+		o.mu.Lock()
+		if o.liveSubagentMetrics == nil {
+			o.liveSubagentMetrics = make(map[string]bool)
+		}
+		o.liveSubagentMetrics[callID] = true
+		o.mu.Unlock()
+	}
+	o.addTiming(timing)
 }
 
 // ModelTextDelta records assistant stream progress without rendering raw
