@@ -428,6 +428,27 @@ func TestTerminalChatInputConsumesEscapeSequences(t *testing.T) {
 	}
 }
 
+// TestTerminalChatInputDetectsBracketedPaste verifies paste start sequences are
+// handled by the editor instead of being treated as ordinary CSI input.
+func TestTerminalChatInputDetectsBracketedPaste(t *testing.T) {
+	reader := bufio.NewReader(
+		strings.NewReader("[200~hello\nworld\x1b[201~"),
+	)
+	input := &terminalChatInput{}
+
+	action := input.escapeSequenceAction(reader)
+	if action != escapeSequencePasteStart {
+		t.Fatalf("escape action = %d, want paste start", action)
+	}
+	text, err := input.consumeBracketedPaste(reader)
+	if err != nil {
+		t.Fatalf("consume paste: %v", err)
+	}
+	if text != "hello\nworld" {
+		t.Fatalf("pasted text = %q, want multiline payload", text)
+	}
+}
+
 // TestTerminalChatInputIgnoresStandaloneEscapeConsumption verifies a bare ESC
 // remains available for cancellation.
 func TestTerminalChatInputIgnoresStandaloneEscapeConsumption(t *testing.T) {
@@ -440,6 +461,31 @@ func TestTerminalChatInputIgnoresStandaloneEscapeConsumption(t *testing.T) {
 	}
 	if reader.Buffered() != 1 {
 		t.Fatalf("standalone escape consumed buffered input")
+	}
+}
+
+// TestTerminalChatInputRendersPastedNewlines verifies pasted multiline text
+// remains one prompt island instead of becoming several submitted prompts.
+func TestTerminalChatInputRendersPastedNewlines(t *testing.T) {
+	t.Setenv("COLUMNS", "32")
+	var stdout bytes.Buffer
+	input := &terminalChatInput{
+		stdout: &stdout,
+		input:  []rune("first\nsecond"),
+	}
+
+	if err := input.renderLocked(); err != nil {
+		t.Fatalf("render multiline prompt: %v", err)
+	}
+
+	got := stdout.String()
+	if !strings.Contains(got, "> first") ||
+		!strings.Contains(got, "second") {
+
+		t.Fatalf("multiline prompt did not render both rows: %q", got)
+	}
+	if input.lastRows != 4 {
+		t.Fatalf("multiline composer rows = %d, want 4", input.lastRows)
 	}
 }
 

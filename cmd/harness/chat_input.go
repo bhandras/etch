@@ -125,6 +125,21 @@ const (
 
 	// escapeSequenceHistoryNext selects the next prompt in history.
 	escapeSequenceHistoryNext
+
+	// escapeSequencePasteStart begins a bracketed paste payload.
+	escapeSequencePasteStart
+)
+
+const (
+	// bracketedPasteEnable asks supporting terminals to wrap pasted text in
+	// explicit start/end escape sequences.
+	bracketedPasteEnable = "\x1b[?2004h"
+
+	// bracketedPasteDisable restores the terminal's normal paste behavior.
+	bracketedPasteDisable = "\x1b[?2004l"
+
+	// bracketedPasteEnd terminates a bracketed paste payload.
+	bracketedPasteEnd = "\x1b[201~"
 )
 
 // newChatInput selects the richest prompt reader supported by the streams.
@@ -214,8 +229,14 @@ func (i *terminalChatInput) ReadLine() (string, bool, error) {
 	i.mu.Lock()
 	i.input = i.input[:0]
 	i.resetHistoryNavigationLocked()
+	fmt.Fprint(i.stdout, bracketedPasteEnable)
 	err = i.renderLocked()
 	i.mu.Unlock()
+	defer func() {
+		i.mu.Lock()
+		fmt.Fprint(i.stdout, bracketedPasteDisable)
+		i.mu.Unlock()
+	}()
 	if err != nil {
 		return "", false, err
 	}
@@ -273,6 +294,21 @@ func (i *terminalChatInput) ReadLine() (string, bool, error) {
 
 				break
 			}
+			if action == escapeSequencePasteStart {
+				text, pasteErr := i.consumeBracketedPaste(
+					reader,
+				)
+				if pasteErr != nil {
+					return "", false, pasteErr
+				}
+				i.mu.Lock()
+				i.resetHistoryNavigationLocked()
+				i.appendPastedTextLocked(text)
+				err = i.renderLocked()
+				i.mu.Unlock()
+
+				break
+			}
 			if action == escapeSequenceConsumed {
 				continue
 			}
@@ -321,12 +357,16 @@ func (i *terminalChatInput) escapeSequenceAction(
 	switch peeked[0] {
 	case '[', 'O':
 		_, _ = reader.ReadByte()
-		switch i.consumeEscapeSequenceBody(reader) {
-		case 'A':
+		sequence := i.consumeEscapeSequenceBody(reader)
+		switch sequence {
+		case "A":
 			return escapeSequenceHistoryPrevious
 
-		case 'B':
+		case "B":
 			return escapeSequenceHistoryNext
+
+		case "200~":
+			return escapeSequencePasteStart
 
 		default:
 			return escapeSequenceConsumed
@@ -337,19 +377,51 @@ func (i *terminalChatInput) escapeSequenceAction(
 	}
 }
 
-// consumeEscapeSequenceBody skips a CSI or SS3 sequence and returns its final.
+// consumeEscapeSequenceBody skips a CSI or SS3 sequence and returns its body.
 func (i *terminalChatInput) consumeEscapeSequenceBody(
-	reader *bufio.Reader) byte {
+	reader *bufio.Reader) string {
 
+	var body []byte
 	for {
 		next, err := reader.ReadByte()
 		if err != nil {
-			return 0
+			return string(body)
 		}
+		body = append(body, next)
 		if next >= '@' && next <= '~' {
-			return next
+			return string(body)
 		}
 	}
+}
+
+// consumeBracketedPaste reads pasted text until the terminal paste terminator.
+func (i *terminalChatInput) consumeBracketedPaste(reader *bufio.Reader) (string,
+	error) {
+
+	var payload []byte
+	for {
+		next, err := reader.ReadByte()
+		if err != nil {
+			return "", err
+		}
+		payload = append(payload, next)
+		if len(payload) >= len(bracketedPasteEnd) &&
+			string(payload[len(payload)-len(bracketedPasteEnd):]) ==
+				bracketedPasteEnd {
+
+			payload = payload[:len(payload)-len(bracketedPasteEnd)]
+
+			return normalizePastedText(string(payload)), nil
+		}
+	}
+}
+
+// normalizePastedText gives raw terminal paste newlines one internal form.
+func normalizePastedText(text string) string {
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
+
+	return text
 }
 
 // SetHistory replaces the prompt history used by interactive navigation.
@@ -409,6 +481,15 @@ func (i *terminalChatInput) resetHistoryNavigationLocked() {
 	i.historyActive = false
 	i.historyIndex = 0
 	i.historyDraft = i.historyDraft[:0]
+}
+
+// appendPastedTextLocked appends printable pasted text, preserving newlines.
+func (i *terminalChatInput) appendPastedTextLocked(text string) {
+	for _, r := range text {
+		if isPromptRune(r) || r == '\n' || r == '\t' {
+			i.input = append(i.input, r)
+		}
+	}
 }
 
 // Close restores any terminal state owned by the input reader.
@@ -721,13 +802,24 @@ func isPromptRune(r rune) bool {
 // wrappedPromptRows wraps the prompt marker and input at terminal width.
 func wrappedPromptRows(input []rune, width int) []string {
 	width = promptContentWidth(width)
-	content := append([]rune("> "), input...)
-	rows := make([]string, 0, len(content)/width+1)
-	for len(content) > width {
-		rows = append(rows, string(content[:width]))
-		content = content[width:]
+	logicalLines := strings.Split(string(input), "\n")
+	rows := make([]string, 0, len(input)/width+1)
+	for index, line := range logicalLines {
+		prefix := ""
+		if index == 0 {
+			prefix = "> "
+		}
+		content := []rune(prefix + line)
+		if len(content) == 0 {
+			rows = append(rows, "")
+			continue
+		}
+		for len(content) > width {
+			rows = append(rows, string(content[:width]))
+			content = content[width:]
+		}
+		rows = append(rows, string(content))
 	}
-	rows = append(rows, string(content))
 
 	return rows
 }
@@ -735,13 +827,33 @@ func wrappedPromptRows(input []rune, width int) []string {
 // promptCursorColumn returns the cursor column after the current input text.
 func promptCursorColumn(input []rune, width int) int {
 	width = promptContentWidth(width)
-	content := len(input) + len("> ")
+	content := len(input)
+	for index := len(input) - 1; index >= 0; index-- {
+		if input[index] == '\n' {
+			content = len(input) - index - 1
+			break
+		}
+	}
+	if !containsPromptNewline(input) {
+		content += len("> ")
+	}
 	column := content % width
 	if column == 0 && content > 0 {
 		return width
 	}
 
 	return column
+}
+
+// containsPromptNewline reports whether the current prompt spans logical rows.
+func containsPromptNewline(input []rune) bool {
+	for _, r := range input {
+		if r == '\n' {
+			return true
+		}
+	}
+
+	return false
 }
 
 // composerPrefixRows returns rows rendered before the prompt island itself.
