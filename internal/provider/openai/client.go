@@ -124,12 +124,29 @@ func (c *Client) Stream(ctx context.Context, req model.Request) (
 	}
 
 	if c.apiMode() == APIResponses && c.transportMode() != TransportHTTP {
+		if c.transportMode() == TransportAuto &&
+			websocketHTTPFallbackActive(req.SessionID) {
+			return c.streamHTTP(
+				ctx, requestWithoutContinuation(req),
+			)
+		}
+
 		events, err := c.streamResponsesWebSocket(ctx, req)
+		if err == nil && c.transportMode() == TransportAuto {
+			return c.streamResponsesAutoFallback(ctx, req, events), nil
+		}
 		if err == nil || c.transportMode() == TransportWebSocket {
 			return events, err
 		}
 		req = requestWithoutContinuation(req)
 	}
+
+	return c.streamHTTP(ctx, req)
+}
+
+// streamHTTP starts the configured OpenAI API over HTTP/SSE.
+func (c *Client) streamHTTP(ctx context.Context, req model.Request) (
+	<-chan model.Event, error) {
 
 	httpReq, requestMetrics, err := c.newRequest(ctx, req)
 	if err != nil {
@@ -187,6 +204,57 @@ func (c *Client) Stream(ctx context.Context, req model.Request) (
 	}
 
 	return events, nil
+}
+
+// streamResponsesAutoFallback forwards WebSocket events and falls back to
+// HTTP/SSE when auto transport gets a pre-payload WebSocket error.
+func (c *Client) streamResponsesAutoFallback(ctx context.Context,
+	req model.Request,
+	websocketEvents <-chan model.Event) <-chan model.Event {
+
+	events := make(chan model.Event)
+	go func() {
+		defer close(events)
+
+		seenEvent := false
+		for event := range websocketEvents {
+			if event.Type == model.EventError && !seenEvent {
+				recordWebSocketHTTPFallback(req.SessionID)
+				c.forwardHTTPFallback(
+					ctx, requestWithoutContinuation(req),
+					events,
+				)
+
+				return
+			}
+			if !sendEvent(ctx, events, event) {
+				return
+			}
+			seenEvent = true
+		}
+	}()
+
+	return events
+}
+
+// forwardHTTPFallback streams a full-context HTTP retry into events.
+func (c *Client) forwardHTTPFallback(ctx context.Context, req model.Request,
+	events chan<- model.Event) {
+
+	httpEvents, err := c.streamHTTP(ctx, req)
+	if err != nil {
+		sendEvent(ctx, events, model.Event{
+			Type: model.EventError,
+			Err:  fmt.Sprintf("fallback openai http: %v", err),
+		})
+
+		return
+	}
+	for event := range httpEvents {
+		if !sendEvent(ctx, events, event) {
+			return
+		}
+	}
 }
 
 // shouldRetryWithoutContinuation reports whether a failed continuation should

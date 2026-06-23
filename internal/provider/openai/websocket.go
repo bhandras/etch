@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -64,6 +65,37 @@ var websocketCache = struct {
 	entries map[string]*websocketCacheEntry
 }{entries: map[string]*websocketCacheEntry{}}
 
+// websocketHTTPFallbackSessions records sessions that should skip auto
+// WebSocket attempts after a pre-stream transport failure.
+var websocketHTTPFallbackSessions = struct {
+	sync.Mutex
+	sessions map[string]struct{}
+}{sessions: map[string]struct{}{}}
+
+// websocketHTTPFallbackActive reports whether auto transport should go
+// directly to HTTP for sessionID.
+func websocketHTTPFallbackActive(sessionID string) bool {
+	if sessionID == "" {
+		return false
+	}
+	websocketHTTPFallbackSessions.Lock()
+	defer websocketHTTPFallbackSessions.Unlock()
+	_, ok := websocketHTTPFallbackSessions.sessions[sessionID]
+
+	return ok
+}
+
+// recordWebSocketHTTPFallback marks sessionID as HTTP-only for auto
+// transport after WebSocket closes before producing a response event.
+func recordWebSocketHTTPFallback(sessionID string) {
+	if sessionID == "" {
+		return
+	}
+	websocketHTTPFallbackSessions.Lock()
+	defer websocketHTTPFallbackSessions.Unlock()
+	websocketHTTPFallbackSessions.sessions[sessionID] = struct{}{}
+}
+
 // websocketCacheEntry is one idle connection that may carry continuation
 // state.
 type websocketCacheEntry struct {
@@ -85,26 +117,57 @@ type responseCreateRequest struct {
 	responseRequest
 }
 
+// websocketStreamAttempt tracks one sent Responses WebSocket request.
+type websocketStreamAttempt struct {
+	// lease owns the connection used by this attempt.
+	lease websocketLease
+
+	// reused reports whether the attempt wrote to a cached connection.
+	reused bool
+
+	// metrics describes the request bytes and shape for this attempt.
+	metrics model.Metrics
+}
+
 // streamResponsesWebSocket starts a Responses WebSocket request.
 func (c *Client) streamResponsesWebSocket(ctx context.Context,
 	req model.Request) (<-chan model.Event, error) {
 
-	lease, reused, err := c.acquireResponsesWebSocket(ctx, req.SessionID)
+	attempt, err := c.startResponsesWebSocketAttempt(ctx, req, true)
 	if err != nil {
 		return nil, err
 	}
 
-	body, requestMetrics, err := c.responsesRequestBody(req, reused)
+	events := make(chan model.Event)
+	go c.streamResponsesWebSocketEvents(ctx, req, attempt, events)
+
+	return events, nil
+}
+
+// startResponsesWebSocketAttempt opens or reuses a socket, writes the request,
+// and returns the sent attempt for the reader goroutine to consume.
+func (c *Client) startResponsesWebSocketAttempt(ctx context.Context,
+	req model.Request, allowContinuation bool) (websocketStreamAttempt,
+	error) {
+
+	lease, reused, err := c.acquireResponsesWebSocket(ctx, req.SessionID)
+	if err != nil {
+		return websocketStreamAttempt{}, err
+	}
+
+	body, requestMetrics, err := c.responsesRequestBody(
+		req, reused && allowContinuation,
+	)
 	if err != nil {
 		lease.release(false)
 
-		return nil, err
+		return websocketStreamAttempt{}, err
 	}
 	body, err = websocketRequestBody(body)
 	if err != nil {
 		lease.release(false)
 
-		return nil, err
+		return websocketStreamAttempt{}, err
 	}
 	requestMetrics.RequestBytes = len(body)
 	requestMetrics.Transport = TransportWebSocket
@@ -116,18 +179,15 @@ func (c *Client) streamResponsesWebSocket(ctx context.Context,
 	if err := lease.conn.WriteText(ctx, body); err != nil {
 		lease.release(false)
 
-		return nil, fmt.Errorf("write openai websocket request: %w",
-			err)
+		return websocketStreamAttempt{}, fmt.Errorf("write openai "+
+			"websocket request: %w", err)
 	}
 
-	events := make(chan model.Event)
-	metrics := streamMetrics{
-		startedAt:      time.Now(),
-		requestMetrics: requestMetrics,
-	}
-	go streamResponsesWebSocketEvents(ctx, lease, events, metrics)
-
-	return events, nil
+	return websocketStreamAttempt{
+		lease:   lease,
+		reused:  reused,
+		metrics: requestMetrics,
+	}, nil
 }
 
 // websocketRequestBody adds the response.create command type to a Responses
@@ -144,23 +204,66 @@ func websocketRequestBody(body []byte) ([]byte, error) {
 	})
 }
 
-// streamResponsesWebSocketEvents decodes WebSocket JSON messages as Responses
-// stream events.
-func streamResponsesWebSocketEvents(ctx context.Context, lease websocketLease,
-	events chan<- model.Event, metrics streamMetrics) {
+// streamResponsesWebSocketEvents decodes WebSocket JSON messages and retries a
+// stale cached socket once before any response event is observed.
+func (c *Client) streamResponsesWebSocketEvents(ctx context.Context,
+	req model.Request, attempt websocketStreamAttempt,
+	events chan<- model.Event) {
 
 	defer close(events)
+
+	var carriedMetrics model.Metrics
+	for {
+		metrics := streamMetrics{
+			startedAt: time.Now(),
+			requestMetrics: carriedMetrics.Add(
+				attempt.metrics,
+			),
+		}
+		if !streamResponsesWebSocketAttempt(
+			ctx, attempt, events, metrics,
+		) {
+			return
+		}
+
+		carriedMetrics = carriedMetrics.Add(attempt.metrics)
+		nextAttempt, err := c.startResponsesWebSocketAttempt(
+			ctx, req, false,
+		)
+		if err != nil {
+			sendEvent(ctx, events, model.Event{
+				Type: model.EventError,
+				Err: fmt.Sprintf(
+					"retry openai websocket: %v", err,
+				),
+			})
+
+			return
+		}
+		attempt = nextAttempt
+	}
+}
+
+// streamResponsesWebSocketAttempt forwards events from one sent request. It
+// returns true when the caller should retry with a fresh full-context request.
+func streamResponsesWebSocketAttempt(ctx context.Context,
+	attempt websocketStreamAttempt, events chan<- model.Event,
+	metrics streamMetrics) bool {
 
 	decoder := responseStreamDecoder{}
 	keep := true
 	defer func() {
-		lease.release(keep)
+		attempt.lease.release(keep)
 	}()
 
+	seenPayload := false
 	for {
-		payload, err := lease.conn.ReadText(ctx)
+		payload, err := attempt.lease.conn.ReadText(ctx)
 		if err != nil {
 			keep = false
+			if shouldRetryStaleWebSocket(attempt, seenPayload, err) {
+				return true
+			}
 			sendEvent(ctx, events, model.Event{
 				Type: model.EventError,
 				Err: fmt.Sprintf(
@@ -169,23 +272,32 @@ func streamResponsesWebSocketEvents(ctx context.Context, lease websocketLease,
 				),
 			})
 
-			return
+			return false
 		}
+		seenPayload = true
 		metrics.addBytes(len(payload))
 		metrics.markEvent(string(payload))
 		for _, event := range decoder.decode(payload) {
 			if event.Type == model.EventDone {
 				sendMetricsAndDone(ctx, events, metrics)
 
-				return
+				return false
 			}
 			if !sendEvent(ctx, events, event) {
 				keep = false
 
-				return
+				return false
 			}
 		}
 	}
+}
+
+// shouldRetryStaleWebSocket reports whether an EOF is likely a cached idle
+// socket that the provider closed before processing the new request.
+func shouldRetryStaleWebSocket(attempt websocketStreamAttempt, seenPayload bool,
+	err error) bool {
+
+	return attempt.reused && !seenPayload && errors.Is(err, io.EOF)
 }
 
 // websocketLease owns one cached or temporary WebSocket for a model call.
