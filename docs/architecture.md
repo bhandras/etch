@@ -46,8 +46,10 @@ Make state inspectable. The agent should store important decisions as durable
 events instead of hidden in-memory mutations. A developer should be able to open
 a session file, read what happened, and repair it when needed.
 
-Default to explicit trust. Project-local instructions are inert text until used
-as context. Project-local executable plugins require an explicit trust decision.
+Default to explicit local trust boundaries. Project-local instructions are inert
+text until used as context. Configured executable plugins are trusted local code:
+Harness never auto-discovers them, keeps them behind explicit config entries,
+and documents that they run with normal project access rather than a sandbox.
 
 Make the fast path good. The default OpenAI/Codex auth path should work for a
 developer with a ChatGPT/Codex subscription. API-key usage should also be first
@@ -382,7 +384,7 @@ max_concurrent = 2
 [[subagents.profile]]
 name = "explore"
 description = "Read-only codebase exploration."
-allowed_tools = ["ls", "read", "find", "grep", "go_search_symbols", "go_symbols"]
+allowed_tools = ["ls", "read", "find", "grep", "go_symbols"]
 max_tool_rounds = 16
 auto_compact = true
 ```
@@ -597,11 +599,12 @@ The core stores those counters as `model.metrics` JSONL events chained after the
 assistant message and other metadata for the same model pass. New status output
 uses these events as the authoritative model-request count and falls back to
 assistant-message counts only for older logs. The OpenAI provider records
-request bytes, response bytes, response-header latency, first-event latency,
-continuation attempts, continuation fallbacks, selected input-message count,
-selected delta-message count, tool-schema count, serialized
-instruction/input/tool fragment sizes, latest continuation fallback diagnostic,
-and per-request averages in status output.
+selected transport, request bytes, response bytes, response-header latency,
+first-event latency, WebSocket connection opens and reuses, continuation
+attempts, continuation fallbacks, selected input-message count, selected
+delta-message count, tool-schema count, serialized instruction/input/tool
+fragment sizes, latest continuation fallback diagnostic, and per-request
+averages in status output.
 
 ## OpenAI And Codex Auth
 
@@ -767,6 +770,21 @@ go run ./cmd/harness tool edit --old hello --new goodbye notes/hello.txt
 go run ./cmd/harness tool bash -- go test ./...
 ```
 
+The model-facing `read` schema accepts a single `path` or a `files` array of
+independent `{path, offset, limit}` ranges. Batched reads keep the visible tool
+surface small while reducing model/tool round trips after grep or symbol tools
+have already identified several relevant locations. If a model fills both
+legacy single-file fields and `files`, the non-empty `files` array wins; this
+turns a common schema-filling mistake into the useful batched operation rather
+than a retry-inducing tool error.
+
+The model-facing `grep` schema accepts either one `path` or a `paths` array for
+multi-root searches. `paths` wins when non-empty. As a compatibility affordance,
+`grep` also splits a whitespace-separated `path` into multiple roots only when
+the combined path does not exist and every split root does exist. The recovery
+path is intentionally narrow so real paths containing spaces are not silently
+rewritten when they exist.
+
 When using the OpenAI-compatible provider, the CLI includes builtin function
 schemas in model requests. If the model calls one, the core executes the
 pure-Go tool, appends a `message.tool` event, and sends the tool result back to
@@ -812,7 +830,7 @@ openai_api = "responses"
 reasoning_effort = "medium"
 reasoning_summary = "auto"
 system_prompt_file = ".harness/subagents/review.md"
-allowed_tools = ["ls", "read", "find", "grep", "go_search_symbols", "go_symbols", "go_package_symbols"]
+allowed_tools = ["ls", "read", "find", "grep", "go_symbols"]
 max_tool_rounds = 20
 auto_compact = true
 auto_compact_threshold_tokens = 80000
@@ -820,17 +838,32 @@ auto_compact_threshold_tokens = 80000
 
 The parent model sees the configured profile names and descriptions in the
 `task` tool schema. A task call includes a profile name, a concrete task, and
-optional focused context. The child prompt is admitted into a new session and
-the child result is returned to the parent as one compact tool result containing
-the child session id, duration, model/tool counts, final answer, and copyable
-inspection commands.
+optional focused context. When several independent child tasks are useful, the
+parent should emit several `task` calls in one model response so Harness can run
+them concurrently. The child prompt is admitted into a new session and the child
+result is returned to the parent as one compact tool result containing the child
+session id, duration, model/tool counts, final answer, and copyable inspection
+commands.
+
+Child sessions are durable forks of the parent conversation. When a model calls
+`task`, Harness records the parent session path and the assistant event that
+requested the tool. The child prompt is built from parent message history before
+that assistant event plus the child session's own events. This means subagents
+inherit discoveries already made by the parent, while the unfinished parent
+tool-call batch that spawned them is excluded from replay. Provider-specific
+continuation artifacts, usage counters, transport metrics, and encrypted native
+items are not inherited; the fork replays model-visible conversation content and
+summaries through a fresh child model request.
 
 Child sessions extend `session.started` with optional `parentSessionId`,
-`parentToolCallId`, and `subagentProfile` fields. This keeps subagent work
-inspectable without mixing the full child transcript into the parent context.
-The parent session stores the compact `message.tool` result; the child session
-stores the full exploration, tool calls, reasoning summaries, usage, and
-compaction events.
+`parentToolCallId`, `subagentProfile`, `forkSessionPath`, and
+`forkBeforeEventId` fields. This keeps subagent work inspectable without mixing
+the full child transcript into the parent context. The parent session stores the
+compact `message.tool` result; the child session stores the full exploration,
+tool calls, reasoning summaries, usage, compaction events, and durable fork
+pointer. Because the fork pointer is stored in `session.started`, `harness
+resume <child-id>` rebuilds the same inherited context instead of resuming as a
+fresh worker.
 
 Tool access is allowlist-based. A profile can allow built-in tools and
 configured plugin tools by model-facing name. Subagents can use any tool their
@@ -856,9 +889,9 @@ order. Each visible child gets a deterministic terminal-only codename so
 parallel work is easier to scan, for example `Ada / explore: map plugins =>
 read sdk/plugins.go`. Full child output stays in the child JSONL session and
 can be inspected with `harness show <child-id>` or continued with `harness
-resume <child-id>`. Completed child sessions are folded into parent turn
-chrome: token usage, provider request counts, request/response bytes, and child
-tool calls are added to the parent-visible footer and final `Worked for` line.
+resume <child-id>`. Child usage and provider transport counters are streamed
+into the parent footer as child model calls finish; completed child sessions add
+the child tool-call total and fill any counters that were not available live.
 A richer future terminal can add more per-subagent controls, but it should
 still avoid streaming every child event into the parent transcript by default.
 
@@ -878,17 +911,24 @@ directories for executables. Each plugin must appear in config:
 name = "example"
 command = "go run ./plugins/example/main.go"
 timeout_seconds = 30
+env = ["GIT_CONFIG_GLOBAL"]
 disabled = false
 ```
 
 The command runs through the platform shell from the current project working
 directory. The plugin is a child process with its own dependencies, so it can be
 written as a separate Go module or in any language that can read stdin and write
-stdout. On Unix systems, Harness starts each plugin shell in its own process
-group and terminates that group during shutdown so shell-launched plugin
-children cannot keep stdio pipes open after cancellation. The default timeout is
-30 seconds and applies to initialization and tool calls when `timeout_seconds`
-is omitted.
+stdout. Harness gives plugin processes a sanitized default environment:
+ordinary process basics such as `PATH`, `HOME`, temporary directory variables,
+and locale settings are forwarded, while model credentials and unrelated parent
+environment variables are not. A plugin can request additional named variables
+through the config entry's `env` allowlist; this should stay narrow and explicit.
+On Unix systems, Harness starts each plugin shell in its own process group.
+Shutdown closes stdin first, waits briefly for a cooperative exit, sends a
+termination signal when supported, then escalates to killing the process group
+so shell-launched plugin children cannot keep stdio pipes open after
+cancellation. The default timeout is 30 seconds and applies to initialization
+and tool calls when `timeout_seconds` is omitted.
 
 The first transport is:
 
@@ -910,7 +950,7 @@ execution:
 
 ```json
 {"id":"1","method":"initialize","params":{"protocolVersion":"0.1.0"}}
-{"id":"1","result":{"name":"git","tools":[{"name":"git_status","description":"Show git status.","parameters":{"type":"object","properties":{}}}]}}
+{"id":"1","result":{"name":"git","tools":[{"name":"git_status","description":"Show git status.","parameters":{"type":"object","properties":{}},"parallelSafety":"read_only"}]}}
 {"id":"2","method":"tool.execute","params":{"callID":"call_1","name":"git_status","arguments":{}}}
 {"id":"2","result":{"content":[{"type":"text","text":"clean"}]}}
 ```
@@ -919,6 +959,27 @@ The harness registers plugin tools in the same model-facing registry as builtin
 tools. The model sees one sorted tool list, and the core appends plugin tool
 results as ordinary `message.tool` session events. Tool-call hooks still wrap
 plugin tools because hooks run around the unified registry dispatch.
+
+Plugin tool names must be provider-compatible identifiers matching
+`^[A-Za-z0-9_-]{1,64}$`, and tool parameters must be JSON object schemas. The
+optional `parallelSafety` field may be `serial`, `read_only`, or
+`parallel_safe`; omitted values default to serial barriers. This keeps unknown
+plugin behavior conservative while allowing read-only tools such as
+`go_symbols` to overlap other safe calls. One plugin process still serializes
+its own request/response loop in this protocol version. The scheduler therefore
+places calls backed by the same plugin process into a shared execution lane:
+they may appear in an otherwise parallel-safe batch, but they do not enter the
+plugin process concurrently. Different plugin processes and builtin read-only
+tools may still overlap.
+
+Plugin stdout responses are bounded by a maximum JSONL frame size, and returned
+text content is capped before it is stored as a tool result. Oversized frames or
+results fail the tool call with an explicit protocol error. Timeouts and fatal
+transport/protocol failures such as malformed JSON, mismatched response IDs,
+missing response IDs, broken pipes, EOF, or unsupported content parts close the
+plugin process and stop advertising that plugin's tools in later model requests
+for the same session. Ordinary plugin-declared tool errors remain recoverable
+tool results.
 
 The public helper layer lives in `sdk/plugins.go`. It defines the stable plugin
 authoring types and `ServePlugin`, which lets simple Go plugins declare tools
@@ -935,17 +996,29 @@ It is its own Go module, imports `harness/sdk`, and exposes two tools:
 
 The repository also carries a Go intelligence plugin under `plugins/go-intel`.
 It is deliberately a plugin rather than core behavior. The plugin uses only the
-Go standard library parser packages plus `harness/sdk` to expose symbol-listing
-and source-lookup tools (`go_list_symbols`, `go_package_symbols`,
-`go_file_symbols`, `go_search_symbols`, `go_symbol`, and `go_symbols`). A
-useful inspection path is to use `go_search_symbols` for concept or name
-fragments, `go_package_symbols` or `go_file_symbols` for maps, `go_symbols` for
-a small citation-ready batch or one focused symbol. `go_symbol` remains
-available for compatibility and manual direct calls, but subagent profiles
-should usually expose only `go_symbols` to encourage batching.
-`go_symbols` defaults to signature-sized detail so agents can collect several
-godoc/signature/line-range references without pulling every function body;
-callers can request full declarations when implementation context is necessary.
+Go standard library parser packages plus `harness/sdk` to expose one
+model-facing `go_symbols` tool. The tool accepts `paths` plus optional
+case-insensitive Go regular expressions for `package`, `file`, and `name`.
+Omitted filters match everything, and all provided filters must match. The
+`file` filter matches displayed repo-relative paths, root-relative paths, and
+raw paths so callers can search with labels such as `internal/plugins/client.go`
+even when `paths` points at `internal/plugins`. Methods are named
+`Receiver.Method`, so a caller can ask for `^Client\\.` to inspect a type's
+method surface or `^Client\\.call$` to fetch one implementation.
+
+`go_symbols` has four detail levels. `package` returns package/file/symbol maps
+and is the preferred first pass for broad package exploration. `none` returns
+compact symbol rows for file or symbol maps. `summary` is the default and
+returns metadata, godoc, and compact declarations such as function signatures
+or `type T struct { ... }`; callers should use it after narrowing with `file`
+or `name`. `full` returns source declarations with line numbers and should be
+used only for exact implementations where bodies are necessary. Zero-result
+responses include parsed symbol counts, sample file labels, sample symbol names,
+and a hint about the file-path matching rules so a model can repair an
+over-specific query without falling back to broad reads. This single-tool shape
+replaces the older list/search/detail split and keeps the model from choosing
+among redundant Go tool variants.
+
 This keeps language-specific intelligence behind the plugin boundary while
 giving the project a practical richer-plugin example. Because it is its own Go
 module, local configs should start it with a command such as `go run
@@ -1054,10 +1127,10 @@ current draft and drawing history from the active session transcript.
 The prompt footer is a live status row, not static decoration. It shows the
 selected model and cwd from startup, then updates as durable provider usage and
 metrics events arrive. Token counters, request counts, and up/down transport
-bytes therefore move during a turn as model calls complete and again when
-completed subagent sessions are folded into the parent. Resume seeds the same
-footer from aggregate session status so a continued chat starts with the
-traffic counters it already spent.
+bytes therefore move during a turn as model calls complete, including child
+model calls reported through subagent progress. Resume seeds the same footer
+from aggregate session status so a continued chat starts with the traffic
+counters it already spent.
 
 Transient working labels are provider-aware. Native OpenAI Responses reasoning
 summaries can supply concise labels for the animated status line when reasoning

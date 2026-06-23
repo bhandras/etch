@@ -259,20 +259,35 @@ Supported hook events are `SessionStart`, `UserPromptSubmit`, `TurnStart`,
 execution order, payloads, and result shapes.
 
 Plugins are also configured explicitly. Harness does not auto-discover project
-executables. Each enabled plugin is a child process that speaks JSONL over
-stdin/stdout and can register model-callable tools:
+executables. Each enabled plugin is trusted local code launched from the project
+working directory as a child process that speaks JSONL over stdin/stdout and can
+register model-callable tools:
 
 ```toml
 [[plugins]]
 name = "example"
 command = "go run ./plugins/example/main.go"
 timeout_seconds = 30
+env = ["GIT_CONFIG_GLOBAL"]
 disabled = false
 ```
 
 The first plugin protocol supports `initialize` and `tool.execute` requests.
 Plugin tools appear in the same tool list as built-ins, and their results are
 stored as ordinary `message.tool` session events.
+
+Plugin processes run with a sanitized environment by default. Harness forwards
+common process basics such as `PATH`, `HOME`, temporary directory variables,
+and locale settings, but it does not forward model credentials such as
+`OPENAI_API_KEY`, `OPENROUTER_API_KEY`, or `CODEX_ACCESS_TOKEN` unless the
+plugin config explicitly lists a variable in `env`. Keep plugin env allowlists
+small and purpose-specific.
+
+Plugin calls from the same process are serialized even when the tool declares
+read-only or parallel-safe behavior, while different plugin processes and
+built-in read-only tools may still overlap. Timeouts and fatal protocol
+failures close the plugin process and hide its tools from later model requests;
+ordinary plugin-declared tool errors remain recoverable.
 
 The repository includes a small example plugin at `plugins/example`. It uses
 the thin `harness/sdk` package from [sdk/plugins.go](sdk/plugins.go), exposes
@@ -286,10 +301,14 @@ go run ./cmd/harness tool project_files --args '{"path":".","limit":200}'
 
 The repository also includes a standard-library-only Go intelligence plugin at
 `plugins/go-intel`. It is intentionally a plugin, not core harness behavior. It
-uses `go/parser`, `go/ast`, and `go/token` to list symbols by package or file,
-search symbols by name, file, package, signature, or godoc, and return
-structured godoc, function or method signatures, and optional declaration
-source for one or more symbols:
+uses `go/parser`, `go/ast`, and `go/token` to expose one model-facing
+`go_symbols` tool. The tool searches package paths, displayed repo-relative
+file paths, root-relative file paths, and symbol names with case-insensitive Go
+regular expressions, then returns either compact symbol rows, summary
+declarations, package maps, or full source declarations. Use
+`detail:"package"` or `detail:"none"` first for broad maps, `summary` after
+narrowing by file or name, and `full` only for exact implementations that need
+source bodies:
 
 ```toml
 [[plugins]]
@@ -299,13 +318,12 @@ timeout_seconds = 30
 ```
 
 ```bash
-go run ./cmd/harness tool go_list_symbols --args '{"path":"internal/session","groupBy":"file"}'
-go run ./cmd/harness tool go_package_symbols --args '{"path":"internal","package":"session"}'
-go run ./cmd/harness tool go_file_symbols --args '{"path":"internal/session/session.go"}'
-go run ./cmd/harness tool go_search_symbols --args '{"path":"internal/session","query":"append"}'
-go run ./cmd/harness tool go_symbols --args '{"path":"internal/session","names":["Store.Append","Store.ReadAll"],"declaration":"signature"}'
-go run ./cmd/harness tool go_symbol --args '{"path":"internal/session","name":"Store.Append"}'
-go run ./cmd/harness tool go_symbol --args '{"path":"internal/session","name":"Store.Append","declaration":"signature"}'
+go run ./cmd/harness tool go_symbols --args '{"paths":["internal/session"],"detail":"none"}'
+go run ./cmd/harness tool go_symbols --args '{"paths":["internal/session"],"detail":"package","includeUnexported":true}'
+go run ./cmd/harness tool go_symbols --args '{"paths":["internal/session"],"file":"internal/session/store\\.go$","detail":"none"}'
+go run ./cmd/harness tool go_symbols --args '{"paths":["internal/session"],"name":"^Store\\.","includeUnexported":true}'
+go run ./cmd/harness tool go_symbols --args '{"paths":["cmd/harness","internal/config"],"package":"config|main","name":"plugin","includeUnexported":true}'
+go run ./cmd/harness tool go_symbols --args '{"paths":["internal/session"],"name":"^Store\\.Append$","includeUnexported":true,"detail":"full"}'
 ```
 
 ## Subagents
@@ -314,7 +332,10 @@ Subagents are configured child-agent profiles. When enabled, Harness registers a
 model-callable `task` tool. The parent model sees the configured profile names
 and descriptions, then delegates isolated work to one of them. Each delegated
 task runs through the same core turn loop as the parent, but writes its own JSONL
-child session and returns only a compact result to the parent.
+child session and returns only a compact result to the parent. Child sessions
+fork the parent conversation before the assistant message that requested the
+`task` call, so a subagent sees the parent’s discoveries up to the delegation
+point without inheriting the unfinished parent tool-call batch.
 
 ```toml
 [subagents]
@@ -326,7 +347,7 @@ max_concurrent = 2
 name = "explore"
 description = "Read-only exploration for finding relevant files and likely causes."
 system_prompt = "Explore independently and return concise findings for the parent."
-allowed_tools = ["ls", "read", "find", "grep", "go_search_symbols", "go_symbols", "go_package_symbols"]
+allowed_tools = ["ls", "read", "find", "grep", "go_symbols"]
 max_tool_rounds = 16
 auto_compact = true
 ```
@@ -349,9 +370,12 @@ go run ./cmd/harness tool task \
 
 The parent-visible task result includes the child session id plus `harness show`
 and `harness resume` commands for inspecting or continuing the child transcript.
-Interactive turn summaries and prompt footers fold in completed child-agent
-token usage, provider request counts, byte counters, and tool calls so delegated
-work is visible in the parent turn instead of disappearing into child logs.
+Interactive prompt footers fold in child-agent token usage, provider request
+counts, and byte counters as child model calls finish; final turn summaries add
+the completed child tool totals. Delegated work remains visible in the parent
+turn instead of disappearing into child logs. Because the fork pointer is stored
+in the child session metadata, resuming a child session rebuilds the inherited
+parent context before appending new child turns.
 
 ## Sessions and Chat Commands
 
@@ -394,11 +418,13 @@ metrics. When providers report usage, Harness appends `model.usage` events to
 the JSONL log and sums them for `/status`, including input, cached input,
 output, reasoning output, and total tokens when available. When providers
 report transport measurements, Harness appends `model.metrics` events with
-request counts, continuation attempts, continuation fallbacks, the latest
-continuation fallback diagnostic, request/response byte totals, per-request
-byte averages, first-event timing, and request-shape counters. Chat status
-folds in completed subagent sessions referenced by `task` results, including
-nested child sessions when their logs are still present.
+the selected transport, request counts, WebSocket connection and reuse counts,
+continuation attempts, continuation fallbacks, the latest continuation fallback
+diagnostic, request/response byte totals, per-request byte averages,
+first-event timing, and request-shape counters. Live chat footers can receive
+those counters from running subagents before their task result is appended, and
+chat status folds in completed subagent sessions referenced by `task` results,
+including nested child sessions when their logs are still present.
 
 Interactive chat uses the active session log for prompt history. Up and Down
 cycle through prior user prompts from the current session, including prompts
@@ -418,6 +444,25 @@ go run ./cmd/harness tool grep --regex --context 2 'func Test[A-Za-z0-9_]+' .
 go run ./cmd/harness tool read README.md
 go run ./cmd/harness tool bash -- pwd
 ```
+
+The model-facing `read` tool also accepts a `files` array for several
+independent ranges in one call, so agents can retrieve known follow-up context
+without spending a model round per file. When `files` is non-empty, it wins
+over top-level `path`, `offset`, and `limit` fields so model-filled mixed
+requests still behave as batched reads:
+
+```json
+{
+  "files": [
+    {"path": "internal/plugins/client.go", "offset": 47, "limit": 170},
+    {"path": "internal/tool/tool.go", "offset": 204, "limit": 60}
+  ]
+}
+```
+
+The model-facing `grep` tool accepts `paths` for multi-root searches such as
+`["cmd/harness", "internal/config"]`. It also recovers the common
+space-separated `path` mistake when every split root exists.
 
 Preview an exact replacement edit without modifying the file:
 
