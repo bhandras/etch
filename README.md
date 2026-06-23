@@ -547,6 +547,13 @@ Build the binary:
 make build
 ```
 
+Install the `harness` command into `GOBIN` or `GOPATH/bin`, and install the
+bundled `go-intel` plugin binary into `~/.harness/bin/go-intel`:
+
+```bash
+make install
+```
+
 Run tests:
 
 ```bash

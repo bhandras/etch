@@ -1,4 +1,4 @@
-.PHONY: help build test test-race lint fmt fmt-check commitmsg-lint commitlint commitmsg-fmt
+.PHONY: help build install test test-race lint fmt fmt-check commitmsg-lint commitlint commitmsg-fmt
 
 GOCC ?= go
 
@@ -12,11 +12,14 @@ EXAMPLE_PLUGIN_DIR := plugins/example
 GO_INTEL_PLUGIN_DIR := plugins/go-intel
 BINDIR ?= bin
 HARNESS_BIN ?= $(BINDIR)/harness
+PLUGIN_BINDIR ?= $(HOME)/.harness/bin
+GO_INTEL_BIN ?= $(PLUGIN_BINDIR)/go-intel
 
 help:
 	@printf '%s\n' \
 		'Targets:' \
 		'  build           Build the harness binary into bin/harness.' \
+		'  install         Install harness and bundled plugin binaries.' \
 		'  test            Run the Go test suite.' \
 		'  test-race       Run race-enabled tests for the main module.' \
 		'  lint            Run golangci-lint for all Go modules.' \
@@ -29,6 +32,11 @@ help:
 build:
 	@mkdir -p $(BINDIR)
 	$(GOCC) build -trimpath -o $(HARNESS_BIN) ./cmd/harness
+
+install:
+	$(GOCC) install -trimpath ./cmd/harness
+	@mkdir -p $(PLUGIN_BINDIR)
+	cd $(GO_INTEL_PLUGIN_DIR); $(GOCC) build -trimpath -o $(GO_INTEL_BIN) .
 
 test:
 	$(GOCC) test ./...
