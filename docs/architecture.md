@@ -323,24 +323,31 @@ OPENAI_API_KEY=unused go run ./cmd/harness \
 The CLI reads credential material from `OPENAI_API_KEY`,
 `OPENROUTER_API_KEY`, and `CODEX_ACCESS_TOKEN`. Non-secret settings such as
 provider, model, base URL, reasoning options, and context limits are configured
-through flags or `.harness/config.toml`. Stored Codex OAuth credentials are
-loaded from `.harness/auth/openai.json` when available.
+through flags, `~/.harness/config.toml`, or project `.harness/config.toml`.
+Stored Codex OAuth credentials are loaded from `~/.harness/auth/openai.json`
+when available.
 
 ## Configuration
 
-Project-local configuration lives at `.harness/config.toml`. The CLI discovers
-the nearest config file by walking from the current working directory toward the
-filesystem root. The supported TOML surface is intentionally small and parsed by
-`internal/config` with only the Go standard library: scalar assignments, normal
-tables, and hook/plugin array tables. A schema layer defines supported tables,
-keys, scalar types, descriptions, and assignment behavior in one place so
-runtime parsing, sample-config coverage, and CLI config references stay aligned.
+User-level configuration lives at `~/.harness/config.toml`. Project-local
+configuration lives at `.harness/config.toml`. The CLI loads the user-level
+file when present, then discovers the nearest project file by walking from the
+current working directory toward the filesystem root, and merges the two in
+that order. Scalar values from the project file override user-level scalar
+values. Repeatable sections such as hooks, plugins, and subagent profiles
+append in source order. The supported TOML surface is intentionally small and
+parsed by `internal/config` with only the Go standard library: scalar
+assignments, normal tables, and hook/plugin array tables. A schema layer
+defines supported tables, keys, scalar types, descriptions, and assignment
+behavior in one place so runtime parsing, sample-config coverage, and CLI config
+references stay aligned.
 
 The precedence order is:
 
 ```text
 compiled defaults
-.harness/config.toml
+~/.harness/config.toml
+.harness/config.toml or nearest ancestor project config
 explicit CLI flags
 ```
 
@@ -393,7 +400,7 @@ auto_compact = true
 keys. It should be updated in the same change that adds or removes config
 surface. The CLI also exposes `harness config check`, `harness config show
 --effective`, and `harness config schema` so a user or agent can validate the
-discovered project config, inspect merged defaults, and see the model-neutral
+discovered merged config, inspect merged defaults, and see the model-neutral
 schema without reading the source. Config validation includes scalar TOML
 parsing plus semantic checks for provider names, OpenAI API modes, reasoning
 options, hook events, hook matcher regexes, and enabled hook/plugin commands.
@@ -620,7 +627,7 @@ The built-in OpenAI provider supports:
 openai-codex-oauth
   ChatGPT Plus/Pro/Business/Enterprise subscription auth through a
   Codex-style device flow. `harness auth login` stores credentials in
-  `.harness/auth/openai.json`.
+  `~/.harness/auth/openai.json`.
 
 openai-api-key
   Platform or OpenAI-compatible API key auth through `OPENAI_API_KEY`,
@@ -640,12 +647,12 @@ workspace Codex entitlement, rate limits, and data controls.
 
 Credential resolution honors an explicit `--api-key` first because a command
 line credential is an invocation-scoped provider choice. Without an explicit API
-key, Harness prefers the user's local OAuth login when `.harness/auth/openai.json`
-exists and can be refreshed. If no stored OAuth login exists, Harness falls back
-to `CODEX_ACCESS_TOKEN`, then environment API-key credentials. This makes
-`harness auth login` the default local identity while still allowing
-OpenAI-compatible providers such as OpenRouter in projects or environments
-without OAuth state.
+key, Harness prefers the user's local OAuth login when
+`~/.harness/auth/openai.json` exists and can be refreshed. If no stored OAuth
+login exists, Harness falls back to `CODEX_ACCESS_TOKEN`, then environment
+API-key credentials. This makes `harness auth login` the default local identity
+while still allowing OpenAI-compatible providers such as OpenRouter in projects
+or environments without OAuth state.
 
 OAuth mode defaults to the Codex backend at
 `https://chatgpt.com/backend-api/codex` and the Responses API shape. Explicit

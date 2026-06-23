@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	openaiauth "harness/internal/auth/openai"
 	harnessconfig "harness/internal/config"
@@ -149,7 +151,65 @@ func configCLIConfigDefaults(cfg harnessconfig.Config) cliConfig {
 
 // configSessionDir returns the configured session directory or the CLI default.
 func configSessionDir(cfg harnessconfig.Config) string {
-	return configOrDefault(cfg.Session.Dir, defaultSessionDir)
+	if cfg.Session.Dir != "" {
+		return expandHomePath(cfg.Session.Dir)
+	}
+	if hasHomeConfigPath(cfg) {
+		return expandHomePath("~/.harness/sessions")
+	}
+
+	return defaultSessionDir
+}
+
+// hasHomeConfigPath reports whether a merged config includes the home file.
+func hasHomeConfigPath(cfg harnessconfig.Config) bool {
+	if len(cfg.Paths) == 0 {
+		return isHomeConfigPath(cfg.Path)
+	}
+	for _, path := range cfg.Paths {
+		if isHomeConfigPath(path) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// expandHomePath expands ~ and ~/ prefixes in user-facing config paths.
+func expandHomePath(path string) string {
+	if path != "~" && !strings.HasPrefix(path, "~/") {
+		return path
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return path
+	}
+	if path == "~" {
+		return home
+	}
+
+	return filepath.Join(home, strings.TrimPrefix(path, "~/"))
+}
+
+// isHomeConfigPath reports whether path is the user's home-level config file.
+func isHomeConfigPath(path string) bool {
+	if strings.TrimSpace(path) == "" {
+		return false
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false
+	}
+	want := filepath.Join(
+		home, harnessconfig.ProjectConfigDir,
+		harnessconfig.ConfigFileName,
+	)
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return false
+	}
+
+	return filepath.Clean(absPath) == filepath.Clean(want)
 }
 
 // configProvider returns the configured provider or the offline default.

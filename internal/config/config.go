@@ -20,8 +20,17 @@ const (
 // Config stores all settings loaded from a harness TOML file.
 type Config struct {
 	// Path is the absolute path to the loaded config file. Empty means no
-	// config file was discovered.
+	// config file was discovered. When multiple files are merged, Path is
+	// the highest-precedence file.
 	Path string
+
+	// Paths stores merged config file paths in precedence order, from
+	// lowest to highest. Empty means no config file was discovered.
+	Paths []string
+
+	// set tracks scalar assignments so merge can distinguish explicit zero
+	// values from omitted fields.
+	set map[string]bool
 
 	// Session stores defaults for session-related CLI behavior.
 	Session SessionConfig
@@ -232,23 +241,283 @@ type SubagentProfileConfig struct {
 	Disabled bool
 }
 
-// Load finds and parses the nearest project-local config for cwd.
+// Load finds, parses, and merges the home config with the nearest project
+// config for cwd.
 func Load(cwd string) (Config, error) {
-	path, err := Find(cwd)
+	paths, err := LoadPaths(cwd)
 	if err != nil {
 		return Config{}, err
 	}
-	if path == "" {
+	if len(paths) == 0 {
 		return Config{}, nil
 	}
 
-	cfg, err := ParseFile(path)
-	if err != nil {
+	var merged Config
+	for _, path := range paths {
+		cfg, err := parseFile(path, false)
+		if err != nil {
+			return Config{}, err
+		}
+		merged = Merge(merged, cfg)
+	}
+	merged.Paths = append([]string(nil), paths...)
+	merged.Path = paths[len(paths)-1]
+	if err := Validate(merged); err != nil {
 		return Config{}, err
 	}
-	cfg.Path = path
 
-	return cfg, nil
+	return merged, nil
+}
+
+// LoadPaths returns config files that Load merges in precedence order.
+func LoadPaths(cwd string) ([]string, error) {
+	var paths []string
+	homePath, err := HomePath()
+	if err != nil {
+		return nil, err
+	}
+	if pathExists(homePath) {
+		paths = append(paths, homePath)
+	}
+
+	projectPath, err := Find(cwd)
+	if err != nil {
+		return nil, err
+	}
+	if projectPath != "" && !stringIn(projectPath, paths) {
+		paths = append(paths, projectPath)
+	}
+
+	return paths, nil
+}
+
+// HomePath returns the user-level config path.
+func HomePath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve home directory: %w", err)
+	}
+	if strings.TrimSpace(home) == "" {
+		return "", fmt.Errorf("home directory is empty")
+	}
+
+	return filepath.Join(home, ProjectConfigDir, ConfigFileName), nil
+}
+
+// pathExists reports whether path names an existing non-directory file.
+func pathExists(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+
+	return !info.IsDir()
+}
+
+// Merge overlays higher-precedence config values onto base.
+func Merge(base Config, overlay Config) Config {
+	overlayContextAutoCompact := configFieldSet(
+		overlay, "context", "auto_compact",
+	)
+	overlaySubagentsEnabled := configFieldSet(
+		overlay, "subagents", "enabled",
+	)
+	base.Path = overlayPath(base.Path, overlay.Path)
+	base.Paths = appendMergedPaths(base.Paths, overlay.Paths, overlay.Path)
+	base.Session = mergeSessionConfig(base.Session, overlay.Session)
+	base.Context = mergeContextConfig(
+		base.Context, overlay.Context, overlayContextAutoCompact,
+	)
+	base.Prompt = mergePromptConfig(base.Prompt, overlay.Prompt)
+	base.Provider = mergeProviderConfig(base.Provider, overlay.Provider)
+	base.OpenAI = mergeOpenAIConfig(base.OpenAI, overlay.OpenAI)
+	base.Hooks = append(base.Hooks, overlay.Hooks...)
+	base.Plugins = append(base.Plugins, overlay.Plugins...)
+	base.Subagents = mergeSubagentConfig(
+		base.Subagents, overlay.Subagents, overlaySubagentsEnabled,
+	)
+	base.set = mergeConfigFieldSets(base.set, overlay.set)
+
+	return base
+}
+
+// overlayPath returns the highest-precedence config path.
+func overlayPath(base string, overlay string) string {
+	if overlay != "" {
+		return overlay
+	}
+
+	return base
+}
+
+// appendMergedPaths preserves merged source order without duplicates.
+func appendMergedPaths(paths []string, overlayPaths []string,
+	overlayPath string) []string {
+
+	out := append([]string(nil), paths...)
+	for _, path := range overlayPaths {
+		if path != "" && !stringIn(path, out) {
+			out = append(out, path)
+		}
+	}
+	if overlayPath != "" && !stringIn(overlayPath, out) {
+		out = append(out, overlayPath)
+	}
+
+	return out
+}
+
+// mergeSessionConfig overlays session scalar values.
+func mergeSessionConfig(base SessionConfig,
+	overlay SessionConfig) SessionConfig {
+
+	base.Dir = stringOrDefault(overlay.Dir, base.Dir)
+	base.MaxToolRounds = intOrDefault(
+		overlay.MaxToolRounds, base.MaxToolRounds,
+	)
+	base.KeepMessages = intOrDefault(
+		overlay.KeepMessages, base.KeepMessages,
+	)
+
+	return base
+}
+
+// mergeContextConfig overlays context scalar values.
+func mergeContextConfig(base ContextConfig, overlay ContextConfig,
+	overlayAutoCompact bool) ContextConfig {
+
+	base.AutoCompact = boolOrDefault(
+		overlay.AutoCompact, base.AutoCompact, overlayAutoCompact,
+	)
+	base.AutoCompactThresholdTokens = intOrDefault(
+		overlay.AutoCompactThresholdTokens,
+		base.AutoCompactThresholdTokens,
+	)
+	base.KeepRecentTokens = intOrDefault(
+		overlay.KeepRecentTokens, base.KeepRecentTokens,
+	)
+
+	return base
+}
+
+// mergePromptConfig overlays prompt scalar values.
+func mergePromptConfig(base PromptConfig, overlay PromptConfig) PromptConfig {
+	base.SystemPrompt = stringOrDefault(
+		overlay.SystemPrompt, base.SystemPrompt,
+	)
+	base.SystemPromptFile = stringOrDefault(
+		overlay.SystemPromptFile, base.SystemPromptFile,
+	)
+
+	return base
+}
+
+// mergeProviderConfig overlays provider scalar values.
+func mergeProviderConfig(base ProviderConfig,
+	overlay ProviderConfig) ProviderConfig {
+
+	base.Name = stringOrDefault(overlay.Name, base.Name)
+	base.Model = stringOrDefault(overlay.Model, base.Model)
+
+	return base
+}
+
+// mergeOpenAIConfig overlays OpenAI scalar values.
+func mergeOpenAIConfig(base OpenAIConfig, overlay OpenAIConfig) OpenAIConfig {
+	base.BaseURL = stringOrDefault(overlay.BaseURL, base.BaseURL)
+	base.API = stringOrDefault(overlay.API, base.API)
+	base.Transport = stringOrDefault(overlay.Transport, base.Transport)
+	base.ReasoningEffort = stringOrDefault(
+		overlay.ReasoningEffort, base.ReasoningEffort,
+	)
+	base.ReasoningSummary = stringOrDefault(
+		overlay.ReasoningSummary, base.ReasoningSummary,
+	)
+
+	return base
+}
+
+// mergeSubagentConfig overlays subagent controls and appends profiles.
+func mergeSubagentConfig(base SubagentConfig, overlay SubagentConfig,
+	overlayEnabled bool) SubagentConfig {
+
+	base.Enabled = boolOrDefault(
+		overlay.Enabled, base.Enabled, overlayEnabled,
+	)
+	base.MaxPerTurn = intOrDefault(overlay.MaxPerTurn, base.MaxPerTurn)
+	base.MaxConcurrent = intOrDefault(
+		overlay.MaxConcurrent, base.MaxConcurrent,
+	)
+	base.Profiles = append(base.Profiles, overlay.Profiles...)
+
+	return base
+}
+
+// stringOrDefault returns value when non-empty, otherwise fallback.
+func stringOrDefault(value string, fallback string) string {
+	if value != "" {
+		return value
+	}
+
+	return fallback
+}
+
+// intOrDefault returns value when non-zero, otherwise fallback.
+func intOrDefault(value int, fallback int) int {
+	if value != 0 {
+		return value
+	}
+
+	return fallback
+}
+
+// boolOrDefault returns value when it was explicitly set, otherwise fallback.
+func boolOrDefault(value bool, fallback bool, set bool) bool {
+	if set {
+		return value
+	}
+
+	return fallback
+}
+
+// configFieldKey returns the stable presence key for one scalar assignment.
+func configFieldKey(table string, key string) string {
+	return table + "." + key
+}
+
+// markConfigFieldSet records that a scalar config field was assigned.
+func markConfigFieldSet(cfg *Config, field configField) {
+	if cfg.set == nil {
+		cfg.set = make(map[string]bool)
+	}
+	cfg.set[configFieldKey(field.table, field.key)] = true
+}
+
+// configFieldSet reports whether a scalar config field was assigned.
+func configFieldSet(cfg Config, table string, key string) bool {
+	if cfg.set == nil {
+		return false
+	}
+
+	return cfg.set[configFieldKey(table, key)]
+}
+
+// mergeConfigFieldSets returns assignment metadata for merged configs.
+func mergeConfigFieldSets(base map[string]bool,
+	overlay map[string]bool) map[string]bool {
+
+	if len(base) == 0 && len(overlay) == 0 {
+		return nil
+	}
+	merged := make(map[string]bool, len(base)+len(overlay))
+	for key := range base {
+		merged[key] = true
+	}
+	for key := range overlay {
+		merged[key] = true
+	}
+
+	return merged
 }
 
 // Find returns the nearest .harness/config.toml at or above cwd.
@@ -286,22 +555,34 @@ func Find(cwd string) (string, error) {
 
 // ParseFile parses one TOML config file.
 func ParseFile(path string) (Config, error) {
+	return parseFile(path, true)
+}
+
+// parseFile parses one TOML config file and optionally validates it.
+func parseFile(path string, validate bool) (Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return Config{}, fmt.Errorf("read config %s: %w", path, err)
 	}
 
-	cfg, err := Parse(string(data))
+	cfg, err := parseText(string(data), validate)
 	if err != nil {
 		return Config{}, fmt.Errorf("parse config %s: %w", path, err)
 	}
 	cfg.Path = path
+	cfg.Paths = []string{path}
 
 	return cfg, nil
 }
 
 // Parse parses the dependency-free TOML subset used by harness config files.
 func Parse(text string) (Config, error) {
+	return parseText(text, true)
+}
+
+// parseText parses the dependency-free TOML subset and optionally validates
+// the resulting config.
+func parseText(text string, validate bool) (Config, error) {
 	var cfg Config
 	scope := configScope{cfg: &cfg}
 
@@ -351,8 +632,10 @@ func Parse(text string) (Config, error) {
 		}
 	}
 
-	if err := Validate(cfg); err != nil {
-		return Config{}, err
+	if validate {
+		if err := Validate(cfg); err != nil {
+			return Config{}, err
+		}
 	}
 
 	return cfg, nil

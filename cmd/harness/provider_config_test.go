@@ -11,7 +11,84 @@ import (
 	"time"
 
 	openaiauth "harness/internal/auth/openai"
+	harnessconfig "harness/internal/config"
 )
+
+// TestConfigSessionDirUsesHomeDefaultForHomeConfig verifies a global config
+// does not scatter default session logs into whichever project launched chat.
+func TestConfigSessionDirUsesHomeDefaultForHomeConfig(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	dir := configSessionDir(harnessconfig.Config{
+		Path: filepath.Join(
+			home, harnessconfig.ProjectConfigDir,
+			harnessconfig.ConfigFileName,
+		),
+	})
+	want := filepath.Join(home, ".harness", "sessions")
+	if dir != want {
+		t.Fatalf("unexpected session dir: got %q want %q", dir, want)
+	}
+}
+
+// TestConfigSessionDirUsesHomeDefaultForMergedHomeConfig verifies a project
+// config merged with home defaults still keeps default logs under home.
+func TestConfigSessionDirUsesHomeDefaultForMergedHomeConfig(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	dir := configSessionDir(harnessconfig.Config{
+		Path: filepath.Join(
+			t.TempDir(), harnessconfig.ProjectConfigDir,
+			harnessconfig.ConfigFileName,
+		),
+		Paths: []string{
+			filepath.Join(
+				home, harnessconfig.ProjectConfigDir,
+				harnessconfig.ConfigFileName,
+			),
+			filepath.Join(
+				t.TempDir(), harnessconfig.ProjectConfigDir,
+				harnessconfig.ConfigFileName,
+			),
+		},
+	})
+	want := filepath.Join(home, ".harness", "sessions")
+	if dir != want {
+		t.Fatalf("unexpected session dir: got %q want %q", dir, want)
+	}
+}
+
+// TestConfigSessionDirExpandsHome verifies user-level configs can spell paths
+// portably without embedding an absolute home directory.
+func TestConfigSessionDirExpandsHome(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	dir := configSessionDir(harnessconfig.Config{
+		Session: harnessconfig.SessionConfig{
+			Dir: "~/.harness/sessions",
+		},
+	})
+	want := filepath.Join(home, ".harness", "sessions")
+	if dir != want {
+		t.Fatalf("unexpected session dir: got %q want %q", dir, want)
+	}
+}
+
+// TestConfigSessionDirKeepsRelativePaths verifies explicit project config
+// paths remain relative to the launch cwd for compatibility.
+func TestConfigSessionDirKeepsRelativePaths(t *testing.T) {
+	dir := configSessionDir(harnessconfig.Config{
+		Session: harnessconfig.SessionConfig{
+			Dir: "configured-sessions",
+		},
+	})
+	if dir != "configured-sessions" {
+		t.Fatalf("unexpected relative session dir: %q", dir)
+	}
+}
 
 // TestRunUsesOpenAIProvider verifies that provider flags reach the
 // OpenAI-compatible streaming client without making a network call.

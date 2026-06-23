@@ -1,4 +1,5 @@
-// Package config loads the small project-local harness configuration file.
+// Package config loads and merges the small user-level and project-local
+// harness configuration files.
 //
 // The parser intentionally supports only the TOML subset the harness needs for
 // first-party configuration: scalar assignments, normal tables, and hook/plugin

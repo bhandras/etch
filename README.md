@@ -36,7 +36,8 @@ Harness currently has:
 - frame-oriented OpenAI SSE parsing that reads response chunks, joins multiline
   `data:` fields, and reports raw request/response byte metrics plus
   continuation request shape
-- project-local TOML config from `.harness/config.toml`
+- user and project TOML config from `~/.harness/config.toml` and
+  `.harness/config.toml`
 - pinned project context from `SYSTEM.md` and `AGENTS.md`
 - Agent Skills-style discovery from `.harness/skills/*/SKILL.md` and
   `.agents/skills/*/SKILL.md`
@@ -185,7 +186,7 @@ Harness supports four OpenAI-compatible credential paths:
 3. A bearer token from `CODEX_ACCESS_TOKEN`.
 4. API keys from `OPENAI_API_KEY` or `OPENROUTER_API_KEY`.
 
-OAuth credentials are stored locally under `.harness/auth/openai.json` by
+OAuth credentials are stored locally under `~/.harness/auth/openai.json` by
 default. An explicit `--api-key` always wins for that invocation, which is
 useful for OpenRouter, local proxies, and one-off provider tests. When no
 explicit API key is passed and a stored OAuth login exists and can be refreshed,
@@ -193,8 +194,8 @@ Harness uses OAuth before environment API keys. Environment API keys remain the
 fallback for Platform billing, OpenRouter, local proxies, and CI.
 
 OAuth mode defaults to the Codex backend and the Responses API shape. Explicit
-`--base-url`, `--openai-api`, or `.harness/config.toml` settings override those
-OAuth defaults.
+`--base-url`, `--openai-api`, or config-file settings override those OAuth
+defaults.
 
 Responses API calls use HTTP/SSE by default. To try the session-reused
 WebSocket transport, set `--openai-transport auto` or configure
@@ -203,19 +204,22 @@ to HTTP/SSE before any stream output is emitted.
 
 ## Configuration, Hooks, and Plugins
 
-Configure project defaults:
+Configure user or project defaults:
 
 ```bash
 mkdir -p .harness
 cp sample-config.toml .harness/config.toml
 ```
 
-`sample-config.toml` documents every supported key. The CLI reads the nearest
-`.harness/config.toml` from the current directory or an ancestor. Config values
-are defaults only: explicit CLI flags override them. Credential environment
+`sample-config.toml` documents every supported key. The CLI first reads
+`~/.harness/config.toml` when present, then merges the nearest project
+`.harness/config.toml` from the current directory or an ancestor. Project scalar
+values override user scalar values, while repeatable sections such as hooks,
+plugins, and subagent profiles append in source order. Config values are
+defaults only: explicit CLI flags override them. Credential environment
 variables are read separately for API keys and access tokens.
 
-Inspect project configuration with:
+Inspect merged configuration with:
 
 ```bash
 go run ./cmd/harness config check

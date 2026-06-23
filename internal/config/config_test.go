@@ -284,6 +284,217 @@ func TestFindWalksAncestors(t *testing.T) {
 	}
 }
 
+// TestLoadMergesHomeAndProjectConfigs verifies user defaults are merged before
+// the nearest project config.
+func TestLoadMergesHomeAndProjectConfigs(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	writeTestConfig(
+		t,
+		filepath.Join(home, ProjectConfigDir, ConfigFileName),
+		`
+[session]
+max_tool_rounds = 100
+
+[context]
+auto_compact = true
+keep_recent_tokens = 20000
+
+[provider]
+name = "openai"
+model = "gpt-home"
+
+[[plugins]]
+name = "home"
+command = "home-plugin"
+
+[subagents]
+enabled = true
+
+[[subagents.profile]]
+name = "home-review"
+description = "home profile"
+allowed_tools = ["read"]
+`,
+	)
+
+	project := t.TempDir()
+	writeTestConfig(
+		t,
+		filepath.Join(project, ProjectConfigDir, ConfigFileName),
+		`
+[session]
+max_tool_rounds = 250
+
+[provider]
+model = "gpt-project"
+
+[[plugins]]
+name = "project"
+command = "project-plugin"
+
+[[subagents.profile]]
+name = "project-review"
+description = "project profile"
+allowed_tools = ["grep"]
+`,
+	)
+
+	cfg, err := Load(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if cfg.Path != filepath.Join(project, ProjectConfigDir, ConfigFileName) {
+		t.Fatalf("unexpected high-precedence path: %q", cfg.Path)
+	}
+	if len(cfg.Paths) != 2 {
+		t.Fatalf("unexpected merged paths: %#v", cfg.Paths)
+	}
+	if cfg.Provider.Name != "openai" ||
+		cfg.Provider.Model != "gpt-project" ||
+		cfg.Session.MaxToolRounds != 250 ||
+		!cfg.Context.AutoCompact ||
+		cfg.Context.KeepRecentTokens != 20000 {
+
+		t.Fatalf("unexpected merged scalars: %#v", cfg)
+	}
+	if len(cfg.Plugins) != 2 ||
+		cfg.Plugins[0].Name != "home" ||
+		cfg.Plugins[1].Name != "project" {
+
+		t.Fatalf("unexpected merged plugins: %#v", cfg.Plugins)
+	}
+	if !cfg.Subagents.Enabled ||
+		len(cfg.Subagents.Profiles) != 2 ||
+		cfg.Subagents.Profiles[0].Name != "home-review" ||
+		cfg.Subagents.Profiles[1].Name != "project-review" {
+
+		t.Fatalf("unexpected merged subagents: %#v", cfg.Subagents)
+	}
+}
+
+// TestLoadUsesHomeConfigWithoutProject verifies global config works from an
+// arbitrary directory.
+func TestLoadUsesHomeConfigWithoutProject(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	writeTestConfig(
+		t, filepath.Join(home, ProjectConfigDir, ConfigFileName),
+		"[provider]\nname = \"openai\"\n",
+	)
+	project := t.TempDir()
+
+	cfg, err := Load(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(home, ProjectConfigDir, ConfigFileName)
+	if cfg.Path != want || len(cfg.Paths) != 1 || cfg.Paths[0] != want {
+		t.Fatalf("unexpected home config paths: %#v path=%q", cfg.Paths,
+			cfg.Path)
+	}
+	if cfg.Provider.Name != "openai" {
+		t.Fatalf("home config was not loaded: %#v", cfg.Provider)
+	}
+}
+
+// TestLoadValidatesAfterMerging verifies partial config layers may combine
+// into one semantically valid effective config.
+func TestLoadValidatesAfterMerging(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	writeTestConfig(
+		t,
+		filepath.Join(home, ProjectConfigDir, ConfigFileName),
+		`
+[provider]
+name = "openai"
+model = "gpt-home"
+
+[subagents]
+enabled = true
+`,
+	)
+
+	project := t.TempDir()
+	writeTestConfig(
+		t,
+		filepath.Join(project, ProjectConfigDir, ConfigFileName),
+		`
+[[subagents.profile]]
+name = "project-review"
+description = "project profile"
+allowed_tools = ["read"]
+`,
+	)
+
+	cfg, err := Load(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Subagents.Enabled || len(cfg.Subagents.Profiles) != 1 {
+		t.Fatalf("unexpected merged subagents: %#v", cfg.Subagents)
+	}
+	if cfg.Subagents.Profiles[0].Name != "project-review" {
+		t.Fatalf("unexpected merged profile: %#v",
+			cfg.Subagents.Profiles[0])
+	}
+}
+
+// TestLoadAllowsExplicitFalseOverrides verifies boolean scalar assignments
+// keep enough presence metadata for project configs to disable home defaults.
+func TestLoadAllowsExplicitFalseOverrides(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	writeTestConfig(
+		t,
+		filepath.Join(home, ProjectConfigDir, ConfigFileName),
+		`
+[provider]
+name = "openai"
+model = "gpt-home"
+
+[context]
+auto_compact = true
+
+[subagents]
+enabled = true
+
+[[subagents.profile]]
+name = "home-review"
+description = "home profile"
+allowed_tools = ["read"]
+`,
+	)
+
+	project := t.TempDir()
+	writeTestConfig(
+		t,
+		filepath.Join(project, ProjectConfigDir, ConfigFileName),
+		`
+[context]
+auto_compact = false
+
+[subagents]
+enabled = false
+`,
+	)
+
+	cfg, err := Load(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Context.AutoCompact {
+		t.Fatalf("project auto_compact=false did not override: %#v",
+			cfg.Context)
+	}
+	if cfg.Subagents.Enabled {
+		t.Fatalf("project subagents.enabled=false did not "+
+			"override: %#v", cfg.Subagents)
+	}
+}
+
 // TestParseRejectsUnknownKeys keeps the config language intentionally small.
 func TestParseRejectsUnknownKeys(t *testing.T) {
 	_, err := Parse("[provider]\nunknown = \"x\"\n")
@@ -484,6 +695,17 @@ func TestSampleConfigDocumentsSupportedKeys(t *testing.T) {
 	if len(extra) > 0 {
 		t.Fatalf("sample-config.toml documents unknown keys: %s",
 			strings.Join(extra, ", "))
+	}
+}
+
+// writeTestConfig writes a config fixture and creates parent directories.
+func writeTestConfig(t *testing.T, path string, text string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("make config dir: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
 	}
 }
 

@@ -1,12 +1,18 @@
 # Harness sample configuration.
 #
-# Copy this file to .harness/config.toml inside a project and uncomment the
-# values you want to set. Explicit CLI flags override this file. Credential
-# environment variables are read separately for API keys and access tokens.
+# Copy this file to ~/.harness/config.toml for user-wide defaults or to
+# .harness/config.toml inside a project for project overrides. Harness loads the
+# user file first, then the nearest project file. Project scalar values override
+# user scalar values; repeatable sections such as hooks, plugins, and subagent
+# profiles append in source order. Explicit CLI flags override config.
+# Credential environment variables are read separately for API keys and access
+# tokens.
 
 [session]
-# Directory for JSONL session logs.
-# dir = ".harness/sessions"
+# Directory for JSONL session logs. Project configs often use a relative path.
+# Use "~/.harness/sessions" in a user-level config when logs should stay under
+# home instead of whichever project launched harness.
+# dir = "~/.harness/sessions"
 
 # Maximum model/tool exchange rounds allowed for one user turn.
 # max_tool_rounds = 32

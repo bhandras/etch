@@ -55,21 +55,36 @@ func (b *lockedBuffer) Bytes() []byte {
 	return append([]byte(nil), b.Buffer.Bytes()...)
 }
 
-// TestMain runs command tests from an empty directory so project-config
-// discovery cannot inherit the developer's local .harness/config.toml.
+// TestMain runs command tests from empty cwd and home directories so config
+// discovery cannot inherit the developer's local .harness/config.toml files.
 func TestMain(m *testing.M) {
 	dir, err := os.MkdirTemp("", "harness-cmd-test-*")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "create test cwd:", err)
 		os.Exit(1)
 	}
+	home, err := os.MkdirTemp("", "harness-cmd-home-*")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "create test home:", err)
+		_ = os.RemoveAll(dir)
+		os.Exit(1)
+	}
+	if err := os.Setenv("HOME", home); err != nil {
+		fmt.Fprintln(os.Stderr, "set test home:", err)
+		_ = os.RemoveAll(dir)
+		_ = os.RemoveAll(home)
+		os.Exit(1)
+	}
 	if err := os.Chdir(dir); err != nil {
 		fmt.Fprintln(os.Stderr, "enter test cwd:", err)
+		_ = os.RemoveAll(dir)
+		_ = os.RemoveAll(home)
 		os.Exit(1)
 	}
 
 	code := m.Run()
 	_ = os.RemoveAll(dir)
+	_ = os.RemoveAll(home)
 	os.Exit(code)
 }
 

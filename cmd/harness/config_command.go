@@ -9,7 +9,7 @@ import (
 	harnessconfig "harness/internal/config"
 )
 
-// runConfig executes one project-config inspection subcommand.
+// runConfig executes one config inspection subcommand.
 func runConfig(cfg cliConfig, stdout io.Writer, stderr io.Writer) int {
 	switch cfg.configAction {
 	case "check":
@@ -58,7 +58,7 @@ func runConfig(cfg cliConfig, stdout io.Writer, stderr io.Writer) int {
 	}
 }
 
-// loadConfigForInspection loads the nearest project config for config commands.
+// loadConfigForInspection loads merged config for config commands.
 func loadConfigForInspection() (harnessconfig.Config, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -69,23 +69,23 @@ func loadConfigForInspection() (harnessconfig.Config, error) {
 	return harnessconfig.Load(cwd)
 }
 
-// formatLoadedConfig renders values explicitly present in project config.
+// formatLoadedConfig renders values present in loaded config files.
 func formatLoadedConfig(cfg harnessconfig.Config) string {
 	var out strings.Builder
 	fmt.Fprintln(&out, "Config")
-	writeConfigPath(&out, cfg.Path)
+	writeConfigSources(&out, cfg)
 	fmt.Fprintln(&out)
 	writeRawConfigSections(&out, cfg)
 
 	return strings.TrimRight(out.String(), "\n")
 }
 
-// formatEffectiveConfig renders project config after compiled defaults apply.
+// formatEffectiveConfig renders loaded config after compiled defaults apply.
 func formatEffectiveConfig(cfg harnessconfig.Config) string {
 	defaults := configCLIConfigDefaults(cfg)
 	var out strings.Builder
 	fmt.Fprintln(&out, "Effective Config")
-	writeConfigPath(&out, cfg.Path)
+	writeConfigSources(&out, cfg)
 	fmt.Fprintln(&out)
 	fmt.Fprintln(&out, "Session")
 	writeEffectiveString(&out, "dir", defaults.sessionDir, cfg.Session.Dir)
@@ -156,7 +156,7 @@ func formatEffectiveConfig(cfg harnessconfig.Config) string {
 // formatConfigCheck renders a concise successful validation summary.
 func formatConfigCheck(cfg harnessconfig.Config) string {
 	var out strings.Builder
-	fmt.Fprintf(&out, "config ok: %s\n", cfg.Path)
+	fmt.Fprintf(&out, "config ok: %s\n", configPathSummary(cfg))
 	fmt.Fprintln(&out)
 	fmt.Fprintln(&out, "Summary")
 	fmt.Fprintf(
@@ -247,14 +247,43 @@ func writeRawConfigSections(out *strings.Builder, cfg harnessconfig.Config) {
 	writeSubagents(out, cfg.Subagents)
 }
 
-// writeConfigPath renders the source path or an explicit missing marker.
-func writeConfigPath(out *strings.Builder, path string) {
-	if path == "" {
+// writeConfigSources renders config source paths or an explicit missing marker.
+func writeConfigSources(out *strings.Builder, cfg harnessconfig.Config) {
+	if len(cfg.Paths) == 0 && cfg.Path == "" {
 		fmt.Fprintln(out, "- path: (not found)")
 
 		return
 	}
-	fmt.Fprintf(out, "- path: %s\n", path)
+	if len(cfg.Paths) == 0 {
+		fmt.Fprintf(out, "- path: %s\n", cfg.Path)
+
+		return
+	}
+	if len(cfg.Paths) == 1 {
+		fmt.Fprintf(out, "- path: %s\n", cfg.Paths[0])
+
+		return
+	}
+	fmt.Fprintln(out, "- paths:")
+	for _, path := range cfg.Paths {
+		fmt.Fprintf(out, "  - %s\n", path)
+	}
+}
+
+// configPathSummary returns a compact source description for config check.
+func configPathSummary(cfg harnessconfig.Config) string {
+	if len(cfg.Paths) == 0 {
+		if cfg.Path == "" {
+			return "(not found)"
+		}
+
+		return cfg.Path
+	}
+	if len(cfg.Paths) == 1 {
+		return cfg.Paths[0]
+	}
+
+	return strings.Join(cfg.Paths, " + ")
 }
 
 // writeHooksAndPlugins renders repeatable config sections with counts.

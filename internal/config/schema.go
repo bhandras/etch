@@ -703,6 +703,7 @@ func applySchemaAssignment(scope configScope, key string, value string) error {
 	if err != nil {
 		return fmt.Errorf("%s.%s: %w", field.table, field.key, err)
 	}
+	markConfigFieldSet(scope.cfg, field)
 	field.apply(&assignmentTarget{
 		cfg:     scope.cfg,
 		hook:    scope.hook,
