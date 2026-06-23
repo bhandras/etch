@@ -377,6 +377,9 @@ func parseChatLikeFlags(name string, args []string, stderr io.Writer) (
 		cfg.autoCompactLimit,
 		"approximate token threshold for automatic compaction",
 	)
+	if name == commandResume {
+		args = intersperseFlagArgs(fs, args)
+	}
 	if err := fs.Parse(args); err != nil {
 		return cliConfig{}, nil, err
 	}
@@ -395,6 +398,64 @@ func parseChatLikeFlags(name string, args []string, stderr io.Writer) (
 	mergeExplicitProviderFlags(fs, &cfg, providerFlags)
 
 	return cfg, fs, nil
+}
+
+// intersperseFlagArgs moves recognized flags before positional arguments so
+// resume accepts the natural "resume <id> --flag value" form.
+func intersperseFlagArgs(fs *flag.FlagSet, args []string) []string {
+	flags := make([]string, 0, len(args))
+	positionals := make([]string, 0, len(args))
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		if arg == "--" {
+			positionals = append(positionals, args[index+1:]...)
+
+			break
+		}
+		if !looksLikeFlag(arg) {
+			positionals = append(positionals, arg)
+
+			continue
+		}
+
+		name, hasInlineValue := flagName(arg)
+		known := fs.Lookup(name)
+		flags = append(flags, arg)
+		if known == nil || hasInlineValue || flagIsBool(known) {
+			continue
+		}
+		if index+1 < len(args) {
+			index++
+			flags = append(flags, args[index])
+		}
+	}
+
+	return append(flags, positionals...)
+}
+
+// looksLikeFlag reports whether arg is syntactically a command-line flag.
+func looksLikeFlag(arg string) bool {
+	return strings.HasPrefix(arg, "-") && arg != "-"
+}
+
+// flagName returns the flag name without leading dashes or inline value text.
+func flagName(arg string) (string, bool) {
+	name := strings.TrimLeft(arg, "-")
+	valueIndex := strings.Index(name, "=")
+	if valueIndex < 0 {
+		return name, false
+	}
+
+	return name[:valueIndex], true
+}
+
+// flagIsBool reports whether f can be specified without a value.
+func flagIsBool(f *flag.Flag) bool {
+	boolFlag, ok := f.Value.(interface {
+		IsBoolFlag() bool
+	})
+
+	return ok && boolFlag.IsBoolFlag()
 }
 
 // parseCompactFlags converts compact subcommand flags into configuration.

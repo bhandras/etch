@@ -291,6 +291,35 @@ func TestResumeCommandRequiresSession(t *testing.T) {
 	}
 }
 
+// TestResumeCommandAcceptsFlagsAfterSession verifies copied shell commands work
+// even when a user puts resume flags after the positional session id.
+func TestResumeCommandAcceptsFlagsAfterSession(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "sessions")
+	cfg, err := parseFlags(
+		[]string{
+			"resume",
+			"abc123",
+			"--session-dir",
+			sessionDir,
+			"--provider",
+			providerEcho,
+		},
+		&bytes.Buffer{},
+	)
+	if err != nil {
+		t.Fatalf("parse resume flags: %v", err)
+	}
+	if cfg.sessionID != "abc123" {
+		t.Fatalf("unexpected session id: %q", cfg.sessionID)
+	}
+	if cfg.sessionDir != sessionDir {
+		t.Fatalf("unexpected session dir: %q", cfg.sessionDir)
+	}
+	if cfg.provider != providerEcho {
+		t.Fatalf("unexpected provider: %q", cfg.provider)
+	}
+}
+
 // TestChatResumeCommandQuotesSessionDir verifies printed resume commands stay
 // copyable when the session directory contains shell metacharacters.
 func TestChatResumeCommandQuotesSessionDir(t *testing.T) {
