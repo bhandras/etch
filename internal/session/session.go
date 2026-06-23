@@ -255,6 +255,10 @@ type ProviderItemData struct {
 
 	// EncryptedContent stores opaque provider ciphertext for replay.
 	EncryptedContent string `json:"encryptedContent,omitempty"`
+
+	// Summary stores displayable provider reasoning summary text needed to
+	// replay opaque reasoning items with their original shape.
+	Summary string `json:"summary,omitempty"`
 }
 
 // MetricsData is provider transport and request-shape metadata for one model

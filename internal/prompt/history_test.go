@@ -114,6 +114,7 @@ func TestBuildHistoryMessagesReplaysProviderItems(t *testing.T) {
 			Type:             "reasoning",
 			ID:               "rs_1",
 			EncryptedContent: "opaque",
+			Summary:          "checking",
 		}),
 		messageEvent(
 			t, "3", session.EventAssistantMessage,
@@ -134,10 +135,39 @@ func TestBuildHistoryMessagesReplaysProviderItems(t *testing.T) {
 	}
 	if len(messages[1].ProviderItems) != 1 ||
 		messages[1].ProviderItems[0].EncryptedContent != "opaque" ||
+		messages[1].ProviderItems[0].Summary != "checking" ||
 		messages[1].Content != "" {
 
 		t.Fatalf("provider item was not replayed opaquely: %#v",
 			messages[1])
+	}
+}
+
+// TestBuildHistoryMessagesAddsLegacyReasoningSummary verifies old logs that
+// stored reasoning separately can still reconstruct provider replay items.
+func TestBuildHistoryMessagesAddsLegacyReasoningSummary(t *testing.T) {
+	events := []session.Event{
+		reasoningEvent(t, "1", "checking"),
+		providerItemEvent(t, "2", session.ProviderItemData{
+			Provider:         "openai",
+			Type:             "reasoning",
+			ID:               "rs_1",
+			EncryptedContent: "opaque",
+		}),
+	}
+
+	messages, err := BuildHistoryMessages(HistoryRequest{
+		Events: events,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(messages) != 1 ||
+		len(messages[0].ProviderItems) != 1 ||
+		messages[0].ProviderItems[0].Summary != "checking" {
+
+		t.Fatalf("legacy reasoning summary was not replayed: %#v",
+			messages)
 	}
 }
 
@@ -153,6 +183,24 @@ func messageEvent(t *testing.T, id string, eventType string,
 
 	return session.Event{
 		Type: eventType,
+		ID:   id,
+		Time: time.Now().UTC(),
+		Data: raw,
+	}
+}
+
+// reasoningEvent creates one durable reasoning event for prompt tests.
+func reasoningEvent(t *testing.T, id string, reasoning string) session.Event {
+	t.Helper()
+	raw, err := json.Marshal(session.ReasoningData{
+		Reasoning: reasoning,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return session.Event{
+		Type: session.EventModelReasoning,
 		ID:   id,
 		Time: time.Now().UTC(),
 		Data: raw,

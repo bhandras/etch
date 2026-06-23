@@ -44,13 +44,24 @@ func BuildHistoryMessages(req HistoryRequest) ([]model.Message, error) {
 		})
 	}
 
+	var pendingReasoning string
 	for _, event := range req.Events[startIndex:] {
-		message, ok, err := messageFromEvent(event)
+		if event.Type == session.EventModelReasoning {
+			pendingReasoning, err = reasoningFromEvent(event)
+			if err != nil {
+				return nil, err
+			}
+
+			continue
+		}
+
+		message, ok, err := messageFromEvent(event, pendingReasoning)
 		if err != nil {
 			return nil, err
 		}
 		if ok {
 			messages = append(messages, message)
+			pendingReasoning = ""
 		}
 	}
 
@@ -93,11 +104,16 @@ func indexAfterSummary(events []session.Event, firstKeptID string) int {
 }
 
 // messageFromEvent converts one durable message event into a model message.
-func messageFromEvent(event session.Event) (model.Message, bool, error) {
+func messageFromEvent(event session.Event, reasoningFallback string) (
+	model.Message, bool, error) {
+
 	if event.Type == session.EventModelProviderItem {
 		item, err := providerItemFromEvent(event)
 		if err != nil {
 			return model.Message{}, false, err
+		}
+		if item.Summary == "" {
+			item.Summary = reasoningFallback
 		}
 
 		return model.Message{
@@ -125,6 +141,16 @@ func messageFromEvent(event session.Event) (model.Message, bool, error) {
 	}, true, nil
 }
 
+// reasoningFromEvent decodes displayable reasoning text for replay fallback.
+func reasoningFromEvent(event session.Event) (string, error) {
+	var data session.ReasoningData
+	if err := json.Unmarshal(event.Data, &data); err != nil {
+		return "", fmt.Errorf("decode reasoning %s: %w", event.ID, err)
+	}
+
+	return data.Reasoning, nil
+}
+
 // providerItemFromEvent converts one durable provider item into model history.
 func providerItemFromEvent(event session.Event) (model.ProviderItem, error) {
 	var data session.ProviderItemData
@@ -138,6 +164,7 @@ func providerItemFromEvent(event session.Event) (model.ProviderItem, error) {
 		Type:             data.Type,
 		ID:               data.ID,
 		EncryptedContent: data.EncryptedContent,
+		Summary:          data.Summary,
 	}, nil
 }
 

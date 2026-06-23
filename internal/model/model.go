@@ -152,12 +152,16 @@ type ProviderItem struct {
 
 	// EncryptedContent stores opaque provider ciphertext for replay.
 	EncryptedContent string
+
+	// Summary stores displayable provider reasoning summary text needed to
+	// replay opaque reasoning items with their original shape.
+	Summary string
 }
 
 // Empty reports whether the provider item has no replayable content.
 func (p ProviderItem) Empty() bool {
 	return p.Provider == "" && p.Type == "" && p.ID == "" &&
-		p.EncryptedContent == ""
+		p.EncryptedContent == "" && p.Summary == ""
 }
 
 // Usage stores provider-reported token counters for one model call.

@@ -402,8 +402,9 @@ func TestClientStreamsResponsesAPI(t *testing.T) {
 				w, "data: "+
 					"{\"type\":\"response.output_item.done\""+
 					",\"item\":{\"type\":\"reasoning\",\"id\":\"r"+
-					"s_1\",\"encrypted_content\":\"opaque\"}}"+
-					"\n\n",
+					"s_1\",\"encrypted_content\":\"opaque\",\""+
+					"summary\":[{\"type\":\"summary_text\",\"t"+
+					"ext\":\"checking\"}]}}\n\n",
 			)
 			fmt.Fprint(
 				w, "data: "+
@@ -522,7 +523,8 @@ func TestClientStreamsResponsesAPI(t *testing.T) {
 		got[2].ProviderItem.Provider != "openai" ||
 		got[2].ProviderItem.Type != "reasoning" ||
 		got[2].ProviderItem.ID != "rs_1" ||
-		got[2].ProviderItem.EncryptedContent != "opaque" {
+		got[2].ProviderItem.EncryptedContent != "opaque" ||
+		got[2].ProviderItem.Summary != "checking" {
 
 		t.Fatalf("unexpected provider item event: %#v", got[2])
 	}
@@ -654,15 +656,48 @@ func TestResponseInputReplaysOpenAIProviderItems(t *testing.T) {
 			Type:             "reasoning",
 			ID:               "rs_1",
 			EncryptedContent: "opaque",
+			Summary:          "checking",
 		}},
 	}})
 
 	if len(input) != 1 ||
 		input[0].Type != "reasoning" ||
 		input[0].ID != "rs_1" ||
-		input[0].EncryptedContent != "opaque" {
+		input[0].EncryptedContent != "opaque" ||
+		input[0].Summary == nil ||
+		len(*input[0].Summary) != 1 ||
+		(*input[0].Summary)[0].Text != "checking" {
 
 		t.Fatalf("unexpected replay item: %#v", input)
+	}
+}
+
+// TestResponseInputReplaysOldReasoningItems verifies old session logs still
+// include the required Responses summary field during full-context replay.
+func TestResponseInputReplaysOldReasoningItems(t *testing.T) {
+	input := responseInput([]model.Message{{
+		ProviderItems: []model.ProviderItem{{
+			Provider:         "openai",
+			Type:             "reasoning",
+			ID:               "rs_1",
+			EncryptedContent: "opaque",
+		}},
+	}})
+	body, err := json.Marshal(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(input) != 1 ||
+		input[0].Type != "reasoning" ||
+		input[0].EncryptedContent != "opaque" ||
+		input[0].Summary == nil ||
+		len(*input[0].Summary) != 0 {
+
+		t.Fatalf("unexpected old replay item: %#v", input)
+	}
+	if !strings.Contains(string(body), `"summary":[]`) {
+		t.Fatalf("old replay item omitted summary: %s", body)
 	}
 }
 

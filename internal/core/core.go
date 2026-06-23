@@ -1308,6 +1308,7 @@ func appendModelProviderItems(store *session.Store, parentID string,
 				Type:             item.Type,
 				ID:               item.ID,
 				EncryptedContent: item.EncryptedContent,
+				Summary:          item.Summary,
 			})
 		if err != nil {
 			return "", fmt.Errorf("append model provider item: %w",

@@ -959,6 +959,10 @@ type responseStreamDecoder struct {
 	// activeItemID is the identifier for the current Responses item.
 	activeItemID string
 
+	// activeReasoningSummary accumulates streamed summary text for the
+	// active reasoning item so its replay item can be reconstructed.
+	activeReasoningSummary strings.Builder
+
 	// responseID is the last provider response identifier emitted.
 	responseID string
 }
@@ -1003,6 +1007,7 @@ func (d *responseStreamDecoder) decode(payload []byte) []model.Event {
 		if d.activeItemType != "reasoning" {
 			return nil
 		}
+		d.activeReasoningSummary.WriteString(event.Delta)
 
 		return []model.Event{{Type: model.EventReasoningDelta,
 			Text: event.Delta}}
@@ -1019,6 +1024,7 @@ func (d *responseStreamDecoder) decode(payload []byte) []model.Event {
 					ID:       event.Item.ID,
 					EncryptedContent: event.Item.
 						EncryptedContent,
+					Summary: d.reasoningSummary(event.Item),
 				},
 			}}
 		}
@@ -1076,6 +1082,18 @@ func (d *responseStreamDecoder) clearActiveItem() {
 	d.activeItemType = ""
 	d.activeItemRole = ""
 	d.activeItemID = ""
+	d.activeReasoningSummary.Reset()
+}
+
+// reasoningSummary returns the completed summary for a reasoning item.
+func (d *responseStreamDecoder) reasoningSummary(
+	item responseOutputItem) string {
+
+	if summary := item.summaryText(); summary != "" {
+		return summary
+	}
+
+	return d.activeReasoningSummary.String()
 }
 
 // responseErrorText returns a concise message from a Responses error event.
@@ -1183,6 +1201,9 @@ func responseInput(messages []model.Message) []responseInputItem {
 				Type:             "reasoning",
 				ID:               item.ID,
 				EncryptedContent: item.EncryptedContent,
+				Summary: responseReasoningSummaryItems(
+					item.Summary,
+				),
 			})
 		}
 		if len(message.ProviderItems) > 0 &&
@@ -1406,6 +1427,11 @@ type responseInputItem struct {
 	// EncryptedContent stores opaque provider ciphertext for reasoning
 	// replay.
 	EncryptedContent string `json:"encrypted_content,omitempty"`
+
+	// Summary stores provider reasoning summary blocks. Reasoning items
+	// require this field during manual Responses API replay, even when it
+	// is empty.
+	Summary *[]responseReasoningSummaryItem `json:"summary,omitempty"`
 }
 
 // responseReasoning configures reasoning-capable model behavior.
@@ -1415,6 +1441,33 @@ type responseReasoning struct {
 
 	// Summary requests a displayable reasoning summary.
 	Summary string `json:"summary,omitempty"`
+}
+
+// responseReasoningSummaryItem is one Responses reasoning summary block.
+type responseReasoningSummaryItem struct {
+	// Type identifies the summary block kind.
+	Type string `json:"type"`
+
+	// Text stores displayable reasoning summary text.
+	Text string `json:"text"`
+}
+
+// responseReasoningSummaryItems converts summary text into Responses blocks.
+func responseReasoningSummaryItems(
+	summary string) *[]responseReasoningSummaryItem {
+
+	if strings.TrimSpace(summary) == "" {
+		items := []responseReasoningSummaryItem{}
+
+		return &items
+	}
+
+	items := []responseReasoningSummaryItem{{
+		Type: "summary_text",
+		Text: summary,
+	}}
+
+	return &items
 }
 
 // responseTool is one Responses API function tool declaration.
@@ -1571,6 +1624,21 @@ type responseOutputItem struct {
 	// EncryptedContent stores opaque provider ciphertext for reasoning
 	// replay.
 	EncryptedContent string `json:"encrypted_content"`
+
+	// Summary stores provider reasoning summary blocks.
+	Summary []responseReasoningSummaryItem `json:"summary"`
+}
+
+// summaryText joins displayable reasoning summary blocks.
+func (i responseOutputItem) summaryText() string {
+	var out strings.Builder
+	for _, item := range i.Summary {
+		if item.Type == "summary_text" {
+			out.WriteString(item.Text)
+		}
+	}
+
+	return out.String()
 }
 
 // responseEventResponse stores failed or incomplete response state.
