@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -22,5 +23,21 @@ func TestAuthStatusDoesNotPrintCodexAccessToken(t *testing.T) {
 	}
 	if strings.Contains(stdout.String(), "secret-codex-token") {
 		t.Fatalf("auth status leaked token: %q", stdout.String())
+	}
+}
+
+// TestAuthStorePathDefaultsToHome verifies OAuth credentials are global by
+// default so harness can be launched from any project directory.
+func TestAuthStorePathDefaultsToHome(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	path, err := authStorePath(cliConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(home, ".harness", "auth", "openai.json")
+	if path != want {
+		t.Fatalf("unexpected auth path: got %q want %q", path, want)
 	}
 }

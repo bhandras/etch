@@ -131,12 +131,12 @@ func authStorePath(cfg cliConfig) (string, error) {
 	if cfg.authPath != "" {
 		return filepath.Abs(cfg.authPath)
 	}
-	cwd, err := os.Getwd()
+	home, err := os.UserHomeDir()
 	if err != nil {
-		return "", fmt.Errorf("get working directory: %w", err)
+		return "", fmt.Errorf("get home directory: %w", err)
 	}
 
-	return openaiauth.DefaultStorePath(cwd)
+	return openaiauth.DefaultStorePath(home)
 }
 
 // authOptions converts CLI auth flags into provider-specific OAuth options.

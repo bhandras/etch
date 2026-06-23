@@ -115,15 +115,18 @@ func TestRunUsesStoredOpenAIOAuthCredentialsFirst(t *testing.T) {
 	t.Setenv("CODEX_ACCESS_TOKEN", "codex-token")
 
 	root := t.TempDir()
+	t.Setenv("HOME", root)
 	t.Chdir(root)
 
 	sessionDir := filepath.Join(root, "sessions")
 	var gotPath string
 	var gotAuth string
+	var gotAccountID string
 	server := httptest.NewServer(
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			gotPath = r.URL.Path
 			gotAuth = r.Header.Get("Authorization")
+			gotAccountID = r.Header.Get("chatgpt-account-id")
 			w.Header().Set("Content-Type", "text/event-stream")
 			fmt.Fprint(
 				w, "data: "+
@@ -153,6 +156,7 @@ func TestRunUsesStoredOpenAIOAuthCredentialsFirst(t *testing.T) {
 		LastRefresh:  time.Now(),
 		Tokens: openaiauth.TokenData{
 			AccessToken: "oauth-token",
+			AccountID:   "account_123",
 		},
 	}); err != nil {
 
@@ -180,6 +184,9 @@ func TestRunUsesStoredOpenAIOAuthCredentialsFirst(t *testing.T) {
 	if gotAuth != "Bearer oauth-token" {
 		t.Fatalf("unexpected oauth auth header: %q", gotAuth)
 	}
+	if gotAccountID != "account_123" {
+		t.Fatalf("unexpected account header: %q", gotAccountID)
+	}
 	if strings.TrimSpace(stdout.String()) != "assistant: hi" {
 		t.Fatalf("unexpected output: %q", stdout.String())
 	}
@@ -193,6 +200,7 @@ func TestRunExplicitAPIKeyOverridesStoredOAuth(t *testing.T) {
 	t.Setenv("CODEX_ACCESS_TOKEN", "")
 
 	root := t.TempDir()
+	t.Setenv("HOME", root)
 	t.Chdir(root)
 
 	sessionDir := filepath.Join(root, "sessions")

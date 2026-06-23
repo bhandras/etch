@@ -55,6 +55,10 @@ const (
 	// promptCacheKeyMaxRunes is OpenAI's maximum prompt cache key length.
 	promptCacheKeyMaxRunes = 64
 
+	// codexResponsesBetaHeader enables the ChatGPT/Codex Responses HTTP
+	// endpoint used by OAuth-backed subscription requests.
+	codexResponsesBetaHeader = "responses=experimental"
+
 	// sseReadBufferSize keeps stream reads large enough to amortize
 	// syscalls without retaining oversized buffers for normal model deltas.
 	sseReadBufferSize = 32 * 1024
@@ -363,6 +367,7 @@ func (c *Client) newResponsesRequest(ctx context.Context, req model.Request) (
 			fmt.Errorf("create openai response request: %w", err)
 	}
 	c.addCommonHeaders(httpReq)
+	c.addCodexResponsesHeaders(httpReq, req.SessionID)
 	metrics.RequestBytes = requestContentLength(httpReq)
 
 	return httpReq, metrics, nil
@@ -496,6 +501,32 @@ func (c *Client) addCommonHeaders(req *http.Request) {
 	if c.APIKey != "" {
 		req.Header.Set("Authorization", "Bearer "+c.APIKey)
 	}
+	if c.AccountID != "" {
+		req.Header.Set("chatgpt-account-id", c.AccountID)
+	}
+}
+
+// addCodexResponsesHeaders applies ChatGPT/Codex-specific Responses HTTP
+// headers without affecting generic OpenAI-compatible providers.
+func (c *Client) addCodexResponsesHeaders(req *http.Request, sessionID string) {
+	if !c.codexBackend() {
+		return
+	}
+
+	req.Header.Set("OpenAI-Beta", codexResponsesBetaHeader)
+	req.Header.Set("originator", "harness")
+	if sessionID == "" {
+		return
+	}
+	req.Header.Set("session-id", sessionID)
+	req.Header.Set("x-client-request-id", sessionID)
+}
+
+// codexBackend reports whether BaseURL points at the ChatGPT/Codex backend.
+func (c *Client) codexBackend() bool {
+	baseURL := strings.TrimRight(c.BaseURL, "/")
+
+	return strings.Contains(baseURL, "chatgpt.com/backend-api/codex")
 }
 
 // promptCacheKey returns a provider-safe cache affinity key for a session.

@@ -63,7 +63,7 @@ const (
 // ErrNotLoggedIn reports that no stored OpenAI OAuth credentials exist.
 var ErrNotLoggedIn = errors.New("openai oauth credentials not found")
 
-// Credentials is the JSON shape stored in the project-local OpenAI auth file.
+// Credentials is the JSON shape stored in the local OpenAI auth file.
 type Credentials struct {
 	// AuthMode records the credential family, currently "chatgpt".
 	AuthMode string `json:"auth_mode,omitempty"`
@@ -144,14 +144,14 @@ type LoginProgress struct {
 	Message string
 }
 
-// DefaultStorePath returns the project-local OpenAI auth file path for cwd.
-func DefaultStorePath(cwd string) (string, error) {
-	if strings.TrimSpace(cwd) == "" {
-		return "", fmt.Errorf("auth cwd must not be empty")
+// DefaultStorePath returns the OpenAI auth file path under root.
+func DefaultStorePath(root string) (string, error) {
+	if strings.TrimSpace(root) == "" {
+		return "", fmt.Errorf("auth root must not be empty")
 	}
-	absolute, err := filepath.Abs(cwd)
+	absolute, err := filepath.Abs(root)
 	if err != nil {
-		return "", fmt.Errorf("resolve auth cwd: %w", err)
+		return "", fmt.Errorf("resolve auth root: %w", err)
 	}
 
 	return filepath.Join(absolute, ".harness", "auth", AuthFileName), nil

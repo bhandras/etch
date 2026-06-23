@@ -364,10 +364,12 @@ func TestClientStreamsChatReasoning(t *testing.T) {
 func TestClientStreamsResponsesAPI(t *testing.T) {
 	var gotPath string
 	var gotBody string
+	var gotAccountID string
 	var gotRequest responseRequest
 	server := httptest.NewServer(
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			gotPath = r.URL.Path
+			gotAccountID = r.Header.Get("chatgpt-account-id")
 			body, err := io.ReadAll(r.Body)
 			if err != nil {
 				t.Fatal(err)
@@ -445,6 +447,7 @@ func TestClientStreamsResponsesAPI(t *testing.T) {
 		API:              APIResponses,
 		ReasoningEffort:  "medium",
 		ReasoningSummary: "auto",
+		AccountID:        "account_123",
 	}
 	events, err := client.Stream(context.Background(), model.Request{
 		SessionID:          "session-responses",
@@ -470,6 +473,9 @@ func TestClientStreamsResponsesAPI(t *testing.T) {
 	got := collectEvents(events)
 	if gotPath != responsesPath {
 		t.Fatalf("unexpected path: %q", gotPath)
+	}
+	if gotAccountID != "account_123" {
+		t.Fatalf("unexpected account header: %q", gotAccountID)
 	}
 	if gotRequest.Instructions != "rules" {
 		t.Fatalf("unexpected instructions: %q", gotRequest.Instructions)
@@ -644,6 +650,45 @@ func TestPromptCacheKeyClampsRunes(t *testing.T) {
 	}
 	if got := promptCacheKey(""); got != "" {
 		t.Fatalf("unexpected empty key: %q", got)
+	}
+}
+
+// TestNewResponsesRequestAddsCodexHTTPHeaders verifies OAuth Codex HTTP/SSE
+// requests carry the beta and stable session headers expected by the backend.
+func TestNewResponsesRequestAddsCodexHTTPHeaders(t *testing.T) {
+	client := &Client{
+		BaseURL:   "https://chatgpt.com/backend-api/codex",
+		Model:     "test-model",
+		API:       APIResponses,
+		APIKey:    "token",
+		AccountID: "account_123",
+	}
+	req, _, err := client.newResponsesRequest(context.Background(),
+		model.Request{
+			SessionID: "session_123",
+			Messages: []model.Message{{
+				Role:    model.RoleUser,
+				Content: "hello",
+			}},
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := req.Header.Get(
+		"OpenAI-Beta",
+	); got != "responses=experimental" {
+
+		t.Fatalf("unexpected beta header: %q", got)
+	}
+	if got := req.Header.Get("session-id"); got != "session_123" {
+		t.Fatalf("unexpected session header: %q", got)
+	}
+	if got := req.Header.Get("x-client-request-id"); got != "session_123" {
+		t.Fatalf("unexpected request id header: %q", got)
+	}
+	if got := req.Header.Get("chatgpt-account-id"); got != "account_123" {
+		t.Fatalf("unexpected account header: %q", got)
 	}
 }
 
