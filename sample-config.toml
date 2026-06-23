@@ -36,14 +36,19 @@
 # tool-use guidance that should apply to parent and child agents in this
 # project. Set either system_prompt or system_prompt_file, not both.
 # system_prompt = '''
-# For Go code, prefer go_inspect before broad grep or read.
-# Use detail=package or detail=none to map packages, files, and symbols.
+# For Go code, prefer go_inspect before grep or read when you need package,
+# file, symbol, signature, declaration, implementation, or call-surface
+# structure.
+# Use detail=package or detail=none to map unfamiliar packages and files.
 # Use summary after narrowing by package, file, or name regex.
 # Use full to read actual Go source declarations directly; for functions and
 # methods this includes the complete body.
 # Prefer go_inspect detail=full over read once the Go symbol is known or
-# narrowly filtered. Use read for non-Go files, surrounding context outside
-# declarations, or several known file ranges with files=[...].
+# narrowly filtered. Use grep for literal strings, error text, configuration,
+# documentation, non-Go files, or cross-file references that are not naturally
+# described by Go package/file/name filters. Use read for non-Go files,
+# surrounding context outside declarations, or several known file ranges with
+# files=[...].
 # '''
 # system_prompt_file = ""
 # To load the project prompt from a file instead, leave system_prompt empty and
@@ -402,22 +407,23 @@
 # risks, and next actions.
 #
 # Prefer high-signal tool use over exhaustive crawling. For Go code, use
-# go_inspect with paths=[...] plus package/file/name regex filters. File regexes
-# match repo-relative paths such as internal/plugins/client.go, plus
-# root-relative fallback paths such as client.go. Use detail:"package" first for
-# package and file maps, detail:"none" for compact symbol rows, detail:"summary"
-# only after narrowing by file or name, and usually keep limit at or below 80 for
-# summary calls. Use detail:"full" to read actual Go source declarations
-# directly; for functions and methods this includes the complete body. Prefer
-# detail:"full" over read once the symbol is known or narrowly filtered. Avoid
-# broad summary calls over entire packages. Set includeUnexported:true when
-# inspecting internal package helpers. Use read only for wider non-symbol
-# context, non-Go files, or context outside declarations; when you already know
-# several files or line ranges, call read once with files=[...] so the parent
-# does not pay for repeated read rounds. Use grep for unknown text,
-# configuration, documentation, or cross-file strings, and use paths=[...] for
-# multi-root grep searches. Batch related read-only calls whenever possible,
-# especially source inspections and multi-range reads.
+# go_inspect with paths=[...] plus package/file/name regex filters before grep
+# or read. File regexes match repo-relative paths such as
+# internal/plugins/client.go, plus root-relative fallback paths such as
+# client.go. Use detail:"package" first for package and file maps,
+# detail:"none" for compact symbol rows, detail:"summary" only after narrowing
+# by file or name, and usually keep limit at or below 80 for summary calls. Use
+# detail:"full" to read actual Go source declarations directly; for functions
+# and methods this includes the complete body. Prefer detail:"full" over read
+# once the symbol is known or narrowly filtered. Avoid broad summary calls over
+# entire packages. Set includeUnexported:true when inspecting internal package
+# helpers. Use grep for literal strings, error text, configuration,
+# documentation, non-Go files, or cross-file references that are not naturally
+# described by Go filters. Use read only for wider non-symbol context, non-Go
+# files, or context outside declarations; when you already know several file
+# ranges, call read once with files=[...] so the parent does not pay for repeated
+# read rounds. Batch related read-only calls whenever possible, especially
+# source inspections and multi-range reads.
 #
 # For Go source files, avoid reading whole files as the first move. Use
 # go_inspect detail:"package" or detail:"none" as the file/package index, then
@@ -482,23 +488,23 @@
 # evidence-backed, and scoped to concrete code.
 #
 # For Go code, use go_inspect with paths=[...] plus package/file/name regex
-# filters. File regexes match repo-relative paths such as
+# filters before grep or read. File regexes match repo-relative paths such as
 # internal/plugins/client.go, plus root-relative fallback paths such as
-# client.go. Use detail:"package" first for package and file maps, detail:"none"
-# for compact symbol rows, detail:"summary" only after narrowing by file or
-# name, and usually keep limit at or below 80 for summary calls. Use
+# client.go. Use detail:"package" first for package and file maps,
+# detail:"none" for compact symbol rows, detail:"summary" only after narrowing
+# by file or name, and usually keep limit at or below 80 for summary calls. Use
 # detail:"full" to read actual Go source declarations directly; for functions
 # and methods this includes the complete body. Prefer detail:"full" over read
 # once the symbol is known or narrowly filtered. Avoid broad summary calls over
 # entire packages. Set includeUnexported:true when inspecting internal package
 # helpers. Prefer one broad go_inspect detail:"package" call over repeated
-# one-symbol-at-a-time lookups. Use read only for wider non-symbol context,
-# non-Go files, or context outside declarations, and use grep for unknown text,
-# configuration, documentation, or cross-file strings. Use paths=[...] for
-# multi-root grep searches. Prefer batched read-only calls; when several file
-# ranges are needed, call read once with files=[...] instead of repeated read
-# calls. Avoid style-only comments unless they hide a real maintenance risk. Do
-# not edit files.
+# one-symbol-at-a-time lookups. Use grep for literal strings, error text,
+# configuration, documentation, non-Go files, or cross-file references that are
+# not naturally described by Go filters. Use read only for wider non-symbol
+# context, non-Go files, or context outside declarations. Prefer batched
+# read-only calls; when several file ranges are needed, call read once with
+# files=[...] instead of repeated read calls. Avoid style-only comments unless
+# they hide a real maintenance risk. Do not edit files.
 #
 # For Go source files, avoid reading whole files before indexing them. Use
 # go_inspect detail:"package" or detail:"none" to map the structure,
