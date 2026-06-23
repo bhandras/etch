@@ -294,6 +294,46 @@ func TestToolPluginRunsDirectly(t *testing.T) {
 	}
 }
 
+// TestConfiguredToolRegistryRejectsPluginTaskConflict verifies subagent
+// delegation reserves the task tool name before plugins are registered.
+func TestConfiguredToolRegistryRejectsPluginTaskConflict(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	if err := os.Mkdir(filepath.Join(root, ".harness"), 0o755); err != nil {
+		t.Fatalf("make config dir: %v", err)
+	}
+	writeFile(
+		t, filepath.Join(root, ".harness", "config.toml"),
+		fmt.Sprintf(`
+[provider]
+name = "echo"
+
+[subagents]
+enabled = true
+
+[[subagents.profile]]
+name = "review"
+description = "Review code."
+allowed_tools = ["ls"]
+
+[[plugins]]
+name = "helper"
+command = %q
+`,
+			cliPluginToolNameEnv+"=task "+cliPluginHelperCommand()),
+	)
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"tool", "ls", "."}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("expected tool startup failure, stdout=%q",
+			stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "conflicts with an existing tool") {
+		t.Fatalf("missing task conflict error: %q", stderr.String())
+	}
+}
+
 // TestToolTaskRunsConfiguredSubagentDirectly verifies the task tool can launch
 // a configured child session through the direct tool smoke path.
 func TestToolTaskRunsConfiguredSubagentDirectly(t *testing.T) {

@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
+	"strings"
 )
 
 const (
@@ -23,7 +25,21 @@ const (
 
 	// methodToolExecute is the protocol method used to execute one tool.
 	methodToolExecute = "tool.execute"
+
+	// ParallelSafetySerial marks tools that must run as serial barriers.
+	ParallelSafetySerial = "serial"
+
+	// ParallelSafetyReadOnly marks tools that read state without mutating
+	// it and may overlap other safe reads.
+	ParallelSafetyReadOnly = "read_only"
+
+	// ParallelSafetyParallel marks tools that are independently safe to
+	// overlap with other safe calls.
+	ParallelSafetyParallel = "parallel_safe"
 )
+
+// toolNamePattern is the provider-compatible subset accepted by Harness.
+var toolNamePattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
 // Plugin describes one standalone Harness plugin process.
 type Plugin struct {
@@ -44,6 +60,10 @@ type Tool struct {
 
 	// Parameters is a JSON Schema object describing tool arguments.
 	Parameters any
+
+	// ParallelSafety optionally declares whether this tool may overlap
+	// other parallel-safe calls. Empty means serial.
+	ParallelSafety string
 
 	// Handler executes this tool for one model-requested call.
 	Handler ToolHandler
@@ -104,6 +124,10 @@ type ToolSpec struct {
 
 	// Parameters is a JSON Schema object describing tool arguments.
 	Parameters any `json:"parameters"`
+
+	// ParallelSafety optionally declares whether this tool may overlap
+	// other safe calls. Empty means serial.
+	ParallelSafety string `json:"parallelSafety,omitempty"`
 }
 
 // ToolExecuteParams is sent when Harness asks a plugin to execute a tool.
@@ -178,13 +202,20 @@ func newPluginServer(plugin Plugin, stdout io.Writer,
 	}
 	tools := make(map[string]Tool)
 	for _, tool := range plugin.Tools {
-		if tool.Name == "" {
-			return nil, fmt.Errorf("plugin tool name must not be " +
-				"empty")
+		if err := validateToolName(tool.Name); err != nil {
+			return nil, err
 		}
 		if tool.Handler == nil {
 			return nil, fmt.Errorf("plugin tool %s handler must "+
 				"not be nil", tool.Name)
+		}
+		if err := validateToolParameters(tool); err != nil {
+			return nil, err
+		}
+		if !validParallelSafety(tool.ParallelSafety) {
+			return nil, fmt.Errorf("plugin tool %s parallel "+
+				"safety %q is not supported", tool.Name,
+				tool.ParallelSafety)
 		}
 		if _, ok := tools[tool.Name]; ok {
 			return nil, fmt.Errorf("plugin tool %s is registered "+
@@ -258,6 +289,9 @@ func (s *pluginServer) handleInitialize(req request) {
 			Name:        tool.Name,
 			Description: tool.Description,
 			Parameters:  tool.Parameters,
+			ParallelSafety: strings.TrimSpace(
+				tool.ParallelSafety,
+			),
 		})
 	}
 
@@ -268,6 +302,59 @@ func (s *pluginServer) handleInitialize(req request) {
 			Tools: specs,
 		},
 	})
+}
+
+// validateToolName reports whether name is accepted by supported providers.
+func validateToolName(name string) error {
+	if name == strings.TrimSpace(name) &&
+		toolNamePattern.MatchString(name) {
+		return nil
+	}
+
+	return fmt.Errorf("plugin tool name %q must match %s", name,
+		toolNamePattern.String())
+}
+
+// validateToolParameters verifies SDK tools expose an object argument schema.
+func validateToolParameters(tool Tool) error {
+	encoded, err := json.Marshal(tool.Parameters)
+	if err != nil || !json.Valid(encoded) {
+		return fmt.Errorf("plugin tool %s parameters must be "+
+			"valid JSON", tool.Name)
+	}
+	var schema map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &schema); err != nil ||
+		schema == nil {
+		return fmt.Errorf("plugin tool %s parameters must be a "+
+			"JSON object", tool.Name)
+	}
+	rawType, ok := schema["type"]
+	if !ok {
+		return fmt.Errorf("plugin tool %s parameters must set "+
+			`"type":"object"`,
+			tool.Name)
+	}
+	var schemaType string
+	if err := json.Unmarshal(rawType, &schemaType); err != nil ||
+		schemaType != "object" {
+		return fmt.Errorf("plugin tool %s parameters must set "+
+			`"type":"object"`,
+			tool.Name)
+	}
+
+	return nil
+}
+
+// validParallelSafety reports whether safety is supported by the protocol.
+func validParallelSafety(safety string) bool {
+	switch strings.TrimSpace(safety) {
+	case "", ParallelSafetySerial, ParallelSafetyReadOnly,
+		ParallelSafetyParallel:
+		return true
+
+	default:
+		return false
+	}
 }
 
 // handleToolExecute decodes and runs one plugin tool request.

@@ -292,6 +292,7 @@
 #     "tools": [{
 #       "name": "example_echo",
 #       "description": "Echo text from an example plugin.",
+#       "parallelSafety": "read_only",
 #       "parameters": {
 #         "type": "object",
 #         "properties": {"text": {"type": "string"}}
@@ -323,6 +324,10 @@
 # name = "example"
 # command = "go run ./plugins/example/main.go"
 # timeout_seconds = 30
+# Plugins run with a sanitized environment by default. Add env names only when
+# a plugin explicitly needs them; secrets such as model API keys are not
+# forwarded unless listed here.
+# env = ["GIT_CONFIG_GLOBAL"]
 # disabled = true
 
 [subagents]
@@ -364,9 +369,9 @@
 # openai_api = "responses"
 # reasoning_effort = "medium"
 # reasoning_summary = "auto"
-# system_prompt = "Explore independently and return concise findings for the parent."
+# system_prompt = "Explore independently and return concise findings for the parent. Start from inherited context and avoid rediscovering facts already present. For Go files, use go_symbols with paths=[...] plus package/file/name regex filters. File regexes may use repo-relative paths such as internal/plugins/client.go. Use detail=package or none first for maps, summary only after narrowing by file or name, and full only for exact implementation bodies. Use read with files=[...] when several known non-Go ranges are needed."
 # system_prompt_file = ".harness/subagents/explore.md"
-# allowed_tools = ["ls", "read", "find", "grep", "go_package_symbols", "go_symbols"]
+# allowed_tools = ["ls", "read", "find", "grep", "go_symbols"]
 # max_tool_rounds = 16
 # auto_compact = true
 # auto_compact_threshold_tokens = 80000

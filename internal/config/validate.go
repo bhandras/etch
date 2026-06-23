@@ -174,6 +174,16 @@ func validatePlugins(plugins []PluginConfig) []string {
 				errors, prefix+".command must not be empty",
 			)
 		}
+		for j, name := range plugin.Env {
+			if !validEnvName(name) {
+				errors = append(
+					errors,
+					fmt.Sprintf("%s.env[%d] must be an "+
+						"environment variable name",
+						prefix, j),
+				)
+			}
+		}
 	}
 
 	return errors
@@ -439,4 +449,33 @@ func stringIn(value string, options []string) bool {
 // joinOptions renders options for diagnostics.
 func joinOptions(options []string) string {
 	return strings.Join(options, ", ")
+}
+
+// validEnvName reports whether name is a conventional environment variable
+// identifier.
+func validEnvName(name string) bool {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return false
+	}
+	for i, r := range name {
+		switch {
+		case r == '_':
+			continue
+
+		case r >= 'A' && r <= 'Z':
+			continue
+
+		case r >= 'a' && r <= 'z':
+			continue
+
+		case i > 0 && r >= '0' && r <= '9':
+			continue
+
+		default:
+			return false
+		}
+	}
+
+	return true
 }

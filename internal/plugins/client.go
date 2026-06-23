@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -27,21 +28,37 @@ const (
 
 	// stderrLimitBytes caps plugin diagnostic text retained for errors.
 	stderrLimitBytes = 4096
+
+	// responseLineLimitBytes caps one plugin JSONL response frame.
+	responseLineLimitBytes = 1024 * 1024
+
+	// resultTextLimitBytes caps model-visible text returned by one plugin
+	// call.
+	resultTextLimitBytes = 128 * 1024
+
+	// shutdownGrace gives cooperative plugins time to exit after stdin
+	// closes or a termination signal is sent.
+	shutdownGrace = 500 * time.Millisecond
 )
 
 // Client owns one configured plugin process and its JSONL protocol state.
 type Client struct {
-	name     string
-	timeout  time.Duration
-	cmd      *exec.Cmd
-	stdin    io.WriteCloser
-	stdout   *bufio.Reader
-	stderr   *limitedBuffer
-	mu       sync.Mutex
-	close    sync.Once
-	closeErr error
-	nextID   int
-	tools    []toolSpec
+	name           string
+	cfg            config.PluginConfig
+	cwd            string
+	timeout        time.Duration
+	cmd            *exec.Cmd
+	stdin          io.WriteCloser
+	stdout         *bufio.Reader
+	stderr         *limitedBuffer
+	mu             sync.Mutex
+	stateMu        sync.Mutex
+	close          sync.Once
+	closeErr       error
+	nextID         int
+	tools          []toolSpec
+	unusable       bool
+	unusableReason string
 }
 
 // StartConfigured starts all enabled configured plugins and registers their
@@ -60,23 +77,20 @@ func StartConfigured(ctx context.Context, configs []config.PluginConfig,
 
 			return nil, err
 		}
-		for _, spec := range client.tools {
-			if registry.Has(spec.Name) {
-				_ = client.Close()
-				closeClients(clients)
+		clients = append(clients, client)
+	}
+	if err := validateClientTools(clients, registry); err != nil {
+		closeClients(clients)
 
-				return nil, fmt.Errorf("plugin %s tool %q "+
-					"conflicts with an existing tool",
-					client.name, spec.Name)
-			}
-		}
+		return nil, err
+	}
+	for _, client := range clients {
 		for _, spec := range client.tools {
 			registry.Register(remoteTool{
 				client: client,
 				spec:   spec,
 			})
 		}
-		clients = append(clients, client)
 	}
 
 	return clients, nil
@@ -97,6 +111,7 @@ func Start(ctx context.Context, cfg config.PluginConfig,
 	name, args := platform.ShellCommand(cfg.Command)
 	cmd := exec.Command(name, args...)
 	cmd.Dir = cwd
+	cmd.Env = pluginEnvironment(cfg.Env)
 	preparePluginCommand(cmd)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -115,6 +130,8 @@ func Start(ctx context.Context, cfg config.PluginConfig,
 
 	client := &Client{
 		name:    pluginName(cfg),
+		cfg:     cfg,
+		cwd:     cwd,
 		timeout: timeout,
 		cmd:     cmd,
 		stdin:   stdin,
@@ -158,6 +175,36 @@ func (c *Client) closeProcess() error {
 	if c.stdin != nil {
 		_ = c.stdin.Close()
 	}
+
+	waitDone := make(chan error, 1)
+	go func() {
+		waitDone <- c.cmd.Wait()
+	}()
+
+	select {
+	case err := <-waitDone:
+		return c.waitError(err, false)
+
+	case <-time.After(shutdownGrace):
+	}
+
+	terminated := false
+	if c.cmd.Process != nil {
+		processTerminated, err := terminatePluginProcess(c.cmd)
+		if err != nil && !errors.Is(err, os.ErrProcessDone) {
+			return fmt.Errorf("terminate plugin %s: %w", c.name,
+				err)
+		}
+		terminated = processTerminated
+	}
+
+	select {
+	case err := <-waitDone:
+		return c.waitError(err, terminated)
+
+	case <-time.After(shutdownGrace):
+	}
+
 	killed := false
 	if c.cmd.Process != nil {
 		processKilled, err := killPluginProcess(c.cmd)
@@ -166,11 +213,17 @@ func (c *Client) closeProcess() error {
 		}
 		killed = processKilled
 	}
-	err := c.cmd.Wait()
+	err := <-waitDone
+
+	return c.waitError(err, killed)
+}
+
+// waitError turns a process wait result into a user-facing plugin diagnostic.
+func (c *Client) waitError(err error, intentionallyStopped bool) error {
 	if err != nil && strings.Contains(err.Error(), "waitid: no child") {
 		return nil
 	}
-	if err != nil && killed {
+	if err != nil && intentionallyStopped {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) && exitErr.ExitCode() == -1 {
 			return nil
@@ -200,9 +253,9 @@ func (c *Client) initialize(ctx context.Context) (initializeResult, error) {
 	}
 	seen := make(map[string]struct{})
 	for _, spec := range result.Tools {
-		if strings.TrimSpace(spec.Name) == "" {
+		if err := tool.ValidateName(spec.Name); err != nil {
 			return initializeResult{}, fmt.Errorf("plugin %s "+
-				"returned a tool without a name", c.name)
+				"returned invalid tool name: %w", c.name, err)
 		}
 		if _, ok := seen[spec.Name]; ok {
 			return initializeResult{}, fmt.Errorf("plugin %s "+
@@ -211,6 +264,11 @@ func (c *Client) initialize(ctx context.Context) (initializeResult, error) {
 		seen[spec.Name] = struct{}{}
 		if err := validateToolParameters(c.name, spec); err != nil {
 			return initializeResult{}, err
+		}
+		if !tool.ParallelSafetyAllowed(spec.ParallelSafety) {
+			return initializeResult{}, fmt.Errorf("plugin %s tool "+
+				"%s returned unsupported parallel safety %q",
+				c.name, spec.Name, spec.ParallelSafety)
 		}
 	}
 
@@ -274,6 +332,10 @@ func (c *Client) execute(ctx context.Context, call model.ToolCall) (tool.Result,
 	}, &result)
 	if err != nil {
 		if callCtx.Err() == context.DeadlineExceeded {
+			c.markUnusable(
+				fmt.Sprintf("timed out after %s", c.timeout),
+			)
+
 			return tool.Result{}, fmt.Errorf("plugin tool %s "+
 				"timed out after %s", call.Name, c.timeout)
 		}
@@ -281,7 +343,16 @@ func (c *Client) execute(ctx context.Context, call model.ToolCall) (tool.Result,
 		return tool.Result{}, err
 	}
 
-	return tool.Result{Text: contentText(result.Content)}, nil
+	text, err := contentText(result.Content)
+	if err != nil {
+		c.markUnusable(err.Error())
+		_ = c.Close()
+
+		return tool.Result{}, fmt.Errorf("plugin tool %s: %w",
+			call.Name, err)
+	}
+
+	return tool.Result{Text: text}, nil
 }
 
 // call sends one request and waits for the matching response.
@@ -306,8 +377,8 @@ func (c *Client) call(ctx context.Context, method string, params any,
 			return
 		}
 		if _, err := c.stdin.Write(append(encoded, '\n')); err != nil {
-			done <- responseResult{err: fmt.Errorf(
-				"write plugin %s request: %w", c.name, err)}
+			done <- responseResult{err: pluginFatalError{err: fmt.Errorf(
+				"write plugin %s request: %w", c.name, err)}}
 
 			return
 		}
@@ -323,12 +394,18 @@ func (c *Client) call(ctx context.Context, method string, params any,
 
 	select {
 	case <-ctx.Done():
+		c.markUnusable(ctx.Err().Error())
 		_ = c.Close()
 
 		return ctx.Err()
 
 	case got := <-done:
 		if got.err != nil {
+			if fatalPluginError(got.err) {
+				c.markUnusable(got.err.Error())
+				_ = c.Close()
+			}
+
 			return got.err
 		}
 		if got.response.Error != nil {
@@ -341,6 +418,10 @@ func (c *Client) call(ctx context.Context, method string, params any,
 		if err := json.Unmarshal(
 			got.response.Result, result,
 		); err != nil {
+
+			c.markUnusable(err.Error())
+			_ = c.Close()
+
 			return fmt.Errorf("decode plugin %s %s result: %w",
 				c.name, method, err)
 		}
@@ -352,7 +433,7 @@ func (c *Client) call(ctx context.Context, method string, params any,
 // readResponse reads lines until the response for id arrives.
 func (c *Client) readResponse(id string) (response, error) {
 	for {
-		line, err := c.stdout.ReadBytes('\n')
+		line, err := c.readResponseLine()
 		if err != nil {
 			return response{}, c.readError(err)
 		}
@@ -363,19 +444,41 @@ func (c *Client) readResponse(id string) (response, error) {
 
 		var got response
 		if err := json.Unmarshal(line, &got); err != nil {
-			return response{}, fmt.Errorf("decode plugin %s "+
-				"response: %w", c.name, err)
+			return response{}, pluginFatalError{err: fmt.Errorf(
+				"decode plugin %s response: %w", c.name, err)}
 		}
 		if got.ID == "" {
-			continue
+			return response{}, pluginFatalError{err: fmt.Errorf(
+				"plugin %s returned response without id", c.name)}
 		}
 		if got.ID != id {
-			return response{}, fmt.Errorf("plugin %s returned "+
-				"response id %q while waiting for %q", c.name,
-				got.ID, id)
+			return response{}, pluginFatalError{err: fmt.Errorf(
+				"plugin %s returned response id %q while waiting "+
+					"for %q", c.name, got.ID, id)}
 		}
 
 		return got, nil
+	}
+}
+
+// readResponseLine reads one bounded JSONL response line.
+func (c *Client) readResponseLine() ([]byte, error) {
+	var line []byte
+	for {
+		chunk, err := c.stdout.ReadSlice('\n')
+		line = append(line, chunk...)
+		if len(line) > responseLineLimitBytes {
+			return nil, fmt.Errorf("response line exceeds %d bytes",
+				responseLineLimitBytes)
+		}
+		if err == nil {
+			return line, nil
+		}
+		if errors.Is(err, bufio.ErrBufferFull) {
+			continue
+		}
+
+		return nil, err
 	}
 }
 
@@ -383,10 +486,12 @@ func (c *Client) readResponse(id string) (response, error) {
 func (c *Client) readError(err error) error {
 	text := strings.TrimSpace(c.stderr.String())
 	if text == "" {
-		return fmt.Errorf("read plugin %s response: %w", c.name, err)
+		return pluginFatalError{err: fmt.Errorf(
+			"read plugin %s response: %w", c.name, err)}
 	}
 
-	return fmt.Errorf("read plugin %s response: %w: %s", c.name, err, text)
+	return pluginFatalError{err: fmt.Errorf(
+		"read plugin %s response: %w: %s", c.name, err, text)}
 }
 
 // nextRequestID returns a new request ID while c.mu is held.
@@ -394,6 +499,32 @@ func (c *Client) nextRequestID() string {
 	c.nextID++
 
 	return fmt.Sprintf("%d", c.nextID)
+}
+
+// Available reports whether this plugin client should still be advertised.
+func (c *Client) Available() bool {
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+
+	return !c.unusable
+}
+
+// UnavailableReason returns the diagnostic reason recorded for a hidden
+// plugin client.
+func (c *Client) UnavailableReason() string {
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+
+	return c.unusableReason
+}
+
+// markUnusable hides tools backed by this client from future model requests.
+func (c *Client) markUnusable(reason string) {
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+
+	c.unusable = true
+	c.unusableReason = strings.TrimSpace(reason)
 }
 
 // responseResult carries a response or error across a cancellation channel.
@@ -423,6 +554,24 @@ func (t remoteTool) Spec() model.ToolSpec {
 	}
 }
 
+// Available reports whether the owning plugin process is still healthy enough
+// to advertise this tool to future model calls.
+func (t remoteTool) Available() bool {
+	return t.client.Available()
+}
+
+// ParallelSafe reports whether the plugin explicitly declared this tool safe
+// for parallel execution.
+func (t remoteTool) ParallelSafe(call model.ToolCall) bool {
+	return tool.ParallelSafetyIsSafe(t.spec.ParallelSafety)
+}
+
+// ParallelLane serializes calls backed by this single plugin process while
+// leaving other parallel-safe tools free to overlap.
+func (t remoteTool) ParallelLane(call model.ToolCall) string {
+	return "plugin:" + t.client.name
+}
+
 // Execute sends a direct tool invocation to the owning plugin process.
 func (t remoteTool) Execute(ctx context.Context, arguments string) (tool.Result,
 	error) {
@@ -438,20 +587,35 @@ func (t remoteTool) Execute(ctx context.Context, arguments string) (tool.Result,
 func (t remoteTool) ExecuteCall(ctx context.Context, call model.ToolCall) (
 	tool.Result, error) {
 
+	if !t.client.Available() {
+		reason := t.client.UnavailableReason()
+		if reason != "" {
+			reason = ": " + reason
+		}
+
+		return tool.Result{}, fmt.Errorf("plugin %s tool %s is "+
+			"unavailable%s", t.client.name, t.spec.Name, reason)
+	}
+
 	return t.client.execute(ctx, call)
 }
 
 // contentText joins text content parts into the model-visible tool result.
-func contentText(parts []contentPart) string {
+func contentText(parts []contentPart) (string, error) {
 	var out strings.Builder
 	for _, part := range parts {
 		if part.Type != contentTypeText {
-			continue
+			return "", fmt.Errorf("unsupported content type %q",
+				part.Type)
+		}
+		if out.Len()+len(part.Text) > resultTextLimitBytes {
+			return "", fmt.Errorf("text result exceeds %d bytes",
+				resultTextLimitBytes)
 		}
 		out.WriteString(part.Text)
 	}
 
-	return out.String()
+	return out.String(), nil
 }
 
 // pluginTimeout returns the configured plugin timeout duration.
@@ -470,6 +634,113 @@ func pluginName(cfg config.PluginConfig) string {
 	}
 
 	return cfg.Command
+}
+
+// validateClientTools checks all initialized plugin tools before registration
+// so startup is transactional from the registry's point of view.
+func validateClientTools(clients []*Client, registry *tool.Registry) error {
+	seen := map[string]string{}
+	for _, client := range clients {
+		for _, spec := range client.tools {
+			if registry.Has(spec.Name) {
+				return fmt.Errorf("plugin %s tool %q "+
+					"conflicts with an existing tool",
+					client.name, spec.Name)
+			}
+			if previous := seen[spec.Name]; previous != "" {
+				return fmt.Errorf("plugin %s tool %q "+
+					"conflicts with plugin %s", client.name,
+					spec.Name, previous)
+			}
+			seen[spec.Name] = client.name
+		}
+	}
+
+	return nil
+}
+
+// pluginEnvironment returns a sanitized child environment plus explicit
+// user-requested forwarded variables.
+func pluginEnvironment(extra []string) []string {
+	allowed := basePluginEnvironment()
+	for _, name := range extra {
+		name = strings.TrimSpace(name)
+		if name != "" {
+			if runtime.GOOS == "windows" {
+				name = strings.ToUpper(name)
+			}
+			allowed[name] = true
+		}
+	}
+
+	env := make([]string, 0, len(allowed))
+	for _, entry := range os.Environ() {
+		name, _, ok := strings.Cut(entry, "=")
+		if !ok {
+			continue
+		}
+		if pluginEnvironmentAllowed(allowed, name) {
+			env = append(env, entry)
+		}
+	}
+
+	return env
+}
+
+// basePluginEnvironment returns portable process variables safe to forward.
+func basePluginEnvironment() map[string]bool {
+	return map[string]bool{
+		"APPDATA":      true,
+		"COMSPEC":      true,
+		"HOME":         true,
+		"LANG":         true,
+		"LOCALAPPDATA": true,
+		"PATH":         true,
+		"PATHEXT":      true,
+		"PROGRAMDATA":  true,
+		"SYSTEMROOT":   true,
+		"TEMP":         true,
+		"TMP":          true,
+		"TMPDIR":       true,
+		"USERPROFILE":  true,
+		"WINDIR":       true,
+	}
+}
+
+// pluginEnvironmentAllowed reports whether a parent environment name should
+// be forwarded, preserving Unix case sensitivity for explicit allowlists.
+func pluginEnvironmentAllowed(allowed map[string]bool, name string) bool {
+	if runtime.GOOS == "windows" {
+		upper := strings.ToUpper(name)
+
+		return allowed[upper] || strings.HasPrefix(upper, "LC_")
+	}
+
+	return allowed[name] || strings.HasPrefix(name, "LC_")
+}
+
+// pluginFatalError wraps protocol or transport failures that desynchronize a
+// plugin process and should hide its tools from later model requests.
+type pluginFatalError struct {
+	// err is the underlying user-facing failure.
+	err error
+}
+
+// Error returns the underlying fatal plugin diagnostic.
+func (e pluginFatalError) Error() string {
+	return e.err.Error()
+}
+
+// Unwrap returns the underlying error for errors.Is and errors.As callers.
+func (e pluginFatalError) Unwrap() error {
+	return e.err
+}
+
+// fatalPluginError reports whether err should make a plugin unavailable.
+func fatalPluginError(err error) bool {
+	var fatal pluginFatalError
+
+	return errors.As(err, &fatal)
 }
 
 // closeClients closes partially-started plugins after startup failure.

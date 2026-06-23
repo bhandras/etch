@@ -83,6 +83,7 @@ func pluginEchoSpec() sdk.Tool {
 		Name: toolPluginEcho,
 		Description: "Echo text through the example plugin and report " +
 			"small text statistics. Use this for plugin smoke tests.",
+		ParallelSafety: sdk.ParallelSafetyParallel,
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -105,6 +106,7 @@ func projectFilesSpec() sdk.Tool {
 		Name: toolProjectFiles,
 		Description: "Summarize file counts, byte size, common " +
 			"extensions, and sample paths under a local directory.",
+		ParallelSafety: sdk.ParallelSafetyReadOnly,
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{

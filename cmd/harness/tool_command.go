@@ -18,12 +18,16 @@ func configuredToolRegistry(ctx context.Context, cfg cliConfig, cwd string) (
 	*tool.Registry, func(), error) {
 
 	registry := tool.DefaultRegistry()
+	if len(activeSubagentProfiles(cfg.subagents)) > 0 {
+		if err := registry.RegisterStrict(
+			newTaskTool(cfg, cwd, registry),
+		); err != nil {
+			return nil, nil, err
+		}
+	}
 	clients, err := plugins.StartConfigured(ctx, cfg.plugins, cwd, registry)
 	if err != nil {
 		return nil, nil, err
-	}
-	if len(activeSubagentProfiles(cfg.subagents)) > 0 {
-		registry.Register(newTaskTool(cfg, cwd, registry))
 	}
 	closePlugins := func() {
 		for _, client := range clients {

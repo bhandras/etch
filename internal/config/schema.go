@@ -346,6 +346,18 @@ func schemaTables() map[string]tableSchema {
 				},
 			},
 			{
+				key:  "env",
+				kind: valueStringList,
+				description: "Environment variable names to forward " +
+					"into the otherwise sanitized plugin process " +
+					"environment.",
+				apply: func(target *assignmentTarget,
+					value parsedValue) {
+
+					target.plugin.Env = value.texts
+				},
+			},
+			{
 				key:         "disabled",
 				kind:        valueBool,
 				description: "Keep the plugin configured without starting it.",

@@ -16,6 +16,10 @@ import (
 const (
 	// cliPluginHelperEnv enables the subprocess plugin used by CLI tests.
 	cliPluginHelperEnv = "HARNESS_CLI_PLUGIN_HELPER"
+
+	// cliPluginToolNameEnv overrides the helper plugin tool name in
+	// conflict tests.
+	cliPluginToolNameEnv = "HARNESS_CLI_PLUGIN_TOOL_NAME"
 )
 
 // lockedBuffer serializes test reads and writes around chat's input goroutine.
@@ -532,12 +536,16 @@ func runCLIPluginHelper() {
 		}
 		switch req.Method {
 		case "initialize":
+			toolName := os.Getenv(cliPluginToolNameEnv)
+			if toolName == "" {
+				toolName = "plugin_echo"
+			}
 			writeCLIPluginLine(map[string]any{
 				"id": req.ID,
 				"result": map[string]any{
 					"name": "cli-helper",
 					"tools": []map[string]any{{
-						"name":        "plugin_echo",
+						"name":        toolName,
 						"description": "Echoes text through a plugin.",
 						"parameters": map[string]any{
 							"type": "object",

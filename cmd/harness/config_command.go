@@ -265,6 +265,12 @@ func writeHooksAndPlugins(out *strings.Builder,
 			displayString(plugin.Command),
 			disabledSuffix(plugin.Disabled),
 		)
+		if len(plugin.Env) > 0 {
+			fmt.Fprintf(
+				out, "  env: %s\n",
+				strings.Join(plugin.Env, ", "),
+			)
+		}
 	}
 }
 

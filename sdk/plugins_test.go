@@ -42,6 +42,9 @@ func TestServePluginIOInitializesAndExecutesTool(t *testing.T) {
 	if initialized.Name != "test" || len(initialized.Tools) != 1 {
 		t.Fatalf("unexpected initialize result: %#v", initialized)
 	}
+	if initialized.Tools[0].ParallelSafety != ParallelSafetyReadOnly {
+		t.Fatalf("missing parallel safety: %#v", initialized.Tools[0])
+	}
 
 	if responses[1].ID != "2" || responses[1].Error != nil {
 		t.Fatalf("unexpected execute response: %#v", responses[1])
@@ -100,6 +103,44 @@ func TestServePluginIORejectsDuplicateTools(t *testing.T) {
 	}
 }
 
+// TestServePluginIORejectsInvalidToolName verifies provider-incompatible tool
+// names fail before serving requests.
+func TestServePluginIORejectsInvalidToolName(t *testing.T) {
+	plugin := Plugin{
+		Name: "test",
+		Tools: []Tool{
+			testTool("bad name"),
+		},
+	}
+	err := ServePluginIO(
+		context.Background(), plugin, strings.NewReader(""),
+		&bytes.Buffer{}, &bytes.Buffer{},
+	)
+	if err == nil || !strings.Contains(err.Error(), "must match") {
+		t.Fatalf("expected invalid tool name error, got %v", err)
+	}
+}
+
+// TestServePluginIORejectsInvalidParameterSchema verifies SDK authors get
+// schema feedback before Harness tries to initialize the plugin.
+func TestServePluginIORejectsInvalidParameterSchema(t *testing.T) {
+	tool := testTool("echo")
+	tool.Parameters = map[string]any{"type": "string"}
+	plugin := Plugin{
+		Name: "test",
+		Tools: []Tool{
+			tool,
+		},
+	}
+	err := ServePluginIO(
+		context.Background(), plugin, strings.NewReader(""),
+		&bytes.Buffer{}, &bytes.Buffer{},
+	)
+	if err == nil || !strings.Contains(err.Error(), `"type":"object"`) {
+		t.Fatalf("expected invalid schema error, got %v", err)
+	}
+}
+
 // testPlugin returns a tiny plugin fixture for SDK protocol tests.
 func testPlugin() Plugin {
 	return Plugin{
@@ -113,8 +154,9 @@ func testPlugin() Plugin {
 // testTool returns a tool that echoes its call id and text argument.
 func testTool(name string) Tool {
 	return Tool{
-		Name:        name,
-		Description: "Echoes text.",
+		Name:           name,
+		Description:    "Echoes text.",
+		ParallelSafety: ParallelSafetyReadOnly,
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{

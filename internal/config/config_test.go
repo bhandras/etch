@@ -48,6 +48,7 @@ disabled = true
 [[plugins]]
 name = "git"
 command = ".harness/plugins/git"
+env = ["GIT_CONFIG_GLOBAL"]
 timeout_seconds = 5
 
 [[plugins]]
@@ -95,7 +96,9 @@ disabled = true
 	}
 	if cfg.Plugins[0].Name != "git" ||
 		cfg.Plugins[0].Command != ".harness/plugins/git" ||
-		cfg.Plugins[0].TimeoutSeconds != 5 {
+		cfg.Plugins[0].TimeoutSeconds != 5 ||
+		len(cfg.Plugins[0].Env) != 1 ||
+		cfg.Plugins[0].Env[0] != "GIT_CONFIG_GLOBAL" {
 
 		t.Fatalf("unexpected first plugin: %#v", cfg.Plugins[0])
 	}
@@ -412,6 +415,20 @@ disabled = true
 `)
 	if err != nil {
 		t.Fatalf("parse disabled extension placeholders: %v", err)
+	}
+}
+
+// TestParseRejectsInvalidPluginEnv verifies plugin env allowlists only accept
+// environment variable identifiers.
+func TestParseRejectsInvalidPluginEnv(t *testing.T) {
+	_, err := Parse(`
+[[plugins]]
+name = "bad"
+command = "cat"
+env = ["OPEN AI KEY"]
+`)
+	if err == nil || !strings.Contains(err.Error(), "plugins[1].env[0]") {
+		t.Fatalf("expected invalid env error, got %v", err)
 	}
 }
 

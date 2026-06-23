@@ -132,6 +132,11 @@ type PluginConfig struct {
 	// Command starts the plugin process through the platform shell.
 	Command string
 
+	// Env names environment variables to forward into the sanitized plugin
+	// process environment. Empty means only the default safe environment is
+	// forwarded.
+	Env []string
+
 	// TimeoutSeconds caps plugin initialization and tool calls. Zero means
 	// the plugin client uses its default timeout.
 	TimeoutSeconds int

@@ -75,6 +75,10 @@ type toolSpec struct {
 
 	// Parameters is a JSON Schema object describing tool arguments.
 	Parameters json.RawMessage `json:"parameters"`
+
+	// ParallelSafety optionally declares whether this plugin tool can run
+	// in a parallel-safe execution group. Empty means serial.
+	ParallelSafety string `json:"parallelSafety,omitempty"`
 }
 
 // toolExecuteParams is sent when the model calls a plugin tool.
