@@ -10,6 +10,7 @@ import (
 // TestSystemTextLoadsAncestorInstructions verifies that project instructions
 // are loaded from parent directories before child directories.
 func TestSystemTextLoadsAncestorInstructions(t *testing.T) {
+	isolateUserInstructionHome(t)
 	root := t.TempDir()
 	child := filepath.Join(root, "child")
 	if err := os.Mkdir(child, 0o755); err != nil {
@@ -32,9 +33,44 @@ func TestSystemTextLoadsAncestorInstructions(t *testing.T) {
 	}
 }
 
+// TestSystemTextLoadsUserInstructionsBeforeProjectInstructions verifies that
+// global AGENTS.md guidance is pinned ahead of project-specific files.
+func TestSystemTextLoadsUserInstructionsBeforeProjectInstructions(
+	t *testing.T) {
+
+	home := isolateUserInstructionHome(t)
+	root := t.TempDir()
+	child := filepath.Join(root, "child")
+	if err := os.Mkdir(child, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(home, ".etch", "AGENTS.md"), "user rules\n")
+	writeFile(t, filepath.Join(root, "AGENTS.md"), "root rules\n")
+	writeFile(t, filepath.Join(child, "AGENTS.md"), "child rules\n")
+
+	project, err := LoadProjectContext(child)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(project.InstructionFiles) != 3 {
+		t.Fatalf("expected user, root, and child instructions, got %d",
+			len(project.InstructionFiles))
+	}
+	userIndex := strings.Index(project.SystemText, "user rules")
+	rootIndex := strings.Index(project.SystemText, "root rules")
+	childIndex := strings.Index(project.SystemText, "child rules")
+	if userIndex < 0 || rootIndex < 0 || childIndex < 0 {
+		t.Fatalf("missing instruction layer: %q", project.SystemText)
+	}
+	if userIndex >= rootIndex || rootIndex >= childIndex {
+		t.Fatalf("instructions out of order: %q", project.SystemText)
+	}
+}
+
 // TestSystemTextLoadsSystemFilesBeforeInstructions verifies project system
 // prompt extensions are pinned ahead of AGENTS.md instructions.
 func TestSystemTextLoadsSystemFilesBeforeInstructions(t *testing.T) {
+	isolateUserInstructionHome(t)
 	root := t.TempDir()
 	child := filepath.Join(root, "child")
 	if err := os.Mkdir(child, 0o755); err != nil {
@@ -72,6 +108,7 @@ func TestSystemTextLoadsSystemFilesBeforeInstructions(t *testing.T) {
 // TestSystemTextIncludesConfigPromptBeforeProjectFiles verifies config prompt
 // text extends the base prompt before SYSTEM.md and AGENTS.md layers.
 func TestSystemTextIncludesConfigPromptBeforeProjectFiles(t *testing.T) {
+	isolateUserInstructionHome(t)
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "SYSTEM.md"), "system identity\n")
 	writeFile(t, filepath.Join(dir, "AGENTS.md"), "repo rules\n")
@@ -98,6 +135,7 @@ func TestSystemTextIncludesConfigPromptBeforeProjectFiles(t *testing.T) {
 // TestSystemTextLoadsConfigPromptFile verifies config prompt files resolve
 // relative to the config file location.
 func TestSystemTextLoadsConfigPromptFile(t *testing.T) {
+	isolateUserInstructionHome(t)
 	root := t.TempDir()
 	configDir := filepath.Join(root, ".etch")
 	writeFile(t, filepath.Join(configDir, "agent-policy.md"), "use tools\n")
@@ -118,13 +156,15 @@ func TestSystemTextLoadsConfigPromptFile(t *testing.T) {
 	}
 }
 
-// TestLoadInstructionFilesTruncatesLargeFiles verifies that large instruction
-// files cannot dominate the first prompt context.
-func TestLoadInstructionFilesTruncatesLargeFiles(t *testing.T) {
+// TestLoadInstructionFilesKeepsLargeFilesComplete verifies that AGENTS.md
+// policy is pinned in full rather than silently truncated.
+func TestLoadInstructionFilesKeepsLargeFilesComplete(t *testing.T) {
+	isolateUserInstructionHome(t)
 	dir := t.TempDir()
+	content := strings.Repeat("x", 64*1024) + "\nlast rule\n"
 	writeFile(
 		t, filepath.Join(dir, "AGENTS.md"),
-		strings.Repeat("x", MaxInstructionFileBytes+10),
+		content,
 	)
 
 	files, err := LoadInstructionFiles(dir)
@@ -134,18 +174,19 @@ func TestLoadInstructionFilesTruncatesLargeFiles(t *testing.T) {
 	if len(files) != 1 {
 		t.Fatalf("expected one file, got %d", len(files))
 	}
-	if !strings.Contains(files[0].Text, "[truncated 10 bytes]") {
-		t.Fatalf("missing truncation marker: %q", files[0].Text)
+	if files[0].Text != strings.TrimRight(content, "\n") {
+		t.Fatalf("instruction file was not loaded in full")
 	}
 }
 
-// TestLoadSystemFilesTruncatesLargeFiles verifies SYSTEM.md uses the same
-// bounded loading policy as AGENTS.md.
-func TestLoadSystemFilesTruncatesLargeFiles(t *testing.T) {
+// TestLoadSystemFilesKeepsLargeFilesComplete verifies SYSTEM.md receives the
+// same complete loading policy as AGENTS.md.
+func TestLoadSystemFilesKeepsLargeFilesComplete(t *testing.T) {
 	dir := t.TempDir()
+	content := strings.Repeat("y", 64*1024) + "\nlast identity\n"
 	writeFile(
 		t, filepath.Join(dir, "SYSTEM.md"),
-		strings.Repeat("y", MaxInstructionFileBytes+7),
+		content,
 	)
 
 	files, err := LoadSystemFiles(dir)
@@ -155,14 +196,15 @@ func TestLoadSystemFilesTruncatesLargeFiles(t *testing.T) {
 	if len(files) != 1 {
 		t.Fatalf("expected one file, got %d", len(files))
 	}
-	if !strings.Contains(files[0].Text, "[truncated 7 bytes]") {
-		t.Fatalf("missing truncation marker: %q", files[0].Text)
+	if files[0].Text != strings.TrimRight(content, "\n") {
+		t.Fatalf("system file was not loaded in full")
 	}
 }
 
 // TestSystemTextOrdersSkillsAfterPinnedFiles verifies the skill catalog stays
 // behind project system and instruction files.
 func TestSystemTextOrdersSkillsAfterPinnedFiles(t *testing.T) {
+	isolateUserInstructionHome(t)
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "SYSTEM.md"), "system identity\n")
 	writeFile(t, filepath.Join(dir, "AGENTS.md"), "repo rules\n")
@@ -191,6 +233,7 @@ func TestSystemTextOrdersSkillsAfterPinnedFiles(t *testing.T) {
 // TestSystemTextIncludesSkillCatalog verifies skill metadata is pinned while
 // full skill bodies stay out of the default prompt context.
 func TestSystemTextIncludesSkillCatalog(t *testing.T) {
+	isolateUserInstructionHome(t)
 	dir := t.TempDir()
 	skillDir := filepath.Join(dir, ".etch", "skills", "go-style")
 	writeFile(
@@ -292,6 +335,16 @@ func TestLoadSkillsParsesBlockDescription(t *testing.T) {
 
 		t.Fatalf("missing block description: %#v", skills[0])
 	}
+}
+
+// isolateUserInstructionHome points user-level instruction discovery at an
+// empty temporary home and returns that directory for tests that need it.
+func isolateUserInstructionHome(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	return home
 }
 
 // writeFile writes one test fixture file.

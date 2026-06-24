@@ -10,6 +10,8 @@ import (
 const (
 	// BaseSystemPrompt is the default coding-agent instruction block.
 	BaseSystemPrompt = `You are a local coding agent running inside a project.
+Instruction files named AGENTS.md are pinned into this system context in full. Read and follow them before making changes.
+Treat AGENTS.md instructions as mandatory repository and operator policy. When instructions conflict, later and more local AGENTS.md files override earlier broader files unless the user explicitly says otherwise.
 Prefer find, grep, ls, and read before editing unfamiliar files.
 Use find to discover files and directories by path substring.
 Use grep to search files for literal text with path and line numbers.
@@ -18,9 +20,6 @@ Use edit for exact replacements in existing non-empty files.
 To add a line with edit, replace a unique neighboring block with that same block plus the inserted line.
 Use bash for verification commands such as tests and build checks.
 Do not claim filesystem changes unless a tool result confirms them.`
-
-	// MaxInstructionFileBytes caps each loaded project instruction file.
-	MaxInstructionFileBytes = 32 * 1024
 
 	// instructionFileName is the project instruction filename loaded into
 	// model context.
@@ -44,7 +43,8 @@ type ProjectContext struct {
 	// came from a file.
 	ConfigPromptPath string
 
-	// InstructionFiles stores AGENTS.md files included in SystemText.
+	// InstructionFiles stores complete AGENTS.md files included in
+	// SystemText.
 	InstructionFiles []InstructionFile
 
 	// SystemFiles stores SYSTEM.md files included in SystemText.
@@ -124,7 +124,7 @@ func LoadProjectContextWithOptions(cwd string,
 		out.WriteString(file.Text)
 	}
 	for _, file := range files {
-		out.WriteString("\n\nProject instructions from ")
+		out.WriteString("\n\nInstructions from ")
 		out.WriteString(file.Path)
 		out.WriteString(":\n")
 		out.WriteString(file.Text)
@@ -229,7 +229,7 @@ type InstructionFile struct {
 	// Path is the absolute filesystem path that was loaded.
 	Path string
 
-	// Text is the possibly truncated instruction file content.
+	// Text is the complete instruction file content.
 	Text string
 }
 
@@ -238,12 +238,44 @@ func LoadSystemFiles(cwd string) ([]InstructionFile, error) {
 	return loadNamedInstructionFiles(cwd, systemFileName)
 }
 
-// LoadInstructionFiles loads AGENTS.md files from cwd and its ancestors.
+// LoadInstructionFiles loads the user-level AGENTS.md file and project
+// AGENTS.md files from cwd and its ancestors.
 func LoadInstructionFiles(cwd string) ([]InstructionFile, error) {
-	return loadNamedInstructionFiles(cwd, instructionFileName)
+	files, err := loadUserInstructionFile(instructionFileName)
+	if err != nil {
+		return nil, err
+	}
+	projectFiles, err := loadNamedInstructionFiles(cwd, instructionFileName)
+	if err != nil {
+		return nil, err
+	}
+	files = append(files, projectFiles...)
+
+	return files, nil
 }
 
-// loadNamedInstructionFiles loads named instruction files from ancestors.
+// loadUserInstructionFile loads the user-level instruction file when present.
+func loadUserInstructionFile(name string) ([]InstructionFile, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, nil
+	}
+	path := filepath.Join(home, ".etch", name)
+	text, ok, err := readInstructionFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, nil
+	}
+
+	return []InstructionFile{{
+		Path: path,
+		Text: text,
+	}}, nil
+}
+
+// loadNamedInstructionFiles loads named project files from ancestors.
 func loadNamedInstructionFiles(cwd string, name string) ([]InstructionFile,
 	error) {
 
@@ -309,14 +341,6 @@ func readInstructionFile(path string) (string, bool, error) {
 		return "", false, fmt.Errorf("read instruction file %s: %w",
 			path, err)
 	}
-	if len(content) <= MaxInstructionFileBytes {
-		return strings.TrimRight(string(content), "\n"), true, nil
-	}
 
-	text := string(content[:MaxInstructionFileBytes])
-	text = strings.TrimRight(text, "\n")
-	text += fmt.Sprintf("\n\n[truncated %d bytes]",
-		len(content)-MaxInstructionFileBytes)
-
-	return text, true, nil
+	return strings.TrimRight(string(content), "\n"), true, nil
 }

@@ -38,7 +38,7 @@ etch currently has:
   continuation request shape
 - user and project TOML config from `~/.etch/config.toml` and
   `.etch/config.toml`
-- pinned project context from `SYSTEM.md` and `AGENTS.md`
+- pinned user and project instruction context from `SYSTEM.md` and `AGENTS.md`
 - Agent Skills-style discovery from `.etch/skills/*/SKILL.md` and
   `.agents/skills/*/SKILL.md`
 - manual and automatic context compaction, `/context` projection stats, and
@@ -497,6 +497,7 @@ etch builds prompt context in layers:
 base system prompt
 project prompt from .etch/config.toml, when configured
 SYSTEM.md files, parent directory before child directory
+~/.etch/AGENTS.md, when present
 AGENTS.md files, parent directory before child directory
 compact skill catalog
 latest compacted session summary, when present
@@ -507,8 +508,8 @@ Use `[prompt]` in `.etch/config.toml` for project/operator prompt policy
 that belongs next to provider, tool, plugin, and subagent configuration. Use
 `SYSTEM.md` for project-specific agent identity and durable behavior. Use
 `AGENTS.md` for repository workflow, coding, documentation, verification, and
-commit-message rules. These layers are pinned ahead of compacted conversation
-history, and instruction files are capped at 32KB per file.
+commit-message rules. AGENTS.md files are loaded in full, and these layers are
+pinned ahead of compacted conversation history.
 
 Manual compaction is available through `/compact` and `etch compact`.
 Automatic compaction can be enabled in `.etch/config.toml`:
