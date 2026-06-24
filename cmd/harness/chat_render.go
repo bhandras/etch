@@ -435,7 +435,7 @@ func (r *liveChatRenderer) finish(elapsed time.Duration, stats liveTurnStats) {
 
 // startStatus starts a terminal-only animated working status line.
 func (r *liveChatRenderer) startStatus(text string) {
-	if !r.style.enabled {
+	if !r.style.enabled && r.composer == nil {
 		return
 	}
 

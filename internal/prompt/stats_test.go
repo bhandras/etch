@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"harness/internal/model"
 	"harness/internal/session"
 )
 
@@ -99,7 +100,11 @@ func TestFormatProjectContextReportsPinnedInputs(t *testing.T) {
 		}},
 	}
 
-	text := FormatProjectContext(project)
+	text := FormatProjectContext(project, []model.ToolSpec{{
+		Name:        "read",
+		Description: "Read files.",
+		Parameters:  []byte(`{"type":"object"}`),
+	}})
 	if !strings.Contains(text, "base prompt:") {
 		t.Fatalf("missing base prompt layer: %q", text)
 	}
@@ -117,11 +122,19 @@ func TestFormatProjectContextReportsPinnedInputs(t *testing.T) {
 	if !strings.Contains(text, "skill catalog:") {
 		t.Fatalf("missing skill catalog layer: %q", text)
 	}
+	if !strings.Contains(text, "tool schemas: 1") {
+		t.Fatalf("missing tool schema layer: %q", text)
+	}
 	if !strings.Contains(text, "tokens") {
 		t.Fatalf("missing token estimates: %q", text)
 	}
-	if !strings.Contains(text, "go-style: Use for Go edits.") {
-		t.Fatalf("missing skill summary: %q", text)
+	if !strings.Contains(text, "- go-style") ||
+		!strings.Contains(text, "  - prompt: Use for Go edits.") ||
+		!strings.Contains(
+			text, "  - file: .harness/skills/go-style/SKILL.md",
+		) {
+
+		t.Fatalf("missing skill details: %q", text)
 	}
 }
 

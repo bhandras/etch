@@ -36,6 +36,14 @@ type ProjectContext struct {
 	// SystemText is the complete system prompt sent to the model.
 	SystemText string
 
+	// ConfigPrompt stores inline or file-backed prompt text loaded from
+	// config.
+	ConfigPrompt string
+
+	// ConfigPromptPath stores the resolved prompt file when ConfigPrompt
+	// came from a file.
+	ConfigPromptPath string
+
 	// InstructionFiles stores AGENTS.md files included in SystemText.
 	InstructionFiles []InstructionFile
 
@@ -125,6 +133,8 @@ func LoadProjectContextWithOptions(cwd string,
 
 	return ProjectContext{
 		SystemText:       out.String(),
+		ConfigPrompt:     configPrompt,
+		ConfigPromptPath: configPromptPath,
 		SystemFiles:      append([]InstructionFile{}, systemFiles...),
 		InstructionFiles: append([]InstructionFile{}, files...),
 		Skills:           append([]Skill{}, skills...),

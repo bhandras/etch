@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"harness/internal/model"
 	"harness/internal/session"
 )
 
@@ -133,9 +134,12 @@ func FormatStats(stats Stats) string {
 }
 
 // FormatProjectContext returns a compact report for pinned project context.
-func FormatProjectContext(project ProjectContext) string {
+func FormatProjectContext(project ProjectContext,
+	tools ...[]model.ToolSpec) string {
+
 	baseBytes := len(BaseSystemPrompt)
 	baseTokens := ApproxTokens(BaseSystemPrompt)
+	configBytes := len(project.ConfigPrompt)
 	systemBytes := 0
 	for _, file := range project.SystemFiles {
 		systemBytes += len(file.Text)
@@ -145,12 +149,24 @@ func FormatProjectContext(project ProjectContext) string {
 		instructionBytes += len(file.Text)
 	}
 	catalog := skillCatalogText(project.Skills)
+	toolSchemaBytes := 0
+	toolSchemaTokens := 0
+	toolSchemaCount := 0
+	if len(tools) > 0 {
+		toolSchemaCount = len(tools[0])
+		toolSchemaBytes = ToolSchemaBytes(tools[0])
+		toolSchemaTokens = ToolSchemaTokens(tools[0])
+	}
 
 	var out strings.Builder
 	fmt.Fprintf(&out, "Pinned Context\n")
 	fmt.Fprintf(
 		&out, "- base prompt: %d bytes, ~%d tokens\n", baseBytes,
 		baseTokens,
+	)
+	fmt.Fprintf(
+		&out, "- config prompt: %d bytes, ~%d tokens\n", configBytes,
+		ApproxTokens(project.ConfigPrompt),
 	)
 	fmt.Fprintf(
 		&out, "- pinned system files: %d (%d bytes, ~%d tokens)\n",
@@ -167,16 +183,43 @@ func FormatProjectContext(project ProjectContext) string {
 		&out, "- skill catalog: %d bytes, ~%d tokens\n", len(catalog),
 		ApproxTokens(catalog),
 	)
+	fmt.Fprintf(
+		&out, "- tool schemas: %d (%d bytes, ~%d tokens)\n",
+		toolSchemaCount, toolSchemaBytes, toolSchemaTokens,
+	)
 	fmt.Fprintf(&out, "\nAvailable Skills\n")
 	fmt.Fprintf(&out, "- count: %d", len(project.Skills))
 	for _, skill := range project.Skills {
-		fmt.Fprintf(
-			&out, "\n- %s: %s\n  %s", skill.Name, skill.Description,
-			skill.Path,
-		)
+		fmt.Fprintf(&out, "\n- %s", skill.Name)
+		fmt.Fprintf(&out, "\n  - prompt: %s", skill.Description)
+		fmt.Fprintf(&out, "\n  - file: %s", skill.Path)
 	}
 
 	return out.String()
+}
+
+// ToolSchemaBytes estimates the serialized text size of model-facing tools.
+func ToolSchemaBytes(tools []model.ToolSpec) int {
+	var bytes int
+	for _, spec := range tools {
+		bytes += len(spec.Name)
+		bytes += len(spec.Description)
+		bytes += len(spec.Parameters)
+	}
+
+	return bytes
+}
+
+// ToolSchemaTokens estimates the token cost of model-facing tools.
+func ToolSchemaTokens(tools []model.ToolSpec) int {
+	var tokens int
+	for _, spec := range tools {
+		tokens += ApproxTokens(spec.Name)
+		tokens += ApproxTokens(spec.Description)
+		tokens += ApproxTokens(string(spec.Parameters))
+	}
+
+	return tokens
 }
 
 // ApproxTokensForFiles estimates token usage for instruction file content.

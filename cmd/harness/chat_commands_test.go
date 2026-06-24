@@ -2,9 +2,14 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"harness/internal/model"
+	"harness/internal/session"
 )
 
 // TestRunChatListsTools verifies that slash commands run without starting a
@@ -92,6 +97,145 @@ func TestRunChatContextAndCompactCommands(t *testing.T) {
 	}
 }
 
+// TestRunChatContextDumpCommand verifies /context dump writes plain text
+// projected context to the requested local path.
+func TestRunChatContextDumpCommand(t *testing.T) {
+	cfg := cliConfig{
+		command:    commandChat,
+		sessionDir: filepath.Join(t.TempDir(), "sessions"),
+		provider:   providerEcho,
+		model:      "echo-test",
+	}
+	path := filepath.Join(t.TempDir(), "context.txt")
+	var stdout, stderr lockedBuffer
+	code := runChat(
+		cfg, strings.NewReader(
+			"hello\n/context dump "+path+"\n/exit\n",
+		),
+		&stdout,
+		&stderr,
+	)
+	if code != 0 {
+		t.Fatalf("chat failed: code=%d stdout=%q stderr=%q", code,
+			stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "context dump: "+path) {
+		t.Fatalf("missing dump path: %q", stdout.String())
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read context dump: %v", err)
+	}
+	text := string(content)
+	for _, want := range []string{
+		"Harness Context Dump",
+		"model: echo-test",
+		"===== Base Prompt =====",
+		"===== Conversation Replay =====",
+		"hello",
+		"===== Tool Schemas =====",
+		"----- Tool: read -----",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("missing %q in context dump:\n%s", want, text)
+		}
+	}
+}
+
+// TestCompactWithFeedbackSetsComposerStatus verifies manual compaction shows
+// live visual feedback while the summarization model is still running.
+func TestCompactWithFeedbackSetsComposerStatus(t *testing.T) {
+	store, started, err := session.Create(
+		filepath.Join(
+			t.TempDir(),
+			"sessions",
+		),
+		t.TempDir(),
+		"test",
+	)
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	parentID := started.ID
+	for _, entry := range []struct {
+		eventType string
+		role      string
+		text      string
+	}{
+		{
+			session.EventUserMessage,
+			session.RoleUser,
+			"first",
+		},
+		{
+			session.EventAssistantMessage,
+			session.RoleAssistant,
+			"one",
+		},
+		{
+			session.EventUserMessage,
+			session.RoleUser,
+			"second",
+		},
+		{
+			session.EventAssistantMessage,
+			session.RoleAssistant,
+			"two",
+		},
+	} {
+		event, appendErr := store.Append(
+			entry.eventType, parentID,
+			session.TextMessage(entry.role, entry.text),
+		)
+		if appendErr != nil {
+			t.Fatalf("append session event: %v", appendErr)
+		}
+		parentID = event.ID
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close session: %v", err)
+	}
+
+	client := &blockingSummaryClient{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	var stdout bytes.Buffer
+	composer := &terminalChatInput{stdout: &stdout}
+	done := make(chan error, 1)
+	go func() {
+		_, compactErr := compactWithFeedback(
+			cliConfig{
+				keepMessages: 1,
+			}, "/compact",
+			store.Path(),
+			client,
+			&stdout,
+			nil,
+			composer,
+		)
+		done <- compactErr
+	}()
+
+	<-client.started
+	composer.mu.Lock()
+	status := composer.statusText
+	composer.mu.Unlock()
+	if status != "Compacting" {
+		t.Fatalf("unexpected compact status: %q", status)
+	}
+	close(client.release)
+	if err := <-done; err != nil {
+		t.Fatalf("compact failed: %v", err)
+	}
+	composer.mu.Lock()
+	status = composer.statusText
+	composer.mu.Unlock()
+	if status != "" {
+		t.Fatalf("compact status was not cleared: %q", status)
+	}
+}
+
 // TestRunChatAutoCompactsLargeContext verifies chat can compact session
 // history automatically before a large follow-up turn reaches the model.
 func TestRunChatAutoCompactsLargeContext(t *testing.T) {
@@ -117,6 +261,42 @@ func TestRunChatAutoCompactsLargeContext(t *testing.T) {
 	if !strings.Contains(stdout.String(), "compactions: 1 (1 auto") {
 		t.Fatalf("missing auto compact status: %q", stdout.String())
 	}
+}
+
+// blockingSummaryClient waits for release before returning a summary.
+type blockingSummaryClient struct {
+	// started is closed after Stream is invoked.
+	started chan struct{}
+
+	// release lets the fake stream complete.
+	release chan struct{}
+}
+
+// Stream waits for release, then returns a one-chunk summary stream.
+func (c *blockingSummaryClient) Stream(ctx context.Context, req model.Request) (
+	<-chan model.Event, error) {
+
+	close(c.started)
+	events := make(chan model.Event, 2)
+	go func() {
+		defer close(events)
+		select {
+		case <-ctx.Done():
+			events <- model.Event{
+				Type: model.EventError,
+				Err:  ctx.Err().Error(),
+			}
+
+		case <-c.release:
+			events <- model.Event{
+				Type: model.EventTextDelta,
+				Text: "Goal: continue.\n\nProgress:\n- compacted",
+			}
+			events <- model.Event{Type: model.EventDone}
+		}
+	}()
+
+	return events, nil
 }
 
 // TestRunChatStatusCommand verifies the status slash command reports durable
@@ -180,7 +360,7 @@ func TestRunChatCommandWithOutputRedrawsPrompt(t *testing.T) {
 	}
 
 	got := stdout.String()
-	helpAt := strings.Index(got, "/exit /quit")
+	helpAt := strings.Index(got, "Chat Commands")
 	promptAt := strings.LastIndex(got, "> typed while command runs")
 	if helpAt < 0 {
 		t.Fatalf("help output missing: %q", got)
@@ -188,7 +368,9 @@ func TestRunChatCommandWithOutputRedrawsPrompt(t *testing.T) {
 	if strings.HasPrefix(got, "\n\n") {
 		t.Fatalf("slash output had extra leading padding: %q", got)
 	}
-	if !strings.Contains(got, "/tools /tool /help\n\n") {
+	if !strings.Contains(got, "/context dump [path]") ||
+		!strings.Contains(got, "- /exit or /quit") {
+
 		t.Fatalf("slash output missing trailing padding: %q", got)
 	}
 	if promptAt < 0 {

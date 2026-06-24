@@ -403,20 +403,25 @@ expose it.
 Inside chat, use slash commands for local session and context operations:
 
 ```text
-/status    Show session age, turns, model calls, tool calls, and token usage.
-/context   Show projected context size, pinned layers, and auto compact config.
-/compact   Append a model-written summary for older session history.
-/show      Render the active session transcript.
-/sessions  List known local sessions.
-/tools     List registered tool names.
-/tool NAME Show one tool's description and model-facing JSON schema.
-/new       Start a fresh session in the same chat process.
-/help      Show available chat commands.
-/exit      Leave chat.
+/help                Show readable chat command help.
+/status              Show session age, turns, model calls, tool calls, and usage.
+/context             Show projected context size and pinned context layers.
+/context dump [path] Write logical model context to a plain-text file.
+/compact [notes]     Append a model-written summary for older history.
+/show                Render the active session transcript.
+/sessions            List known local sessions.
+/tools               List registered tool names.
+/tool NAME           Show one tool description and JSON parameter schema.
+/new                 Start a fresh session in the same chat process.
+/exit or /quit       Leave chat.
 ```
 
 `/context` estimates the next model request. It reports pinned instruction
-layers, active summaries, raw replay size, and approximate token counts.
+layers, tool schema size, active summaries, raw replay size, and approximate
+token counts.
+`/context dump [path]` writes the same logical pre-hook context projection in a
+plain-text layered format. Without `path`, Harness writes a timestamped
+`context-YYYYMMDD-HHMMSS.txt` file in the current directory.
 
 `/status` reports what has already happened in the session: age, turns, model
 calls, tool calls, tool batches, compactions, message bytes, approximate timing

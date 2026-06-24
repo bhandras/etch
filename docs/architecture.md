@@ -534,7 +534,13 @@ go run ./cmd/harness compact --session <id-prefix>
 Inside `harness chat`, `/compact` appends a summary for the active session and
 `/context` prints approximate context stats such as total events, whether a
 summary is active, raw replay events, projected context bytes, pinned system
-files, pinned instruction files, auto-compaction settings, and available skills.
+files, pinned instruction files, tool schema size, auto-compaction settings, and
+available skills.
+`/context dump [path]` writes a plain-text layered dump of the logical context
+projection before provider transport selection and before ContextBuild hooks.
+The dump includes prompt layers, the active summary, raw conversation replay,
+and tool schemas so context bloat and missing instructions can be debugged
+without reading JSONL by hand.
 Automatic compaction is opt-in through `[context]` config or chat flags. It runs
 after the current user message is appended and before the model request is
 built. If the projected context reaches the configured approximate token
