@@ -54,6 +54,21 @@ const (
 	// ansiGreen starts green terminal styling for added diff lines.
 	ansiGreen = "\x1b[32m"
 
+	// ansiCyan starts cyan terminal styling for read-oriented tool calls.
+	ansiCyan = "\x1b[38;2;92;214;255m"
+
+	// ansiYellow starts yellow terminal styling for shell/tool execution.
+	ansiYellow = "\x1b[38;2;237;199;99m"
+
+	// ansiSoftBlue starts the quiet blue used for tool argument fragments.
+	ansiSoftBlue = "\x1b[38;2;147;190;224m"
+
+	// ansiCodeGreen starts the soft green used for preformatted output.
+	ansiCodeGreen = "\x1b[38;2;134;206;144m"
+
+	// ansiRule starts the subtle separator color for live output blocks.
+	ansiRule = "\x1b[38;2;73;73;73m"
+
 	// ansiBrightWhite starts bright white terminal styling for peak status
 	// frames.
 	ansiBrightWhite = "\x1b[97m"
@@ -199,6 +214,7 @@ func (r *liveChatRenderer) renderAssistant(text string) {
 	r.renderWithOutputLocked(func() {
 		r.closeStreamLocked()
 		r.printSeparator()
+		r.printRuleBlock()
 		r.renderDotBlock(markdownLines(text, r.style), terminalTone{})
 	})
 }
@@ -216,6 +232,7 @@ func (r *liveChatRenderer) renderReasoning(text string) {
 	r.renderWithOutputLocked(func() {
 		r.closeStreamLocked()
 		r.printSeparator()
+		r.printRuleBlock()
 		tone := terminalTone{
 			muted:  true,
 			italic: true,
@@ -322,9 +339,7 @@ func (r *liveChatRenderer) renderToolCall(call model.ToolCall) {
 		if r.renderSubagentToolCall(call) {
 			return
 		}
-		r.renderDotBlock(
-			[]string{liveToolCallLabel(call)}, terminalTone{},
-		)
+		fmt.Fprintln(r.stdout, r.style.toolCallStartLine(call))
 	})
 }
 
@@ -365,9 +380,9 @@ func (r *liveChatRenderer) renderToolBatch(calls []model.ToolCall) {
 		}
 		for _, call := range nonSubagentCalls {
 			lines = append(
-				lines, "  "+strings.TrimPrefix(
-					liveToolCallLabel(call),
-					"Ran ",
+				lines,
+				r.style.toolCallLine(
+					false, "  ", liveToolCallLabel(call),
 				),
 			)
 		}
@@ -426,9 +441,9 @@ func (r *liveChatRenderer) finish(elapsed time.Duration, stats liveTurnStats) {
 			return
 		}
 		fmt.Fprintf(
-			r.stdout, "\n%s- Worked for %s%s -%s\n\n", ansiDim,
-			formatElapsed(elapsed), formatTurnStats(stats),
-			ansiReset,
+			r.stdout, "\n%s\n%sWorked for %s%s%s\n%s\n\n",
+			r.horizontalRule(), ansiDim, formatElapsed(elapsed),
+			formatTurnStats(stats), ansiReset, r.horizontalRule(),
 		)
 	})
 }
@@ -681,6 +696,29 @@ func (r *liveChatRenderer) printSeparator() {
 		fmt.Fprintln(r.stdout)
 	}
 	r.printed = true
+}
+
+// horizontalRule returns a quiet terminal-width separator for live blocks.
+func (r *liveChatRenderer) horizontalRule() string {
+	width := terminalWidth(r.stdout)
+	if width < 24 {
+		width = 24
+	}
+	line := strings.Repeat("─", width)
+	if !r.style.enabled {
+		return line
+	}
+
+	return ansiRule + line + ansiReset
+}
+
+// printRuleBlock renders a padded separator before major terminal blocks.
+func (r *liveChatRenderer) printRuleBlock() {
+	if !r.style.enabled {
+		return
+	}
+	fmt.Fprintln(r.stdout, r.horizontalRule())
+	fmt.Fprintln(r.stdout)
 }
 
 // renderDotBlock renders lines with a leading dot on the first line.
@@ -1043,7 +1081,80 @@ func (s terminalStyle) toolResultLine(toolName string, line string) string {
 		return s.diffLine(line)
 	}
 
-	return s.muted(line)
+	return s.codeLine(line)
+}
+
+// toolCallStartLine returns the styled single-call line shown before a tool
+// executes.
+func (s terminalStyle) toolCallStartLine(call model.ToolCall) string {
+	return s.toolCallLine(true, "• ", liveToolCallLabel(call))
+}
+
+// toolCallLine styles one live tool-call label as action, name, and arguments.
+func (s terminalStyle) toolCallLine(includeAction bool, prefix string,
+	label string) string {
+
+	action, toolName, args := splitToolCallLabel(label)
+	if !s.enabled {
+		if !includeAction {
+			return prefix + strings.TrimSpace(
+				strings.Join(
+					[]string{toolName, args}, " ",
+				),
+			)
+		}
+
+		return prefix + strings.TrimSpace(
+			strings.Join(
+				[]string{action, toolName, args}, " ",
+			),
+		)
+	}
+
+	if !includeAction {
+		line := prefix
+		if toolName != "" {
+			line += ansiYellow + toolName + ansiReset
+		}
+		if args != "" {
+			line += " " + ansiSoftBlue + args + ansiReset
+		}
+
+		return line
+	}
+
+	line := ansiBold + prefix + action + ansiReset
+	if toolName != "" {
+		line += " " + ansiYellow + toolName + ansiReset
+	}
+	if args != "" {
+		line += " " + ansiSoftBlue + args + ansiReset
+	}
+
+	return line
+}
+
+// splitToolCallLabel splits the human-readable tool label into display
+// fragments without needing to understand the underlying tool schema.
+func splitToolCallLabel(label string) (string, string, string) {
+	label = strings.TrimSpace(label)
+	action := "Ran"
+	body := label
+	if after, ok := strings.CutPrefix(label, "Ran "); ok {
+		body = after
+	} else if before, after, ok := strings.Cut(label, " "); ok {
+		action = before
+		body = after
+	}
+
+	toolName := body
+	args := ""
+	if before, after, ok := strings.Cut(body, " "); ok {
+		toolName = before
+		args = strings.TrimSpace(after)
+	}
+
+	return action, toolName, args
 }
 
 // diffLine styles unified diff output using familiar red/green accents.
@@ -1072,6 +1183,15 @@ func (s terminalStyle) colored(text string, color string) string {
 	}
 
 	return color + text + ansiReset
+}
+
+// codeLine applies the preformatted-output color.
+func (s terminalStyle) codeLine(text string) string {
+	if !s.enabled {
+		return text
+	}
+
+	return ansiCodeGreen + text + ansiReset
 }
 
 // openTone returns the ANSI prefix for a block tone.

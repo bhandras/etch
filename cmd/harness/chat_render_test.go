@@ -65,8 +65,8 @@ func TestMarkdownLinesStylesTerminalOutput(t *testing.T) {
 	if strings.Contains(got, "```") {
 		t.Fatalf("fence markers should not render: %q", got)
 	}
-	if !strings.Contains(got, ansiDim+"x := 1"+ansiReset) {
-		t.Fatalf("missing muted code line: %q", got)
+	if !strings.Contains(got, ansiCodeGreen+"x := 1"+ansiReset) {
+		t.Fatalf("missing green code line: %q", got)
 	}
 }
 
@@ -105,6 +105,8 @@ func TestMarkdownLinesRendersTables(t *testing.T) {
 // TestRenderReasoningStylesMarkdown verifies thinking blocks keep their muted
 // tone while still rendering lightweight markdown.
 func TestRenderReasoningStylesMarkdown(t *testing.T) {
+	t.Setenv("COLUMNS", "30")
+
 	var stdout bytes.Buffer
 	renderer := &liveChatRenderer{
 		stdout: &stdout,
@@ -116,6 +118,11 @@ func TestRenderReasoningStylesMarkdown(t *testing.T) {
 	renderer.renderReasoning("**Analyzing** answer suggestions")
 
 	got := stdout.String()
+	rule := ansiRule + strings.Repeat("─", 30) + ansiReset
+	if !strings.Contains(got, rule+"\n\n") {
+		t.Fatalf("reasoning did not render padded full-width rule: %q",
+			got)
+	}
 	if strings.Contains(got, "**") {
 		t.Fatalf("reasoning kept markdown markers: %q", got)
 	}
@@ -341,8 +348,36 @@ func TestRenderToolCallKeepsHeaderActive(t *testing.T) {
 	if strings.Contains(got, ansiDim+"• Ran find") {
 		t.Fatalf("tool call header was muted: %q", got)
 	}
-	if !strings.Contains(got, "• Ran find .go .") {
-		t.Fatalf("missing active tool call header: %q", got)
+	if !strings.Contains(got, ansiBold+"• Ran"+ansiReset) {
+		t.Fatalf("missing bold tool call action: %q", got)
+	}
+	if !strings.Contains(got, ansiYellow+"find"+ansiReset) {
+		t.Fatalf("missing yellow tool name: %q", got)
+	}
+	if !strings.Contains(got, ansiSoftBlue+".go ."+ansiReset) {
+		t.Fatalf("missing soft blue tool arguments: %q", got)
+	}
+}
+
+// TestRenderAssistantUsesRule verifies final answers are visually separated
+// from prior reasoning or tool output.
+func TestRenderAssistantUsesRule(t *testing.T) {
+	t.Setenv("COLUMNS", "32")
+
+	var stdout bytes.Buffer
+	renderer := &liveChatRenderer{
+		stdout: &stdout,
+		style: terminalStyle{
+			enabled: true,
+		},
+	}
+
+	renderer.renderAssistant("done")
+
+	got := stdout.String()
+	rule := ansiRule + strings.Repeat("─", 32) + ansiReset
+	if !strings.Contains(got, rule+"\n\n• done") {
+		t.Fatalf("assistant did not render padded rule: %q", got)
 	}
 }
 
@@ -420,9 +455,9 @@ func TestRenderToolResultExpandsDiffTabs(t *testing.T) {
 	}
 }
 
-// TestRenderToolResultMutesNonDiffOutput verifies ordinary tool result output
-// stays visually subordinate in live chat.
-func TestRenderToolResultMutesNonDiffOutput(t *testing.T) {
+// TestRenderToolResultColorsNonDiffOutput verifies ordinary tool result output
+// uses the preformatted-output color in live chat.
+func TestRenderToolResultColorsNonDiffOutput(t *testing.T) {
 	var stdout bytes.Buffer
 	renderer := &liveChatRenderer{
 		stdout: &stdout,
@@ -433,8 +468,8 @@ func TestRenderToolResultMutesNonDiffOutput(t *testing.T) {
 	renderer.renderToolResult(session.ToolMessage("call_1", "bash", "ok\n"))
 
 	got := stdout.String()
-	if !strings.Contains(got, ansiDim+"   ok"+ansiReset) {
-		t.Fatalf("missing muted non-diff output: %q", got)
+	if !strings.Contains(got, ansiCodeGreen+"   ok"+ansiReset) {
+		t.Fatalf("missing green non-diff output: %q", got)
 	}
 }
 
@@ -592,8 +627,11 @@ func TestLiveChatRendererFinishPadsFooter(t *testing.T) {
 	renderer.finish(time.Second, liveTurnStats{})
 
 	got := stdout.String()
-	if !strings.Contains(got, "- Worked for 1s -") {
+	if !strings.Contains(got, "Worked for 1s") {
 		t.Fatalf("finish did not render footer: %q", got)
+	}
+	if strings.Count(got, ansiRule) < 2 {
+		t.Fatalf("finish did not render footer rules: %q", got)
 	}
 	if !strings.HasSuffix(got, ansiReset+"\n\n") {
 		t.Fatalf("finish did not pad below footer: %q", got)

@@ -38,7 +38,7 @@ func markdownLinesWithTone(text string, style terminalStyle,
 			continue
 		}
 		if inFence || strings.HasPrefix(line, "    ") {
-			lines = append(lines, style.muted(line))
+			lines = append(lines, style.codeLine(line))
 			continue
 		}
 		if table, next, ok := markdownTableLines(
@@ -361,7 +361,7 @@ func styleInlineMarkdown(line string, style terminalStyle,
 	baseOpen string) string {
 
 	line = styleDelimited(line, "**", ansiBold, style, baseOpen)
-	line = styleDelimited(line, "`", ansiDim, style, baseOpen)
+	line = styleDelimited(line, "`", ansiCyan, style, baseOpen)
 
 	return line
 }
