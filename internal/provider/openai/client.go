@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"harness/internal/model"
-	"harness/internal/textutil"
+	"etch/internal/model"
+	"etch/internal/textutil"
 )
 
 const (
@@ -103,7 +103,7 @@ type Client struct {
 	// HTTPClient performs requests; http.DefaultClient is used when nil.
 	HTTPClient *http.Client
 
-	// UserAgent identifies harness to provider backends when non-empty.
+	// UserAgent identifies etch to provider backends when non-empty.
 	UserAgent string
 
 	// StoreResponses enables provider-side Responses API storage. The
@@ -514,7 +514,7 @@ func (c *Client) addCodexResponsesHeaders(req *http.Request, sessionID string) {
 	}
 
 	req.Header.Set("OpenAI-Beta", codexResponsesBetaHeader)
-	req.Header.Set("originator", "harness")
+	req.Header.Set("originator", "etch")
 	if sessionID == "" {
 		return
 	}

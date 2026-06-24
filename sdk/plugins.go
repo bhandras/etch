@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	// ProtocolVersion is the Harness JSONL plugin protocol version served
+	// ProtocolVersion is the etch JSONL plugin protocol version served
 	// by this SDK package.
 	ProtocolVersion = "0.1.0"
 
@@ -38,10 +38,10 @@ const (
 	ParallelSafetyParallel = "parallel_safe"
 )
 
-// toolNamePattern is the provider-compatible subset accepted by Harness.
+// toolNamePattern is the provider-compatible subset accepted by etch.
 var toolNamePattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
-// Plugin describes one standalone Harness plugin process.
+// Plugin describes one standalone etch plugin process.
 type Plugin struct {
 	// Name is the plugin display name returned during initialization.
 	Name string
@@ -99,9 +99,9 @@ type ContentPart struct {
 	Text string `json:"text"`
 }
 
-// InitializeParams is sent by Harness during plugin startup.
+// InitializeParams is sent by etch during plugin startup.
 type InitializeParams struct {
-	// ProtocolVersion is the highest protocol version Harness supports.
+	// ProtocolVersion is the highest protocol version etch supports.
 	ProtocolVersion string `json:"protocolVersion"`
 }
 
@@ -130,7 +130,7 @@ type ToolSpec struct {
 	ParallelSafety string `json:"parallelSafety,omitempty"`
 }
 
-// ToolExecuteParams is sent when Harness asks a plugin to execute a tool.
+// ToolExecuteParams is sent when etch asks a plugin to execute a tool.
 type ToolExecuteParams struct {
 	// CallID is the model provider's tool-call identifier.
 	CallID string `json:"callID"`
@@ -401,7 +401,7 @@ func (s *pluginServer) writeResponse(resp response) {
 	}
 }
 
-// request is one JSONL-RPC request sent from Harness to a plugin.
+// request is one JSONL-RPC request sent from etch to a plugin.
 type request struct {
 	// ID correlates the request with one plugin response.
 	ID string `json:"id"`
@@ -413,9 +413,9 @@ type request struct {
 	Params json.RawMessage `json:"params,omitempty"`
 }
 
-// response is one JSONL-RPC response sent from a plugin to Harness.
+// response is one JSONL-RPC response sent from a plugin to etch.
 type response struct {
-	// ID correlates the response with one Harness request.
+	// ID correlates the response with one etch request.
 	ID string `json:"id,omitempty"`
 
 	// Result stores the method-specific success object.

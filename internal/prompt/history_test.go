@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"harness/internal/model"
-	"harness/internal/session"
+	"etch/internal/model"
+	"etch/internal/session"
 )
 
 // TestBuildHistoryMessagesReplaysSessionMessages verifies that durable

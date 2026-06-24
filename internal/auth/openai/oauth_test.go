@@ -186,7 +186,7 @@ func TestRefreshUpdatesStoredTokens(t *testing.T) {
 // TestSaveLoadAndLogout verifies local auth storage round-trips through a
 // private JSON file and can be removed without leaking token content.
 func TestSaveLoadAndLogout(t *testing.T) {
-	path := filepath.Join(t.TempDir(), ".harness", "auth", AuthFileName)
+	path := filepath.Join(t.TempDir(), ".etch", "auth", AuthFileName)
 	creds := Credentials{
 		Tokens: TokenData{
 			AccessToken: "access",

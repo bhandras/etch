@@ -99,7 +99,7 @@ func TestSystemTextIncludesConfigPromptBeforeProjectFiles(t *testing.T) {
 // relative to the config file location.
 func TestSystemTextLoadsConfigPromptFile(t *testing.T) {
 	root := t.TempDir()
-	configDir := filepath.Join(root, ".harness")
+	configDir := filepath.Join(root, ".etch")
 	writeFile(t, filepath.Join(configDir, "agent-policy.md"), "use tools\n")
 
 	project, err := LoadProjectContextWithOptions(
@@ -168,7 +168,7 @@ func TestSystemTextOrdersSkillsAfterPinnedFiles(t *testing.T) {
 	writeFile(t, filepath.Join(dir, "AGENTS.md"), "repo rules\n")
 	writeFile(
 		t, filepath.Join(
-			dir, ".harness", "skills", "go-style", "SKILL.md",
+			dir, ".etch", "skills", "go-style", "SKILL.md",
 		),
 		"---\nname: go-style\ndescription: Use for Go edits.\n---\n",
 	)
@@ -192,7 +192,7 @@ func TestSystemTextOrdersSkillsAfterPinnedFiles(t *testing.T) {
 // full skill bodies stay out of the default prompt context.
 func TestSystemTextIncludesSkillCatalog(t *testing.T) {
 	dir := t.TempDir()
-	skillDir := filepath.Join(dir, ".harness", "skills", "go-style")
+	skillDir := filepath.Join(dir, ".etch", "skills", "go-style")
 	writeFile(
 		t, filepath.Join(skillDir, "SKILL.md"),
 		"---\nname: go-style\ndescription: Use for Go "+
@@ -225,7 +225,7 @@ func TestLoadSkillsDiscoversProjectSkillRoots(t *testing.T) {
 	}
 	writeFile(
 		t, filepath.Join(
-			root, ".harness", "skills", "root-skill", "SKILL.md",
+			root, ".etch", "skills", "root-skill", "SKILL.md",
 		),
 		"---\nname: root-skill\ndescription: Use at root.\n---\n",
 	)
@@ -254,7 +254,7 @@ func TestLoadSkillsRejectsInvalidSkillMetadata(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(
 		t, filepath.Join(
-			dir, ".harness", "skills", "Bad_Name", "SKILL.md",
+			dir, ".etch", "skills", "Bad_Name", "SKILL.md",
 		),
 		"---\nname: Bad_Name\ndescription: Use badly.\n---\n",
 	)
@@ -273,8 +273,7 @@ func TestLoadSkillsRejectsInvalidSkillMetadata(t *testing.T) {
 func TestLoadSkillsParsesBlockDescription(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(
-		t,
-		filepath.Join(dir, ".harness", "skills", "blocky", "SKILL.md"),
+		t, filepath.Join(dir, ".etch", "skills", "blocky", "SKILL.md"),
 		"---\nname: blocky\ndescription: |\n  Use for block "+
 			"descriptions.\n  Trigger on multiline "+
 			"metadata.\n---\n",

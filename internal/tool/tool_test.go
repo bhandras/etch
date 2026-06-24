@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"harness/internal/model"
+	"etch/internal/model"
 )
 
 // TestDefaultRegistryExecutesLS verifies that the builtin registry exposes and

@@ -8,9 +8,9 @@ import (
 	"sort"
 	"strings"
 
-	"harness/internal/model"
-	fs "harness/internal/tools/fs"
-	"harness/internal/tools/shell"
+	"etch/internal/model"
+	fs "etch/internal/tools/fs"
+	"etch/internal/tools/shell"
 )
 
 const (
@@ -53,7 +53,7 @@ const (
 	ParallelSafetyParallel = "parallel_safe"
 )
 
-// toolNamePattern is the provider-compatible model tool name subset Harness
+// toolNamePattern is the provider-compatible model tool name subset etch
 // accepts for built-ins and plugins.
 var toolNamePattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
@@ -566,7 +566,7 @@ func (grepTool) Spec() model.ToolSpec {
 				},
 				"paths":{
 					"type":"array",
-					"description":"Files or directories to search in one call. Use this for multiple known roots such as [\"cmd/harness\",\"internal/config\"]. When non-empty, paths wins over path. At most 8 entries are accepted.",
+					"description":"Files or directories to search in one call. Use this for multiple known roots such as [\"cmd/etch\",\"internal/config\"]. When non-empty, paths wins over path. At most 8 entries are accepted.",
 					"items":{
 						"type":"string"
 					}

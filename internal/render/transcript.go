@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"harness/internal/session"
+	"etch/internal/session"
 )
 
 // MessageLines returns human-readable transcript lines for one session message.

@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"harness/internal/config"
-	"harness/internal/model"
-	"harness/internal/platform"
+	"etch/internal/config"
+	"etch/internal/model"
+	"etch/internal/platform"
 )
 
 const (

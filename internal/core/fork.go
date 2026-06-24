@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"harness/internal/session"
+	"etch/internal/session"
 )
 
 // forkedHistoryForEvents prepends inherited parent context when events belong

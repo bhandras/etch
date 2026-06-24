@@ -34,7 +34,7 @@ func TestFindMatchesRelativePaths(t *testing.T) {
 // repository metadata and local harness state.
 func TestFindSkipsInternalDirectories(t *testing.T) {
 	dir := t.TempDir()
-	for _, name := range []string{".git", ".harness", "bin",
+	for _, name := range []string{".git", ".etch", "bin",
 		"node_modules", "vendor"} {
 
 		mkdir(t, filepath.Join(dir, name))
@@ -52,7 +52,7 @@ func TestFindSkipsInternalDirectories(t *testing.T) {
 	if !strings.Contains(got, "needle.txt") {
 		t.Fatalf("find missing visible result: %q", got)
 	}
-	if strings.Contains(got, ".git") || strings.Contains(got, ".harness") ||
+	if strings.Contains(got, ".git") || strings.Contains(got, ".etch") ||
 		strings.Contains(got, "node_modules") ||
 		strings.Contains(got, "vendor") {
 

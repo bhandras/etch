@@ -52,7 +52,7 @@ func TestListSkipsInternalDirectories(t *testing.T) {
 	dir := t.TempDir()
 	for _, name := range []string{
 		".git",
-		".harness",
+		".etch",
 		"bin",
 		"node_modules",
 		"vendor",
@@ -75,7 +75,7 @@ func TestListSkipsInternalDirectories(t *testing.T) {
 	}
 	for _, name := range []string{
 		".git",
-		".harness",
+		".etch",
 		"bin",
 		"node_modules",
 		"vendor",

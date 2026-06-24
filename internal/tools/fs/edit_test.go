@@ -255,7 +255,7 @@ func TestEditFileRejectsInternalPath(t *testing.T) {
 	t.Chdir(dir)
 
 	_, err := EditFile(context.Background(), EditRequest{
-		Path: ".harness/session.jsonl",
+		Path: ".etch/session.jsonl",
 		Edits: []Edit{{
 			OldText: "old",
 			NewText: "new",

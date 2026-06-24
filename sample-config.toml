@@ -1,7 +1,7 @@
-# Harness sample configuration.
+# etch sample configuration.
 #
-# Copy this file to ~/.harness/config.toml for user-wide defaults or to
-# .harness/config.toml inside a project for project overrides. Harness loads the
+# Copy this file to ~/.etch/config.toml for user-wide defaults or to
+# .etch/config.toml inside a project for project overrides. etch loads the
 # user file first, then the nearest project file. Project scalar values override
 # user scalar values; repeatable sections such as hooks, plugins, and subagent
 # profiles append in source order. Explicit CLI flags override config.
@@ -10,9 +10,9 @@
 
 [session]
 # Directory for JSONL session logs. Project configs often use a relative path.
-# Use "~/.harness/sessions" in a user-level config when logs should stay under
-# home instead of whichever project launched harness.
-# dir = "~/.harness/sessions"
+# Use "~/.etch/sessions" in a user-level config when logs should stay under
+# home instead of whichever project launched etch.
+# dir = "~/.etch/sessions"
 
 # Maximum model/tool exchange rounds allowed for one user turn.
 # max_tool_rounds = 32
@@ -27,17 +27,17 @@
 # history stays on disk; auto compaction appends a context.summary event.
 # auto_compact = false
 
-# Approximate projected context size that triggers auto compaction. Harness uses
+# Approximate projected context size that triggers auto compaction. etch uses
 # its dependency-free token estimate, not a model-specific tokenizer.
 # auto_compact_threshold_tokens = 120000
 
 # Approximate amount of recent raw context retained after compaction. This is
-# the primary Pi-style retention control for /compact, harness compact, and auto
+# the primary Pi-style retention control for /compact, etch compact, and auto
 # compaction.
 # keep_recent_tokens = 20000
 
 [prompt]
-# Project-level prompt policy appended after Harness' compiled base prompt and
+# Project-level prompt policy appended after etch' compiled base prompt and
 # before SYSTEM.md/AGENTS.md files. Use this for operator preferences and
 # tool-use guidance that should apply to parent and child agents in this
 # project. Set either system_prompt or system_prompt_file, not both.
@@ -58,7 +58,7 @@
 # '''
 # system_prompt_file = ""
 # To load the project prompt from a file instead, leave system_prompt empty and
-# set system_prompt_file to a path such as ".harness/SYSTEM.md".
+# set system_prompt_file to a path such as ".etch/SYSTEM.md".
 
 [provider]
 # Model provider name. Supported built-ins are "echo" and "openai".
@@ -89,15 +89,15 @@
 # reasoning_summary = "auto"
 
 [hooks]
-# Hooks are external shell commands. Harness sends a JSON envelope on stdin and
+# Hooks are external shell commands. etch sends a JSON envelope on stdin and
 # reads an optional JSON object from stdout. Stderr is diagnostic text. A
 # non-zero exit status, invalid stdout JSON, or timeout fails the surrounding
-# harness operation.
+# etch operation.
 #
 # Hook commands run through the platform shell from the current project working
 # directory. The default timeout is 30 seconds when timeout_seconds is omitted.
 #
-# Harness sends this envelope shape to every hook:
+# etch sends this envelope shape to every hook:
 #
 # {
 #   "version": 1,
@@ -151,7 +151,7 @@
 # SessionStart payload:
 #
 # {
-#   "sessionPath": ".harness/sessions/current.jsonl",
+#   "sessionPath": ".etch/sessions/current.jsonl",
 #   "sessionId": "session-id",
 #   "reason": "new"
 # }
@@ -162,7 +162,7 @@
 #
 # {
 #   "prompt": "user text",
-#   "sessionPath": ".harness/sessions/current.jsonl"
+#   "sessionPath": ".etch/sessions/current.jsonl"
 # }
 #
 # UserPromptSubmit stdout may be empty or:
@@ -173,7 +173,7 @@
 # TurnStart payload:
 #
 # {
-#   "sessionPath": ".harness/sessions/current.jsonl",
+#   "sessionPath": ".etch/sessions/current.jsonl",
 #   "sessionId": "session-id",
 #   "userEventId": "event_2",
 #   "prompt": "user text"
@@ -184,7 +184,7 @@
 # TurnComplete payload:
 #
 # {
-#   "sessionPath": ".harness/sessions/current.jsonl",
+#   "sessionPath": ".etch/sessions/current.jsonl",
 #   "sessionId": "session-id",
 #   "userEventId": "event_2",
 #   "assistantEventId": "event_5",
@@ -198,7 +198,7 @@
 # ContextBuild payload:
 #
 # {
-#   "sessionPath": ".harness/sessions/current.jsonl",
+#   "sessionPath": ".etch/sessions/current.jsonl",
 #   "round": 0,
 #   "messages": [
 #     {"role": "system", "content": "..."},
@@ -213,7 +213,7 @@
 # PreToolUse payload:
 #
 # {
-#   "sessionPath": ".harness/sessions/current.jsonl",
+#   "sessionPath": ".etch/sessions/current.jsonl",
 #   "tool": {
 #     "id": "call_1",
 #     "name": "bash",
@@ -229,7 +229,7 @@
 # PostToolUse payload:
 #
 # {
-#   "sessionPath": ".harness/sessions/current.jsonl",
+#   "sessionPath": ".etch/sessions/current.jsonl",
 #   "tool": {"id": "call_1", "name": "read", "arguments": "{\"path\":\"x\"}"},
 #   "output": "model-visible tool output",
 #   "error": false
@@ -243,7 +243,7 @@
 # PreCompact payload:
 #
 # {
-#   "sessionPath": ".harness/sessions/current.jsonl",
+#   "sessionPath": ".etch/sessions/current.jsonl",
 #   "trigger": "manual",
 #   "rangeStartId": "event_1",
 #   "rangeEndId": "event_20",
@@ -258,7 +258,7 @@
 # PostCompact payload:
 #
 # {
-#   "sessionPath": ".harness/sessions/current.jsonl",
+#   "sessionPath": ".etch/sessions/current.jsonl",
 #   "trigger": "manual",
 #   "summaryEventId": "event_30",
 #   "firstKeptEventId": "event_21",
@@ -270,46 +270,46 @@
 # [[hooks]]
 # event = "SessionStart"
 # matcher = "^(new|resume)$"
-# command = ".harness/hooks/session-start.sh"
+# command = ".etch/hooks/session-start.sh"
 
 # [[hooks.UserPromptSubmit]]
-# command = ".harness/hooks/check-prompt.sh"
+# command = ".etch/hooks/check-prompt.sh"
 # timeout_seconds = 5
 # disabled = false
 
 # [[hooks.TurnStart]]
-# command = ".harness/hooks/turn-start.sh"
+# command = ".etch/hooks/turn-start.sh"
 
 # [[hooks.TurnComplete]]
-# command = ".harness/hooks/notify-turn-complete.sh"
+# command = ".etch/hooks/notify-turn-complete.sh"
 
 # [[hooks.ContextBuild]]
-# command = ".harness/hooks/filter-context.sh"
+# command = ".etch/hooks/filter-context.sh"
 # timeout_seconds = 10
 
 # [[hooks.PreToolUse]]
 # matcher = "bash|write|edit"
-# command = ".harness/hooks/policy.sh"
+# command = ".etch/hooks/policy.sh"
 # timeout_seconds = 10
 
 # [[hooks.PostToolUse]]
 # matcher = "*"
-# command = ".harness/hooks/audit-tool-result.sh"
+# command = ".etch/hooks/audit-tool-result.sh"
 
 # [[hooks.PreCompact]]
 # matcher = "manual"
-# command = ".harness/hooks/custom-compact.sh"
+# command = ".etch/hooks/custom-compact.sh"
 
 # [[hooks.PostCompact]]
 # matcher = "manual"
-# command = ".harness/hooks/after-compact.sh"
+# command = ".etch/hooks/after-compact.sh"
 
-# Plugins are explicit child processes. Harness does not auto-discover or run
+# Plugins are explicit child processes. etch does not auto-discover or run
 # project executables. Each enabled plugin is started through the platform shell
 # from the current project working directory, then speaks JSONL requests and
 # responses over stdin/stdout. Stderr is diagnostic text only.
 #
-# The first plugin protocol version exposes tools. On startup Harness sends:
+# The first plugin protocol version exposes tools. On startup etch sends:
 #
 # {"id":"1","method":"initialize","params":{"protocolVersion":"0.1.0"}}
 #
@@ -331,7 +331,7 @@
 #   }
 # }
 #
-# When the model calls a plugin tool, Harness sends:
+# When the model calls a plugin tool, etch sends:
 #
 # {
 #   "id": "2",
@@ -388,7 +388,7 @@
 #
 # Each subagent runs in its own JSONL child session. The parent receives only a
 # compact task result plus the child session id; the full child transcript can be
-# inspected with harness show or resumed with harness resume.
+# inspected with etch show or resumed with etch resume.
 #
 # [[subagents.profile]]
 # name = "explore"
@@ -458,7 +458,7 @@
 #   parent or another subagent.
 #
 # Do not include token counts, request counts, or transport statistics in your
-# answer; Harness reports those automatically. Stop after a strong first pass.
+# answer; etch reports those automatically. Stop after a strong first pass.
 # Do not keep searching for completeness once the parent has enough orientation
 # to act.
 # '''
@@ -540,7 +540,7 @@
 #   uncertainty that remains after your review.
 #
 # Do not include token counts, request counts, or transport statistics in your
-# answer; Harness reports those automatically. Aim for three to five
+# answer; etch reports those automatically. Aim for three to five
 # high-confidence findings or a clear "no substantive issues" result. Once you
 # have enough evidence, synthesize instead of continuing to hunt for more.
 # '''

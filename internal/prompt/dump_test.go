@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"harness/internal/model"
-	"harness/internal/session"
+	"etch/internal/model"
+	"etch/internal/session"
 )
 
 // TestDumpTextRendersLayeredContext verifies the debug dump exposes project
@@ -48,7 +48,7 @@ func TestDumpTextRendersLayeredContext(t *testing.T) {
 			Skills: []Skill{{
 				Name:        "go-style",
 				Description: "Use for Go edits.",
-				Path:        ".harness/skills/go-style/SKILL.md",
+				Path:        ".etch/skills/go-style/SKILL.md",
 			}},
 		},
 		Tools: []model.ToolSpec{{
@@ -61,7 +61,7 @@ func TestDumpTextRendersLayeredContext(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"Harness Context Dump",
+		"etch Context Dump",
 		"created: 2026-06-24T08:45:00Z",
 		"===== Base Prompt =====",
 		"===== Config System Prompt (/tmp/project/prompt.md) =====",

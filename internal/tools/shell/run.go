@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"harness/internal/textutil"
+	"etch/internal/textutil"
 )
 
 const (

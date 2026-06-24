@@ -111,7 +111,7 @@ func TestWriteRejectsInternalPath(t *testing.T) {
 	t.Chdir(dir)
 
 	_, err := Write(context.Background(), WriteRequest{
-		Path:    ".harness/session.jsonl",
+		Path:    ".etch/session.jsonl",
 		Content: "nope",
 	})
 	if err == nil {

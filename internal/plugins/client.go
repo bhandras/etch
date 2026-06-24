@@ -15,10 +15,10 @@ import (
 	"sync"
 	"time"
 
-	"harness/internal/config"
-	"harness/internal/model"
-	"harness/internal/platform"
-	"harness/internal/tool"
+	"etch/internal/config"
+	"etch/internal/model"
+	"etch/internal/platform"
+	"etch/internal/tool"
 )
 
 const (

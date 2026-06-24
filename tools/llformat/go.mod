@@ -1,4 +1,4 @@
-module harness/tools/llformat
+module etch/tools/llformat
 
 go 1.24.5
 

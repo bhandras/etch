@@ -14,7 +14,7 @@ import (
 	"sync"
 	"testing"
 
-	"harness/internal/model"
+	"etch/internal/model"
 )
 
 // TestClientStreamsResponsesWebSocketReusesConnection verifies cached

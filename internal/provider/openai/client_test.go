@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"harness/internal/model"
+	"etch/internal/model"
 )
 
 // TestClientStreamsChatCompletions verifies request construction and SSE chunk

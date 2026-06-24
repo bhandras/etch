@@ -1,3 +1,3 @@
-module harness/tools/commitmsg
+module etch/tools/commitmsg
 
 go 1.25

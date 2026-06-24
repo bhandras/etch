@@ -1,7 +1,7 @@
-// Package config loads and merges the small user-level and project-local
-// harness configuration files.
+// Package config loads and merges the small user-level and project-local etch
+// configuration files.
 //
-// The parser intentionally supports only the TOML subset the harness needs for
+// The parser intentionally supports only the TOML subset etch needs for
 // first-party configuration: scalar assignments, normal tables, and hook/plugin
 // array tables. A small schema layer owns supported table forms, keys, scalar
 // types, and assignment behavior so config validation, examples, and CLI

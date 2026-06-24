@@ -30,7 +30,7 @@ const (
 	// subscription OAuth tokens.
 	DefaultCodexBaseURL = "https://chatgpt.com/backend-api/codex"
 
-	// AuthFileName is the file name used under .harness/auth for OpenAI
+	// AuthFileName is the file name used under .etch/auth for OpenAI
 	// OAuth credentials.
 	AuthFileName = "openai.json"
 
@@ -154,7 +154,7 @@ func DefaultStorePath(root string) (string, error) {
 		return "", fmt.Errorf("resolve auth root: %w", err)
 	}
 
-	return filepath.Join(absolute, ".harness", "auth", AuthFileName), nil
+	return filepath.Join(absolute, ".etch", "auth", AuthFileName), nil
 }
 
 // Load reads stored credentials from path.

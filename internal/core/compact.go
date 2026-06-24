@@ -8,11 +8,11 @@ import (
 	"sort"
 	"strings"
 
-	"harness/internal/hooks"
-	"harness/internal/model"
-	"harness/internal/prompt"
-	"harness/internal/session"
-	"harness/internal/textutil"
+	"etch/internal/hooks"
+	"etch/internal/model"
+	"etch/internal/prompt"
+	"etch/internal/session"
+	"etch/internal/textutil"
 )
 
 // errNotEnoughHistory reports that a compaction request has no useful prefix.

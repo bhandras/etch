@@ -17,7 +17,7 @@ import (
 	"strings"
 	"unicode"
 
-	"harness/sdk"
+	"etch/sdk"
 )
 
 const (
@@ -655,7 +655,7 @@ func fileSymbols(fset *token.FileSet, root string, file string,
 	parsed *ast.File) []symbolInfo {
 
 	// #nosec G304 -- Plugin callers intentionally choose local Go files to
-	// inspect, matching Harness' explicit local tooling model.
+	// inspect, matching etch' explicit local tooling model.
 	content, err := os.ReadFile(file)
 	if err != nil {
 		return []symbolInfo{{

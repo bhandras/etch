@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"harness/internal/textutil"
+	"etch/internal/textutil"
 )
 
 // Status summarizes durable activity recorded in a session log.

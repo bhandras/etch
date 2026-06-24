@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"harness/internal/config"
-	"harness/internal/model"
+	"etch/internal/config"
+	"etch/internal/model"
 )
 
 // TestRunnerHasEventReportsActiveHooks verifies callers can distinguish

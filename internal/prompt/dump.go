@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	"harness/internal/model"
-	"harness/internal/session"
+	"etch/internal/model"
+	"etch/internal/session"
 )
 
 // DumpRequest contains the logical model context to render for debugging.
@@ -80,7 +80,7 @@ func DumpText(req DumpRequest) (string, error) {
 func writeDumpHeader(out *strings.Builder, req DumpRequest, created time.Time,
 	stats Stats) {
 
-	fmt.Fprintln(out, "Harness Context Dump")
+	fmt.Fprintln(out, "etch Context Dump")
 	fmt.Fprintf(out, "created: %s\n", created.Format(time.RFC3339))
 	fmt.Fprintf(out, "cwd: %s\n", displayDumpValue(req.CWD))
 	fmt.Fprintf(out, "model: %s\n", displayDumpValue(req.ModelName))

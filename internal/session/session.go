@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"harness/internal/textutil"
+	"etch/internal/textutil"
 )
 
 const (

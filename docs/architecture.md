@@ -48,7 +48,7 @@ a session file, read what happened, and repair it when needed.
 
 Default to explicit local trust boundaries. Project-local instructions are inert
 text until used as context. Configured executable plugins are trusted local code:
-Harness never auto-discovers them, keeps them behind explicit config entries,
+etch never auto-discovers them, keeps them behind explicit config entries,
 and documents that they run with normal project access rather than a sandbox.
 
 Make the fast path good. The default OpenAI/Codex auth path should work for a
@@ -67,7 +67,7 @@ calls, and session events.
 The first package layout can be simple:
 
 ```text
-cmd/harness/                CLI entrypoint and terminal chat UI
+cmd/etch/                CLI entrypoint and terminal chat UI
 internal/core/              agent loop and turn state machine
 internal/session/           JSONL append log, branches, replay
 internal/model/             provider-neutral request and event types
@@ -114,7 +114,7 @@ The loop uses a configurable safety bound rather than a tiny fixed ceiling.
 `DefaultMaxToolRounds` is 32 model/tool exchange rounds per user turn. A round
 is one model response followed by zero or more requested tool executions, so it
 is not the same as an individual tool-call count. CLI callers can raise or
-lower the bound with `--max-tool-rounds` or `.harness/config.toml`.
+lower the bound with `--max-tool-rounds` or `.etch/config.toml`.
 
 Tool execution preserves provider-visible order while allowing safe local
 parallelism. The core partitions each assistant tool-call batch into execution
@@ -143,10 +143,10 @@ session is a projection of the log, not the source of truth.
 By default local sessions live under:
 
 ```text
-.harness/sessions/
+.etch/sessions/
 ```
 
-The `.harness/` directory is ignored by git because transcripts can contain
+The `.etch/` directory is ignored by git because transcripts can contain
 sensitive local work. Callers can override the location with `--session-dir`.
 
 Events should include stable IDs and parent IDs so a session can branch:
@@ -169,7 +169,7 @@ same files.
 The first local index is also JSONL:
 
 ```text
-.harness/sessions/index.jsonl
+.etch/sessions/index.jsonl
 ```
 
 Each new session appends an index row with the session ID, path, creation time,
@@ -184,7 +184,7 @@ navigation list. Slash commands are local control input rather than model
 context, so they do not need to become durable prompt-history records unless a
 future command explicitly changes session state.
 
-Session resume is a CLI projection over the same append-only log. `harness
+Session resume is a CLI projection over the same append-only log. `etch
 resume <session-id-prefix>` resolves the local session index, opens the matched
 JSONL file for append, seeds prompt history and usage counters from existing
 events, and then enters the ordinary chat loop. Clean chat exits print the full
@@ -254,14 +254,14 @@ limits and making byte metrics reflect the real stream body.
 
 Pi's OpenAI Platform path generally consumes the OpenAI SDK's typed async stream
 events with `store:false`, while Pi's Codex path prefers a WebSocket transport
-with cached session state and falls back to HTTP/SSE. Harness mirrors that
+with cached session state and falls back to HTTP/SSE. etch mirrors that
 boundary without adding a third-party WebSocket dependency. Plain HTTP/SSE uses
 full-context Responses requests with `store:false` plus prompt-cache affinity.
 The optional WebSocket transport sends the same Responses request shape as a
 `response.create` message, keeps one idle connection per session briefly
 reusable, and only sends `previous_response_id` plus `DeltaMessages` when that
 connection is reused. If the WebSocket handshake or first write fails in auto
-mode, Harness falls back to HTTP/SSE before emitting stream output.
+mode, etch falls back to HTTP/SSE before emitting stream output.
 
 Responses API requests include the durable local session ID as
 `prompt_cache_key`, clamped to OpenAI's documented 64-character limit, so Codex
@@ -284,7 +284,7 @@ rewrite message lists in ways the core cannot safely slice.
 OpenAI-compatible usage is selected explicitly:
 
 ```bash
-OPENAI_API_KEY=... go run ./cmd/harness \
+OPENAI_API_KEY=... go run ./cmd/etch \
   --provider openai \
   --model gpt-4.1-mini \
   -p "say hello"
@@ -295,7 +295,7 @@ models, callers can opt into Responses API mode and request displayable
 summaries:
 
 ```bash
-OPENAI_API_KEY=... go run ./cmd/harness chat \
+OPENAI_API_KEY=... go run ./cmd/etch chat \
   --provider openai \
   --openai-api responses \
   --model gpt-5.5 \
@@ -313,7 +313,7 @@ summary context as the model-visible state.
 Local or proxy-compatible endpoints can override the base URL:
 
 ```bash
-OPENAI_API_KEY=unused go run ./cmd/harness \
+OPENAI_API_KEY=unused go run ./cmd/etch \
   --provider openai \
   --base-url http://localhost:11434/v1 \
   --model qwen2.5-coder \
@@ -323,14 +323,14 @@ OPENAI_API_KEY=unused go run ./cmd/harness \
 The CLI reads credential material from `OPENAI_API_KEY`,
 `OPENROUTER_API_KEY`, and `CODEX_ACCESS_TOKEN`. Non-secret settings such as
 provider, model, base URL, reasoning options, and context limits are configured
-through flags, `~/.harness/config.toml`, or project `.harness/config.toml`.
-Stored Codex OAuth credentials are loaded from `~/.harness/auth/openai.json`
+through flags, `~/.etch/config.toml`, or project `.etch/config.toml`.
+Stored Codex OAuth credentials are loaded from `~/.etch/auth/openai.json`
 when available.
 
 ## Configuration
 
-User-level configuration lives at `~/.harness/config.toml`. Project-local
-configuration lives at `.harness/config.toml`. The CLI loads the user-level
+User-level configuration lives at `~/.etch/config.toml`. Project-local
+configuration lives at `.etch/config.toml`. The CLI loads the user-level
 file when present, then discovers the nearest project file by walking from the
 current working directory toward the filesystem root, and merges the two in
 that order. Scalar values from the project file override user-level scalar
@@ -346,8 +346,8 @@ The precedence order is:
 
 ```text
 compiled defaults
-~/.harness/config.toml
-.harness/config.toml or nearest ancestor project config
+~/.etch/config.toml
+.etch/config.toml or nearest ancestor project config
 explicit CLI flags
 ```
 
@@ -358,7 +358,7 @@ The current config tables are:
 
 ```toml
 [session]
-dir = ".harness/sessions"
+dir = ".etch/sessions"
 max_tool_rounds = 32
 keep_messages = 12
 
@@ -398,8 +398,8 @@ auto_compact = true
 
 `sample-config.toml` is the canonical human-readable inventory of supported
 keys. It should be updated in the same change that adds or removes config
-surface. The CLI also exposes `harness config check`, `harness config show
---effective`, and `harness config schema` so a user or agent can validate the
+surface. The CLI also exposes `etch config check`, `etch config show
+--effective`, and `etch config schema` so a user or agent can validate the
 discovered merged config, inspect merged defaults, and see the model-neutral
 schema without reading the source. Config validation includes scalar TOML
 parsing plus semantic checks for provider names, OpenAI API modes, reasoning
@@ -408,7 +408,7 @@ options, hook events, hook matcher regexes, and enabled hook/plugin commands.
 ## External Hooks
 
 Hooks are the first executable extension point, separate from long-lived
-plugins. A hook is an external command run through the platform shell. Harness
+plugins. A hook is an external command run through the platform shell. etch
 sends one JSON envelope on stdin and reads an optional JSON patch from stdout:
 
 ```json
@@ -417,7 +417,7 @@ sends one JSON envelope on stdin and reads an optional JSON patch from stdout:
   "event": "PreToolUse",
   "cwd": "/work/project",
   "payload": {
-    "sessionPath": ".harness/sessions/example.jsonl",
+    "sessionPath": ".etch/sessions/example.jsonl",
     "tool": {
       "id": "call_1",
       "name": "bash",
@@ -434,7 +434,7 @@ Hooks are configured as array tables:
 
 [[hooks.PreToolUse]]
 matcher = "bash|write|edit"
-command = ".harness/hooks/policy.sh"
+command = ".etch/hooks/policy.sh"
 timeout_seconds = 10
 disabled = false
 ```
@@ -491,8 +491,8 @@ the active session messages and instruction files into provider-neutral model
 messages.
 
 The first context builder is deliberately small. It prepends a base coding-agent
-system prompt with Harness invariants and broad tool-use guidance, then appends
-optional `[prompt]` text from `.harness/config.toml`, then loads `SYSTEM.md` and
+system prompt with etch invariants and broad tool-use guidance, then appends
+optional `[prompt]` text from `.etch/config.toml`, then loads `SYSTEM.md` and
 `AGENTS.md` files from the current working directory and its ancestors. Parent
 files appear before child files so more local files can refine broader rules.
 Config prompt text is for operator or project policy that belongs next to
@@ -506,7 +506,7 @@ not removed by session compaction.
 
 Skill packages follow the Agent Skills `SKILL.md` convention and are discovered
 as metadata, not eagerly loaded as full prompt text. The first supported project
-roots are `.harness/skills/*/SKILL.md` and `.agents/skills/*/SKILL.md` in the
+roots are `.etch/skills/*/SKILL.md` and `.agents/skills/*/SKILL.md` in the
 current working directory and its ancestors. The harness parses a small
 stdlib-only frontmatter subset, currently `name` and `description`, and enforces
 the core naming rules: lowercase letters, numbers, and hyphens only, no leading,
@@ -528,10 +528,10 @@ summarized prefix. The summary event records whether the trigger was `manual` or
 changed. Manual compaction is available from the CLI:
 
 ```bash
-go run ./cmd/harness compact --session <id-prefix>
+go run ./cmd/etch compact --session <id-prefix>
 ```
 
-Inside `harness chat`, `/compact` appends a summary for the active session and
+Inside `etch chat`, `/compact` appends a summary for the active session and
 `/context` prints approximate context stats such as total events, whether a
 summary is active, raw replay events, projected context bytes, pinned system
 files, pinned instruction files, tool schema size, auto-compaction settings, and
@@ -632,8 +632,8 @@ The built-in OpenAI provider supports:
 ```text
 openai-codex-oauth
   ChatGPT Plus/Pro/Business/Enterprise subscription auth through a
-  Codex-style device flow. `harness auth login` stores credentials in
-  `~/.harness/auth/openai.json`.
+  Codex-style device flow. `etch auth login` stores credentials in
+  `~/.etch/auth/openai.json`.
 
 openai-api-key
   Platform or OpenAI-compatible API key auth through `OPENAI_API_KEY`,
@@ -653,16 +653,16 @@ workspace Codex entitlement, rate limits, and data controls.
 
 Credential resolution honors an explicit `--api-key` first because a command
 line credential is an invocation-scoped provider choice. Without an explicit API
-key, Harness prefers the user's local OAuth login when
-`~/.harness/auth/openai.json` exists and can be refreshed. If no stored OAuth
-login exists, Harness falls back to `CODEX_ACCESS_TOKEN`, then environment
-API-key credentials. This makes `harness auth login` the default local identity
+key, etch prefers the user's local OAuth login when
+`~/.etch/auth/openai.json` exists and can be refreshed. If no stored OAuth
+login exists, etch falls back to `CODEX_ACCESS_TOKEN`, then environment
+API-key credentials. This makes `etch auth login` the default local identity
 while still allowing OpenAI-compatible providers such as OpenRouter in projects
 or environments without OAuth state.
 
 OAuth mode defaults to the Codex backend at
 `https://chatgpt.com/backend-api/codex` and the Responses API shape. Explicit
-`--base-url` or `.harness/config.toml` settings override that backend for local
+`--base-url` or `.etch/config.toml` settings override that backend for local
 testing and compatible servers. Explicit `--openai-api` or config values
 override the OAuth default API shape.
 
@@ -702,7 +702,7 @@ keeps the builtin core self-contained.
 The first operation is `ls`, implemented in pure Go under `internal/tools/fs`.
 It lists one directory, includes ordinary dotfiles, sorts case-insensitively,
 marks directories with `/`, skips internal directories such as `.git`,
-`.harness`, `bin`, `node_modules`, and `vendor`, and emits explicit truncation or
+`.etch`, `bin`, `node_modules`, and `vendor`, and emits explicit truncation or
 empty-directory notices.
 
 The second operation is `read`, also implemented in pure Go under
@@ -722,7 +722,7 @@ bounded unified-style diff so the model and user can inspect what changed. The
 diff must be hunked around changed regions, not a whole-file before/after dump,
 so unchanged file content does not pollute later model context.
 Mutation tools are anchored to the current working directory and refuse to
-modify internal `.git` or `.harness` paths.
+modify internal `.git` or `.etch` paths.
 
 The fourth operation is `edit`, an exact-replacement mutation tool for existing
 text files. Each `oldText` must match exactly one region in the original file;
@@ -754,7 +754,7 @@ dependencies.
 The sixth operation is `find`, a recursive path discovery tool implemented in
 pure Go. It matches case-insensitive substrings against slash-separated relative
 paths, includes files and directories, skips internal directories such as
-`.git`, `.harness`, `bin`, `node_modules`, and `vendor`, sorts output
+`.git`, `.etch`, `bin`, `node_modules`, and `vendor`, sorts output
 deterministically, respects the root `.gitignore` subset, supports basename and
 recursive `**` glob filters, caps recursive descent depth, and emits explicit
 no-match, truncation, and skipped-directory notices.
@@ -775,15 +775,15 @@ The builtin tool registry lives under `internal/tool`. Registered tools wrap
 the same operations for direct smoke testing:
 
 ```bash
-go run ./cmd/harness tool ls .
-go run ./cmd/harness tool ls --limit 20 .
-go run ./cmd/harness tool read AGENTS.md
-go run ./cmd/harness tool read --offset 20 --limit 40 AGENTS.md
-go run ./cmd/harness tool find main .
-go run ./cmd/harness tool grep DefaultMaxToolRounds .
-go run ./cmd/harness tool write --content 'hello\n' notes/hello.txt
-go run ./cmd/harness tool edit --old hello --new goodbye notes/hello.txt
-go run ./cmd/harness tool bash -- go test ./...
+go run ./cmd/etch tool ls .
+go run ./cmd/etch tool ls --limit 20 .
+go run ./cmd/etch tool read AGENTS.md
+go run ./cmd/etch tool read --offset 20 --limit 40 AGENTS.md
+go run ./cmd/etch tool find main .
+go run ./cmd/etch tool grep DefaultMaxToolRounds .
+go run ./cmd/etch tool write --content 'hello\n' notes/hello.txt
+go run ./cmd/etch tool edit --old hello --new goodbye notes/hello.txt
+go run ./cmd/etch tool bash -- go test ./...
 ```
 
 The model-facing `read` schema accepts a single `path` or a `files` array of
@@ -829,7 +829,7 @@ the parent context. A subagent is another ordinary core turn running in a child
 JSONL session with its own provider/model settings, system instructions, tool
 allowlist, tool-loop limit, and compaction settings.
 
-Profiles live in `.harness/config.toml`:
+Profiles live in `.etch/config.toml`:
 
 ```toml
 [subagents]
@@ -845,7 +845,7 @@ model = "gpt-5.5"
 openai_api = "responses"
 reasoning_effort = "medium"
 reasoning_summary = "auto"
-system_prompt_file = ".harness/subagents/review.md"
+system_prompt_file = ".etch/subagents/review.md"
 allowed_tools = ["ls", "read", "find", "grep", "go_inspect"]
 max_tool_rounds = 20
 auto_compact = true
@@ -855,14 +855,14 @@ auto_compact_threshold_tokens = 80000
 The parent model sees the configured profile names and descriptions in the
 `task` tool schema. A task call includes a profile name, a concrete task, and
 optional focused context. When several independent child tasks are useful, the
-parent should emit several `task` calls in one model response so Harness can run
+parent should emit several `task` calls in one model response so etch can run
 them concurrently. The child prompt is admitted into a new session and the child
 result is returned to the parent as one compact tool result containing the child
 session id, duration, model/tool counts, final answer, and copyable inspection
 commands.
 
 Child sessions are durable forks of the parent conversation. When a model calls
-`task`, Harness records the parent session path and the assistant event that
+`task`, etch records the parent session path and the assistant event that
 requested the tool. The child prompt is built from parent message history before
 that assistant event plus the child session's own events. This means subagents
 inherit discoveries already made by the parent, while the unfinished parent
@@ -877,7 +877,7 @@ Child sessions extend `session.started` with optional `parentSessionId`,
 the full child transcript into the parent context. The parent session stores the
 compact `message.tool` result; the child session stores the full exploration,
 tool calls, reasoning summaries, usage, compaction events, and durable fork
-pointer. Because the fork pointer is stored in `session.started`, `harness
+pointer. Because the fork pointer is stored in `session.started`, `etch
 resume <child-id>` rebuilds the same inherited context instead of resuming as a
 fresh worker.
 
@@ -904,10 +904,10 @@ tool-completion callbacks rather than waiting for parent transcript append
 order. Each visible child gets a deterministic terminal-only codename so
 parallel work is easier to scan, for example `Ada / explore: map plugins =>
 read sdk/plugins.go`. Full child output stays in the child JSONL session and
-can be inspected with `harness show <child-id>` or continued with `harness
-resume <child-id>`. Child usage and provider transport counters are streamed
-into the parent footer as child model calls finish; completed child sessions add
-the child tool-call total and fill any counters that were not available live.
+can be inspected with `etch show <child-id>` or continued with `etch resume
+<child-id>`. Child usage and provider transport counters are streamed into the
+parent footer as child model calls finish; completed child sessions add the
+child tool-call total and fill any counters that were not available live.
 A richer future terminal can add more per-subagent controls, but it should
 still avoid streaming every child event into the parent transcript by default.
 
@@ -915,11 +915,11 @@ still avoid streaming every child event into the parent transcript by default.
 
 Plugins are native extensions of the agent runtime. The first implemented slice
 is intentionally narrow: explicit out-of-process tools configured in
-`.harness/config.toml`. Plugins can later grow to commands, context providers,
+`.etch/config.toml`. Plugins can later grow to commands, context providers,
 event observers, policy hooks, compaction customizers, UI panels, and model
 providers, but those are not kernel features in this version.
 
-Plugins are configured, not discovered. Harness does not scan project
+Plugins are configured, not discovered. etch does not scan project
 directories for executables. Each plugin must appear in config:
 
 ```toml
@@ -934,12 +934,12 @@ disabled = false
 The command runs through the platform shell from the current project working
 directory. The plugin is a child process with its own dependencies, so it can be
 written as a separate Go module or in any language that can read stdin and write
-stdout. Harness gives plugin processes a sanitized default environment:
+stdout. etch gives plugin processes a sanitized default environment:
 ordinary process basics such as `PATH`, `HOME`, temporary directory variables,
 and locale settings are forwarded, while model credentials and unrelated parent
 environment variables are not. A plugin can request additional named variables
 through the config entry's `env` allowlist; this should stay narrow and explicit.
-On Unix systems, Harness starts each plugin shell in its own process group.
+On Unix systems, etch starts each plugin shell in its own process group.
 Shutdown closes stdin first, waits briefly for a cooperative exit, sends a
 termination signal when supported, then escalates to killing the process group
 so shell-launched plugin children cannot keep stdio pipes open after
@@ -1003,7 +1003,7 @@ without copying the JSONL wire server. The internal plugin client still owns
 process startup, timeouts, schema validation, and registry wiring.
 
 The repository carries one standalone example plugin under `plugins/example`.
-It is its own Go module, imports `harness/sdk`, and exposes two tools:
+It is its own Go module, imports `etch/sdk`, and exposes two tools:
 
 - `plugin_echo` echoes text and reports basic text statistics, making it useful
   for smoke testing the plugin path.
@@ -1012,7 +1012,7 @@ It is its own Go module, imports `harness/sdk`, and exposes two tools:
 
 The repository also carries a Go intelligence plugin under `plugins/go-intel`.
 It is deliberately a plugin rather than core behavior. The plugin uses only the
-Go standard library parser packages plus `harness/sdk` to expose one
+Go standard library parser packages plus `etch/sdk` to expose one
 model-facing `go_inspect` tool. The name is intentionally source-oriented: the
 tool can map Go packages and symbols, but it can also read selected Go source
 declarations directly. It accepts `paths` plus optional case-insensitive Go
@@ -1118,15 +1118,15 @@ resources routed to them.
 The first interface should be a CLI with a minimal interactive mode:
 
 ```text
-harness
-harness -p "question"
-harness --json -p "question"
-harness chat
-harness resume <session-id-prefix>
-harness sessions
-harness sessions --json
-harness show <session-id-prefix>
-harness show --json <session-id-prefix>
+etch
+etch -p "question"
+etch --json -p "question"
+etch chat
+etch resume <session-id-prefix>
+etch sessions
+etch sessions --json
+etch show <session-id-prefix>
+etch show --json <session-id-prefix>
 ```
 
 The terminal should show dot-led assistant, tool, and reasoning blocks
@@ -1160,7 +1160,7 @@ use neutral canned labels such as `Working`, `Thinking`, `Responding`, and
 `Running tools`. This keeps the UI useful for OpenRouter and local gateway
 models whose reasoning streams may not follow OpenAI's summary shape.
 
-The `cmd/harness` package should stay sliced by responsibility as it grows.
+The `cmd/etch` package should stay sliced by responsibility as it grows.
 `main.go` owns process entry and top-level dispatch, `flags.go` owns CLI flag
 projection, chat runtime setup owns non-terminal dependencies, slash-command
 files own local command execution, input files own raw terminal state, rendering
@@ -1180,10 +1180,10 @@ agent. It wires together the durable session log, provider-neutral model stream,
 and core turn runner through a non-interactive CLI:
 
 ```bash
-go run ./cmd/harness -p "hello"
-go run ./cmd/harness --json -p "hello"
-go run ./cmd/harness sessions
-go run ./cmd/harness show <session-id-prefix>
+go run ./cmd/etch -p "hello"
+go run ./cmd/etch --json -p "hello"
+go run ./cmd/etch sessions
+go run ./cmd/etch show <session-id-prefix>
 ```
 
 The first model was an echo client. That remains deliberate as a test fixture:

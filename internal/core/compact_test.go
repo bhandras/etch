@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
-	"harness/internal/model"
-	"harness/internal/prompt"
-	"harness/internal/session"
-	"harness/internal/tool"
+	"etch/internal/model"
+	"etch/internal/prompt"
+	"etch/internal/session"
+	"etch/internal/tool"
 )
 
 // TestCompactSessionAppendsSummary verifies that manual compaction stores a

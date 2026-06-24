@@ -93,7 +93,7 @@ func rejectInternalToolPath(root string, path string, action string) error {
 	}
 	for _, part := range strings.Split(rel, string(filepath.Separator)) {
 		switch part {
-		case ".git", ".harness":
+		case ".git", ".etch":
 			return fmt.Errorf("refusing to %s internal path %s",
 				action, path)
 		}

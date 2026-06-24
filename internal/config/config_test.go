@@ -52,7 +52,7 @@ disabled = true
 
 [[plugins]]
 name = "git"
-command = ".harness/plugins/git"
+command = ".etch/plugins/git"
 env = ["GIT_CONFIG_GLOBAL"]
 timeout_seconds = 5
 
@@ -103,7 +103,7 @@ disabled = true
 		t.Fatalf("expected two plugins, got %d", len(cfg.Plugins))
 	}
 	if cfg.Plugins[0].Name != "git" ||
-		cfg.Plugins[0].Command != ".harness/plugins/git" ||
+		cfg.Plugins[0].Command != ".etch/plugins/git" ||
 		cfg.Plugins[0].TimeoutSeconds != 5 ||
 		len(cfg.Plugins[0].Env) != 1 ||
 		cfg.Plugins[0].Env[0] != "GIT_CONFIG_GLOBAL" {
@@ -657,7 +657,7 @@ func TestParseRejectsPromptTextAndFile(t *testing.T) {
 	_, err := Parse(`
 [prompt]
 system_prompt = "inline"
-system_prompt_file = ".harness/SYSTEM.md"
+system_prompt_file = ".etch/SYSTEM.md"
 `)
 	if err == nil || !strings.Contains(
 		err.Error(),

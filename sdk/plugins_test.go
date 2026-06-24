@@ -122,7 +122,7 @@ func TestServePluginIORejectsInvalidToolName(t *testing.T) {
 }
 
 // TestServePluginIORejectsInvalidParameterSchema verifies SDK authors get
-// schema feedback before Harness tries to initialize the plugin.
+// schema feedback before etch tries to initialize the plugin.
 func TestServePluginIORejectsInvalidParameterSchema(t *testing.T) {
 	tool := testTool("echo")
 	tool.Parameters = map[string]any{"type": "string"}

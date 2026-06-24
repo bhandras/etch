@@ -13,7 +13,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"harness/sdk"
+	"etch/sdk"
 )
 
 const (
@@ -258,7 +258,7 @@ func shouldSkip(path string, entry fs.DirEntry) bool {
 		return false
 	}
 	switch name {
-	case ".git", ".harness", "bin", "vendor", "node_modules":
+	case ".git", ".etch", "bin", "vendor", "node_modules":
 		return true
 
 	default:

@@ -19,7 +19,7 @@ import (
 	"sync"
 	"time"
 
-	"harness/internal/model"
+	"etch/internal/model"
 )
 
 const (

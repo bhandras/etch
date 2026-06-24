@@ -11,15 +11,15 @@ GOLANGCI_LINT_PKG := github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.1
 EXAMPLE_PLUGIN_DIR := plugins/example
 GO_INTEL_PLUGIN_DIR := plugins/go-intel
 BINDIR ?= bin
-HARNESS_BIN ?= $(BINDIR)/harness
-PLUGIN_BINDIR ?= $(HOME)/.harness/bin
+ETCH_BIN ?= $(BINDIR)/etch
+PLUGIN_BINDIR ?= $(HOME)/.etch/bin
 GO_INTEL_BIN ?= $(PLUGIN_BINDIR)/go-intel
 
 help:
 	@printf '%s\n' \
 		'Targets:' \
-		'  build           Build the harness binary into bin/harness.' \
-		'  install         Install harness and bundled plugin binaries.' \
+		'  build           Build the etch binary into bin/etch.' \
+		'  install         Install etch and bundled plugin binaries.' \
 		'  test            Run the Go test suite.' \
 		'  test-race       Run race-enabled tests for the main module.' \
 		'  lint            Run golangci-lint for all Go modules.' \
@@ -31,10 +31,10 @@ help:
 
 build:
 	@mkdir -p $(BINDIR)
-	$(GOCC) build -trimpath -o $(HARNESS_BIN) ./cmd/harness
+	$(GOCC) build -trimpath -o $(ETCH_BIN) ./cmd/etch
 
 install:
-	$(GOCC) install -trimpath ./cmd/harness
+	$(GOCC) install -trimpath ./cmd/etch
 	@mkdir -p $(PLUGIN_BINDIR)
 	cd $(GO_INTEL_PLUGIN_DIR); $(GOCC) build -trimpath -o $(GO_INTEL_BIN) .
 

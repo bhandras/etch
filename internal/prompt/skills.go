@@ -58,7 +58,7 @@ func LoadSkills(cwd string) ([]Skill, error) {
 // skillRoots returns supported skill package roots for one project directory.
 func skillRoots(dir string) []string {
 	return []string{
-		filepath.Join(dir, ".harness", "skills"),
+		filepath.Join(dir, ".etch", "skills"),
 		filepath.Join(dir, ".agents", "skills"),
 	}
 }

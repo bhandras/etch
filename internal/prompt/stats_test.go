@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"harness/internal/model"
-	"harness/internal/session"
+	"etch/internal/model"
+	"etch/internal/session"
 )
 
 // TestBuildStatsReportsActiveSummary verifies that context stats explain the
@@ -96,7 +96,7 @@ func TestFormatProjectContextReportsPinnedInputs(t *testing.T) {
 		Skills: []Skill{{
 			Name:        "go-style",
 			Description: "Use for Go edits.",
-			Path:        ".harness/skills/go-style/SKILL.md",
+			Path:        ".etch/skills/go-style/SKILL.md",
 		}},
 	}
 
@@ -131,7 +131,7 @@ func TestFormatProjectContextReportsPinnedInputs(t *testing.T) {
 	if !strings.Contains(text, "- go-style") ||
 		!strings.Contains(text, "  - prompt: Use for Go edits.") ||
 		!strings.Contains(
-			text, "  - file: .harness/skills/go-style/SKILL.md",
+			text, "  - file: .etch/skills/go-style/SKILL.md",
 		) {
 
 		t.Fatalf("missing skill details: %q", text)

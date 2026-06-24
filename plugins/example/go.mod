@@ -1,7 +1,7 @@
-module harness-example-plugin
+module etch-example-plugin
 
 go 1.25
 
-require harness v0.0.0
+require etch v0.0.0
 
-replace harness => ../..
+replace etch => ../..

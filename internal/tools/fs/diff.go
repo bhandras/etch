@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"harness/internal/textutil"
+	"etch/internal/textutil"
 )
 
 const (

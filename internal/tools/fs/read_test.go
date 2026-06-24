@@ -198,14 +198,14 @@ func TestReadRejectsWorkspaceEscape(t *testing.T) {
 func TestReadRejectsInternalPath(t *testing.T) {
 	root := t.TempDir()
 	t.Chdir(root)
-	if err := os.Mkdir(".harness", 0o700); err != nil {
+	if err := os.Mkdir(".etch", 0o700); err != nil {
 		t.Fatal(err)
 	}
-	writeFile(t, filepath.Join(root, ".harness", "secret.txt"), "secret")
+	writeFile(t, filepath.Join(root, ".etch", "secret.txt"), "secret")
 
 	_, err := Read(
 		context.Background(), ReadRequest{
-			Path: ".harness/secret.txt",
+			Path: ".etch/secret.txt",
 		},
 	)
 	if err == nil {

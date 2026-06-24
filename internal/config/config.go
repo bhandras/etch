@@ -9,15 +9,15 @@ import (
 )
 
 const (
-	// ProjectConfigDir is the project-local directory that owns harness
+	// ProjectConfigDir is the project-local directory that owns etch
 	// configuration and generated state.
-	ProjectConfigDir = ".harness"
+	ProjectConfigDir = ".etch"
 
 	// ConfigFileName is the TOML file name loaded from ProjectConfigDir.
 	ConfigFileName = "config.toml"
 )
 
-// Config stores all settings loaded from a harness TOML file.
+// Config stores all settings loaded from an etch TOML file.
 type Config struct {
 	// Path is the absolute path to the loaded config file. Empty means no
 	// config file was discovered. When multiple files are merged, Path is
@@ -520,7 +520,7 @@ func mergeConfigFieldSets(base map[string]bool,
 	return merged
 }
 
-// Find returns the nearest .harness/config.toml at or above cwd.
+// Find returns the nearest .etch/config.toml at or above cwd.
 func Find(cwd string) (string, error) {
 	if strings.TrimSpace(cwd) == "" {
 		return "", fmt.Errorf("config cwd must not be empty")
@@ -575,7 +575,7 @@ func parseFile(path string, validate bool) (Config, error) {
 	return cfg, nil
 }
 
-// Parse parses the dependency-free TOML subset used by harness config files.
+// Parse parses the dependency-free TOML subset used by etch config files.
 func Parse(text string) (Config, error) {
 	return parseText(text, true)
 }

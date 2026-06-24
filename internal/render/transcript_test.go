@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"harness/internal/session"
+	"etch/internal/session"
 )
 
 // TestMessageLinesRendersEditCall verifies that edit calls are shown as

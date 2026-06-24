@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"harness/internal/model"
-	"harness/internal/session"
+	"etch/internal/model"
+	"etch/internal/session"
 )
 
 // Stats describes the current prompt-context projection for a session.

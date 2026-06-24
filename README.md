@@ -1,12 +1,12 @@
-# Harness
+# etch
 
-Harness is a small Go coding-agent harness. It is an experiment in keeping the
+etch is a small Go coding-agent harness. It is an experiment in keeping the
 agent kernel boring, fast, inspectable, and easy to build.
 
 The project takes inspiration from the minimalism of
 [Pi](https://github.com/earendil-works/pi): a direct agent loop, practical
 filesystem tools, local session state, and little ceremony between the user, the
-model, and the working tree. Harness follows the same spirit while leaning into
+model, and the working tree. etch follows the same spirit while leaning into
 Go's strengths: static binaries, good standard-library coverage, simple
 concurrency, and a low-dependency core.
 
@@ -27,19 +27,19 @@ The deeper design record lives in [docs/architecture.md](docs/architecture.md).
 
 ## Current Shape
 
-Harness currently has:
+etch currently has:
 
 - a line-oriented CLI chat loop with command-specific help
-- local JSONL session logs under `.harness/sessions/`
+- local JSONL session logs under `.etch/sessions/`
 - OpenAI-compatible streaming through the standard library, including Platform
   API keys, `CODEX_ACCESS_TOKEN`, and ChatGPT/Codex OAuth login
 - frame-oriented OpenAI SSE parsing that reads response chunks, joins multiline
   `data:` fields, and reports raw request/response byte metrics plus
   continuation request shape
-- user and project TOML config from `~/.harness/config.toml` and
-  `.harness/config.toml`
+- user and project TOML config from `~/.etch/config.toml` and
+  `.etch/config.toml`
 - pinned project context from `SYSTEM.md` and `AGENTS.md`
-- Agent Skills-style discovery from `.harness/skills/*/SKILL.md` and
+- Agent Skills-style discovery from `.etch/skills/*/SKILL.md` and
   `.agents/skills/*/SKILL.md`
 - manual and automatic context compaction, `/context` projection stats, and
   `/status` session stats
@@ -89,22 +89,22 @@ and fixtures.
 
 | Command | Purpose |
 | --- | --- |
-| `harness -p "prompt"` | Run one non-interactive prompt. |
-| `harness chat` | Start an interactive chat session. |
-| `harness resume <id-prefix>` | Continue an existing chat session. |
-| `harness auth login/status/logout` | Manage local OpenAI/Codex OAuth credentials. |
-| `harness tool <name>` | Run a built-in tool directly. |
-| `harness sessions` | List local session logs. |
-| `harness show <id-prefix>` | Render a saved transcript. |
-| `harness compact --session <id>` | Append a compaction summary. |
-| `harness help [command]` | Show command-specific help. |
+| `etch -p "prompt"` | Run one non-interactive prompt. |
+| `etch chat` | Start an interactive chat session. |
+| `etch resume <id-prefix>` | Continue an existing chat session. |
+| `etch auth login/status/logout` | Manage local OpenAI/Codex OAuth credentials. |
+| `etch tool <name>` | Run a built-in tool directly. |
+| `etch sessions` | List local session logs. |
+| `etch show <id-prefix>` | Render a saved transcript. |
+| `etch compact --session <id>` | Append a compaction summary. |
+| `etch help [command]` | Show command-specific help. |
 
 Discover commands and flags from the binary:
 
 ```bash
-go run ./cmd/harness
-go run ./cmd/harness help chat
-go run ./cmd/harness help tool edit
+go run ./cmd/etch
+go run ./cmd/etch help chat
+go run ./cmd/etch help tool edit
 ```
 
 ## Quick Start
@@ -114,7 +114,7 @@ go run ./cmd/harness help tool edit
 Run one prompt without network access:
 
 ```bash
-go run ./cmd/harness -p "hello" --provider echo
+go run ./cmd/etch -p "hello" --provider echo
 ```
 
 ### OpenAI-compatible API key mode
@@ -122,7 +122,7 @@ go run ./cmd/harness -p "hello" --provider echo
 Run chat with an OpenAI-compatible endpoint:
 
 ```bash
-OPENAI_API_KEY=... go run ./cmd/harness chat \
+OPENAI_API_KEY=... go run ./cmd/etch chat \
   --provider openai \
   --model gpt-4.1-mini
 ```
@@ -130,7 +130,7 @@ OPENAI_API_KEY=... go run ./cmd/harness chat \
 Run chat with OpenAI reasoning summaries when the selected model supports them:
 
 ```bash
-OPENAI_API_KEY=... go run ./cmd/harness chat \
+OPENAI_API_KEY=... go run ./cmd/etch chat \
   --provider openai \
   --openai-api responses \
   --model gpt-5.5 \
@@ -142,8 +142,8 @@ OPENAI_API_KEY=... go run ./cmd/harness chat \
 Sign in with ChatGPT/Codex OAuth and use subscription-backed access:
 
 ```bash
-go run ./cmd/harness auth login
-go run ./cmd/harness chat \
+go run ./cmd/etch auth login
+go run ./cmd/etch chat \
   --provider openai \
   --model gpt-5.5
 ```
@@ -151,8 +151,8 @@ go run ./cmd/harness chat \
 Check or remove local OAuth credentials:
 
 ```bash
-go run ./cmd/harness auth status
-go run ./cmd/harness auth logout
+go run ./cmd/etch auth status
+go run ./cmd/etch auth logout
 ```
 
 ### OpenRouter and local endpoints
@@ -160,7 +160,7 @@ go run ./cmd/harness auth logout
 Use OpenRouter through the same OpenAI-compatible provider:
 
 ```bash
-OPENROUTER_API_KEY=... go run ./cmd/harness chat \
+OPENROUTER_API_KEY=... go run ./cmd/etch chat \
   --provider openai \
   --base-url https://openrouter.ai/api/v1 \
   --openai-api chat \
@@ -171,7 +171,7 @@ OPENROUTER_API_KEY=... go run ./cmd/harness chat \
 Use a local or custom OpenAI-compatible endpoint:
 
 ```bash
-OPENAI_API_KEY=unused go run ./cmd/harness chat \
+OPENAI_API_KEY=unused go run ./cmd/etch chat \
   --provider openai \
   --base-url http://localhost:11434/v1 \
   --model qwen2.5-coder
@@ -179,18 +179,18 @@ OPENAI_API_KEY=unused go run ./cmd/harness chat \
 
 ## Authentication
 
-Harness supports four OpenAI-compatible credential paths:
+etch supports four OpenAI-compatible credential paths:
 
 1. An invocation-scoped API key from `--api-key`.
-2. A stored ChatGPT/Codex OAuth login from `harness auth login`.
+2. A stored ChatGPT/Codex OAuth login from `etch auth login`.
 3. A bearer token from `CODEX_ACCESS_TOKEN`.
 4. API keys from `OPENAI_API_KEY` or `OPENROUTER_API_KEY`.
 
-OAuth credentials are stored locally under `~/.harness/auth/openai.json` by
+OAuth credentials are stored locally under `~/.etch/auth/openai.json` by
 default. An explicit `--api-key` always wins for that invocation, which is
 useful for OpenRouter, local proxies, and one-off provider tests. When no
 explicit API key is passed and a stored OAuth login exists and can be refreshed,
-Harness uses OAuth before environment API keys. Environment API keys remain the
+etch uses OAuth before environment API keys. Environment API keys remain the
 fallback for Platform billing, OpenRouter, local proxies, and CI.
 
 OAuth mode defaults to the Codex backend and the Responses API shape. Explicit
@@ -207,13 +207,13 @@ to HTTP/SSE before any stream output is emitted.
 Configure user or project defaults:
 
 ```bash
-mkdir -p .harness
-cp sample-config.toml .harness/config.toml
+mkdir -p .etch
+cp sample-config.toml .etch/config.toml
 ```
 
 `sample-config.toml` documents every supported key. The CLI first reads
-`~/.harness/config.toml` when present, then merges the nearest project
-`.harness/config.toml` from the current directory or an ancestor. Project scalar
+`~/.etch/config.toml` when present, then merges the nearest project
+`.etch/config.toml` from the current directory or an ancestor. Project scalar
 values override user scalar values, while repeatable sections such as hooks,
 plugins, and subagent profiles append in source order. Config values are
 defaults only: explicit CLI flags override them. Credential environment
@@ -222,9 +222,9 @@ variables are read separately for API keys and access tokens.
 Inspect merged configuration with:
 
 ```bash
-go run ./cmd/harness config check
-go run ./cmd/harness config show --effective
-go run ./cmd/harness config schema
+go run ./cmd/etch config check
+go run ./cmd/etch config show --effective
+go run ./cmd/etch config schema
 ```
 
 `config check` validates both the TOML subset and semantic settings such as
@@ -232,7 +232,7 @@ provider names, OpenAI API modes, hook events, matcher regexes, and enabled
 hook/plugin commands.
 
 Hooks are external shell commands that inspect or mutate lifecycle events.
-Harness sends a JSON envelope on stdin and expects either empty stdout or an
+etch sends a JSON envelope on stdin and expects either empty stdout or an
 event-specific JSON object on stdout. Hooks run sequentially in config file
 order, so later hooks see mutations returned by earlier hooks.
 
@@ -241,7 +241,7 @@ For example, this hook runs a local policy script before write-capable tools:
 ```toml
 [[hooks.PreToolUse]]
 matcher = "^(bash|write|edit)$"
-command = ".harness/hooks/policy.sh"
+command = ".etch/hooks/policy.sh"
 timeout_seconds = 10
 ```
 
@@ -262,7 +262,7 @@ Supported hook events are `SessionStart`, `UserPromptSubmit`, `TurnStart`,
 `PostCompact`. See [sample-config.toml](sample-config.toml) for matchers,
 execution order, payloads, and result shapes.
 
-Plugins are also configured explicitly. Harness does not auto-discover project
+Plugins are also configured explicitly. etch does not auto-discover project
 executables. Each enabled plugin is trusted local code launched from the project
 working directory as a child process that speaks JSONL over stdin/stdout and can
 register model-callable tools:
@@ -280,7 +280,7 @@ The first plugin protocol supports `initialize` and `tool.execute` requests.
 Plugin tools appear in the same tool list as built-ins, and their results are
 stored as ordinary `message.tool` session events.
 
-Plugin processes run with a sanitized environment by default. Harness forwards
+Plugin processes run with a sanitized environment by default. etch forwards
 common process basics such as `PATH`, `HOME`, temporary directory variables,
 and locale settings, but it does not forward model credentials such as
 `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, or `CODEX_ACCESS_TOKEN` unless the
@@ -294,13 +294,13 @@ failures close the plugin process and hide its tools from later model requests;
 ordinary plugin-declared tool errors remain recoverable.
 
 The repository includes a small example plugin at `plugins/example`. It uses
-the thin `harness/sdk` package from [sdk/plugins.go](sdk/plugins.go), exposes
+the thin `etch/sdk` package from [sdk/plugins.go](sdk/plugins.go), exposes
 `plugin_echo` for smoke testing, and exposes `project_files` for a small
 filesystem summary:
 
 ```bash
-go run ./cmd/harness tool plugin_echo --args '{"text":"hello"}'
-go run ./cmd/harness tool project_files --args '{"path":".","limit":200}'
+go run ./cmd/etch tool plugin_echo --args '{"text":"hello"}'
+go run ./cmd/etch tool project_files --args '{"path":".","limit":200}'
 ```
 
 The repository also includes a standard-library-only Go intelligence plugin at
@@ -325,17 +325,17 @@ timeout_seconds = 30
 ```
 
 ```bash
-go run ./cmd/harness tool go_inspect --args '{"paths":["internal/session"],"detail":"none"}'
-go run ./cmd/harness tool go_inspect --args '{"paths":["internal/session"],"detail":"package","includeUnexported":true}'
-go run ./cmd/harness tool go_inspect --args '{"paths":["internal/session"],"file":"internal/session/store\\.go$","detail":"none"}'
-go run ./cmd/harness tool go_inspect --args '{"paths":["internal/session"],"name":"^Store\\.","includeUnexported":true}'
-go run ./cmd/harness tool go_inspect --args '{"paths":["cmd/harness","internal/config"],"package":"config|main","name":"plugin","includeUnexported":true}'
-go run ./cmd/harness tool go_inspect --args '{"paths":["internal/session"],"name":"^Store\\.Append$","includeUnexported":true,"detail":"full"}'
+go run ./cmd/etch tool go_inspect --args '{"paths":["internal/session"],"detail":"none"}'
+go run ./cmd/etch tool go_inspect --args '{"paths":["internal/session"],"detail":"package","includeUnexported":true}'
+go run ./cmd/etch tool go_inspect --args '{"paths":["internal/session"],"file":"internal/session/store\\.go$","detail":"none"}'
+go run ./cmd/etch tool go_inspect --args '{"paths":["internal/session"],"name":"^Store\\.","includeUnexported":true}'
+go run ./cmd/etch tool go_inspect --args '{"paths":["cmd/etch","internal/config"],"package":"config|main","name":"plugin","includeUnexported":true}'
+go run ./cmd/etch tool go_inspect --args '{"paths":["internal/session"],"name":"^Store\\.Append$","includeUnexported":true,"detail":"full"}'
 ```
 
 ## Subagents
 
-Subagents are configured child-agent profiles. When enabled, Harness registers a
+Subagents are configured child-agent profiles. When enabled, etch registers a
 model-callable `task` tool. The parent model sees the configured profile names
 and descriptions, then delegates isolated work to one of them. Each delegated
 task runs through the same core turn loop as the parent, but writes its own JSONL
@@ -371,12 +371,12 @@ The direct tool path is useful for smoke testing a profile without waiting for a
 parent model to choose it:
 
 ```bash
-go run ./cmd/harness tool task \
+go run ./cmd/etch tool task \
   --args '{"profile":"explore","task":"Find where config validation lives."}'
 ```
 
-The parent-visible task result includes the child session id plus `harness show`
-and `harness resume` commands for inspecting or continuing the child transcript.
+The parent-visible task result includes the child session id plus `etch show`
+and `etch resume` commands for inspecting or continuing the child transcript.
 Interactive prompt footers fold in child-agent token usage, provider request
 counts, and byte counters as child model calls finish; final turn summaries add
 the completed child tool totals. Delegated work remains visible in the parent
@@ -389,13 +389,13 @@ parent context before appending new child turns.
 Inspect local sessions:
 
 ```bash
-go run ./cmd/harness sessions
-go run ./cmd/harness show <session-id-prefix>
-go run ./cmd/harness resume <session-id-prefix>
+go run ./cmd/etch sessions
+go run ./cmd/etch show <session-id-prefix>
+go run ./cmd/etch resume <session-id-prefix>
 ```
 
-On clean exit, chat prints the session id and a copyable `harness resume`
-command. `harness resume <id-prefix>` is equivalent to starting chat with the
+On clean exit, chat prints the session id and a copyable `etch resume`
+command. `etch resume <id-prefix>` is equivalent to starting chat with the
 matching session preloaded, including prompt history, usage counters, compacted
 summaries, and prior model response identity metadata when the provider can
 expose it.
@@ -420,16 +420,16 @@ Inside chat, use slash commands for local session and context operations:
 layers, tool schema size, active summaries, raw replay size, and approximate
 token counts.
 `/context dump [path]` writes the same logical pre-hook context projection in a
-plain-text layered format. Without `path`, Harness writes a timestamped
+plain-text layered format. Without `path`, etch writes a timestamped
 `context-YYYYMMDD-HHMMSS.txt` file in the current directory.
 
 `/status` reports what has already happened in the session: age, turns, model
 calls, tool calls, tool batches, compactions, message bytes, approximate timing
 from JSONL event gaps, provider-reported token usage, and provider transport
-metrics. When providers report usage, Harness appends `model.usage` events to
+metrics. When providers report usage, etch appends `model.usage` events to
 the JSONL log and sums them for `/status`, including input, cached input,
 output, reasoning output, and total tokens when available. When providers
-report transport measurements, Harness appends `model.metrics` events with
+report transport measurements, etch appends `model.metrics` events with
 the selected transport, request counts, WebSocket connection and reuse counts,
 continuation attempts, continuation fallbacks, the latest continuation fallback
 diagnostic, request/response byte totals, per-request byte averages,
@@ -448,13 +448,13 @@ past the newest history entry.
 Run a built-in tool directly:
 
 ```bash
-go run ./cmd/harness tool ls .
-go run ./cmd/harness tool find readme .
-go run ./cmd/harness tool find --glob '**/*_test.go' '' .
-go run ./cmd/harness tool grep Harness README.md
-go run ./cmd/harness tool grep --regex --context 2 'func Test[A-Za-z0-9_]+' .
-go run ./cmd/harness tool read README.md
-go run ./cmd/harness tool bash -- pwd
+go run ./cmd/etch tool ls .
+go run ./cmd/etch tool find readme .
+go run ./cmd/etch tool find --glob '**/*_test.go' '' .
+go run ./cmd/etch tool grep etch README.md
+go run ./cmd/etch tool grep --regex --context 2 'func Test[A-Za-z0-9_]+' .
+go run ./cmd/etch tool read README.md
+go run ./cmd/etch tool bash -- pwd
 ```
 
 The model-facing `read` tool also accepts a `files` array for several
@@ -473,29 +473,29 @@ requests still behave as batched reads:
 ```
 
 The model-facing `grep` tool accepts `paths` for multi-root searches such as
-`["cmd/harness", "internal/config"]`. It also recovers the common
+`["cmd/etch", "internal/config"]`. It also recovers the common
 space-separated `path` mistake when every split root exists.
 
 Preview an exact replacement edit without modifying the file:
 
 ```bash
-go run ./cmd/harness tool edit \
+go run ./cmd/etch tool edit \
   --old "old text" \
   --new "new text" \
   --dry-run \
   README.md
 ```
 
-`write` and `edit` return human-readable diffs. In chat mode, Harness renders
+`write` and `edit` return human-readable diffs. In chat mode, etch renders
 mutation previews live so the user can see exactly what changed.
 
 ## Project Context
 
-Harness builds prompt context in layers:
+etch builds prompt context in layers:
 
 ```text
 base system prompt
-project prompt from .harness/config.toml, when configured
+project prompt from .etch/config.toml, when configured
 SYSTEM.md files, parent directory before child directory
 AGENTS.md files, parent directory before child directory
 compact skill catalog
@@ -503,15 +503,15 @@ latest compacted session summary, when present
 recent raw session messages
 ```
 
-Use `[prompt]` in `.harness/config.toml` for project/operator prompt policy
+Use `[prompt]` in `.etch/config.toml` for project/operator prompt policy
 that belongs next to provider, tool, plugin, and subagent configuration. Use
 `SYSTEM.md` for project-specific agent identity and durable behavior. Use
 `AGENTS.md` for repository workflow, coding, documentation, verification, and
 commit-message rules. These layers are pinned ahead of compacted conversation
 history, and instruction files are capped at 32KB per file.
 
-Manual compaction is available through `/compact` and `harness compact`.
-Automatic compaction can be enabled in `.harness/config.toml`:
+Manual compaction is available through `/compact` and `etch compact`.
+Automatic compaction can be enabled in `.etch/config.toml`:
 
 ```toml
 [context]
@@ -520,7 +520,7 @@ auto_compact_threshold_tokens = 120000
 keep_recent_tokens = 20000
 ```
 
-Harness checks the projected context before chat model calls. When the estimate
+etch checks the projected context before chat model calls. When the estimate
 reaches the threshold, it appends a `context.summary` event with
 `trigger = "auto"` and keeps roughly `context.keep_recent_tokens` of recent raw
 context. The text-summary backend follows Pi's checkpoint style: repeated
@@ -538,12 +538,12 @@ summarizer:
 The non-interactive compact command accepts the same focus as a flag:
 
 ```bash
-go run ./cmd/harness compact --session <id-prefix> \
+go run ./cmd/etch compact --session <id-prefix> \
   --instructions "focus on modified files and failing tests"
 ```
 
-Skills follow the Agent Skills `SKILL.md` convention. Harness discovers skill
-metadata from `.harness/skills/*/SKILL.md` and `.agents/skills/*/SKILL.md` in
+Skills follow the Agent Skills `SKILL.md` convention. etch discovers skill
+metadata from `.etch/skills/*/SKILL.md` and `.agents/skills/*/SKILL.md` in
 the current directory and its ancestors. The default prompt includes only the
 skill catalog: name, description, and path. Full skill bodies and reference
 files remain outside the prompt until a later on-demand loading path reads them.
@@ -556,8 +556,8 @@ Build the binary:
 make build
 ```
 
-Install the `harness` command into `GOBIN` or `GOPATH/bin`, and install the
-bundled `go-intel` plugin binary into `~/.harness/bin/go-intel`:
+Install the `etch` command into `GOBIN` or `GOPATH/bin`, and install the
+bundled `go-intel` plugin binary into `~/.etch/bin/go-intel`:
 
 ```bash
 make install
@@ -578,7 +578,7 @@ make fmt-check
 
 ## Status
 
-Harness is not a finished agent product. It is a small harness for learning the
+etch is not a finished agent product. It is a small harness for learning the
 shape of a good coding-agent core: explicit loops, durable logs, narrow tools,
 and a plugin boundary that keeps the binary small.
 

@@ -1,6 +1,6 @@
-// Package main implements a small standalone Harness plugin example.
+// Package main implements a small standalone etch plugin example.
 //
-// The plugin uses harness/sdk to speak the Harness JSONL plugin protocol over
+// The plugin uses etch/sdk to speak the etch JSONL plugin protocol over
 // stdin and stdout while keeping its tool logic independent from core
 // internals.
 package main

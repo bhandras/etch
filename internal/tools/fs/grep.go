@@ -11,7 +11,7 @@ import (
 	"regexp"
 	"strings"
 
-	"harness/internal/textutil"
+	"etch/internal/textutil"
 )
 
 const (

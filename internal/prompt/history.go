@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"harness/internal/model"
-	"harness/internal/session"
+	"etch/internal/model"
+	"etch/internal/session"
 )
 
 const (

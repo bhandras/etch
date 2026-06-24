@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"harness/internal/config"
-	"harness/internal/model"
-	"harness/internal/tool"
+	"etch/internal/config"
+	"etch/internal/model"
+	"etch/internal/tool"
 )
 
 const (
@@ -226,11 +226,11 @@ func TestPluginEnvironmentForwardsLowercaseUnixVariables(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Windows environment names are case-insensitive")
 	}
-	t.Setenv("harness_test_lower", "lower")
+	t.Setenv("etch_test_lower", "lower")
 	client, err := Start(context.Background(), config.PluginConfig{
 		Name:           "helper",
 		Command:        helperCommandWithMode("env"),
-		Env:            []string{"harness_test_lower"},
+		Env:            []string{"etch_test_lower"},
 		TimeoutSeconds: 5,
 	}, t.TempDir())
 	if err != nil {
@@ -246,7 +246,7 @@ func TestPluginEnvironmentForwardsLowercaseUnixVariables(t *testing.T) {
 	if err != nil {
 		t.Fatalf("execute env plugin: %v", err)
 	}
-	if !strings.Contains(result.Text, "harness_test_lower=lower") {
+	if !strings.Contains(result.Text, "etch_test_lower=lower") {
 		t.Fatalf("plugin did not receive lowercase env:\n%s",
 			result.Text)
 	}
@@ -627,8 +627,8 @@ func runHelperPlugin() {
 							"HARNESS_TEST_FORWARD=" + os.Getenv(
 								"HARNESS_TEST_FORWARD",
 							),
-							"harness_test_lower=" + os.Getenv(
-								"harness_test_lower",
+							"etch_test_lower=" + os.Getenv(
+								"etch_test_lower",
 							),
 						}, "\n"),
 					}},
