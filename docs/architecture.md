@@ -116,6 +116,15 @@ is one model response followed by zero or more requested tool executions, so it
 is not the same as an individual tool-call count. CLI callers can raise or
 lower the bound with `--max-tool-rounds` or `.etch/config.toml`.
 
+Exhausting this bound returns a typed `ToolRoundLimitError` containing the
+configured limit and durable session identity. Completed assistant tool calls
+and tool results remain in the JSONL log. Interactive chat treats this as a
+recoverable stop: it retains the session, prints a notice, and accepts the next
+prompt. A follow-up turn gets a new round budget and continues from the saved
+history. The harness does not automatically retry an exhausted turn.
+Non-interactive and delegated runs still report the limit as an error, so
+unfinished work is never presented as a successful final response.
+
 Tool execution preserves provider-visible order while allowing safe local
 parallelism. The core partitions each assistant tool-call batch into execution
 groups: consecutive read-only or isolated calls such as `ls`, `read`, `find`,

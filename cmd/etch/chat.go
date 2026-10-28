@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"etch/internal/core"
 )
 
 const (
@@ -135,6 +137,19 @@ func runChat(cfg cliConfig, stdin io.Reader, stdout io.Writer,
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
 				renderChatCancelNotice(composer, stdout)
+
+				continue
+			}
+			var limitErr *core.ToolRoundLimitError
+			if errors.As(err, &limitErr) {
+				sessionPath = limitErr.SessionPath
+				activeSessionID = limitErr.SessionID
+				renderChatNotice(
+					composer, stdout, fmt.Sprintf("• "+
+						"Paused after %d model/tool "+
+						"rounds. Send another prompt "+
+						"to continue.", limitErr.Limit),
+				)
 
 				continue
 			}

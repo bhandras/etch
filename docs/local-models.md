@@ -94,13 +94,19 @@ bin/etch chat --provider openai --model lfm3-1.7b \
   --base-url http://127.0.0.1:8081/v1 --openai-api chat \
   --openai-transport http --api-key unused \
   --reasoning-effort '' --reasoning-summary '' \
-  --max-tool-rounds 12 --auto-compact \
+  --max-tool-rounds 100 --auto-compact \
   --auto-compact-threshold-tokens 200000 --keep-recent-tokens 65536
 ```
 
 Start with short tasks and a bounded tool loop. Existing tools execute with
 the user's normal project access. A local model changes where inference runs;
 it does not add a tool sandbox.
+
+The LFM3 chat launcher allows 100 model/tool rounds per user turn. Reaching
+that limit pauses the turn and returns to the prompt in the same session.
+Send another prompt to continue from the saved tool results, or `/exit` to
+leave. Non-interactive prompt runs still return an error when the limit is
+reached before a final response.
 
 ## Measured results
 

@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -1746,7 +1747,7 @@ func TestRunTurnRequiresFinalAssistantResponse(t *testing.T) {
 			{
 				Type: model.EventToolCall,
 				ToolCall: model.ToolCall{
-					ID:   "call_1",
+					ID:   fmt.Sprintf("call_%d", i),
 					Name: tool.NameLS,
 					Arguments: `{"path":` +
 						quoteJSON(dir) +
@@ -1759,16 +1760,43 @@ func TestRunTurnRequiresFinalAssistantResponse(t *testing.T) {
 		})
 	}
 
-	_, err := RunTurn(context.Background(), TurnRequest{
+	client := &scriptedToolClient{events: scripts}
+	result, err := RunTurn(context.Background(), TurnRequest{
 		Prompt:        "keep using tools",
 		SessionDir:    t.TempDir(),
 		CWD:           dir,
-		Model:         &scriptedToolClient{events: scripts},
+		Model:         client,
 		Tools:         tool.DefaultRegistry(),
 		MaxToolRounds: customLimit,
 	})
-	if err == nil {
-		t.Fatal("expected tool round limit error")
+	var limitErr *ToolRoundLimitError
+	if !errors.As(err, &limitErr) {
+		t.Fatalf("expected typed tool round limit error, got %v", err)
+	}
+	if result != nil || limitErr.Limit != customLimit ||
+		limitErr.SessionPath == "" || limitErr.SessionID == "" {
+
+		t.Fatalf("invalid stopped turn: result=%#v error=%#v", result,
+			limitErr)
+	}
+	if len(client.requests) != customLimit {
+		t.Fatalf("model calls = %d, want %d", len(client.requests),
+			customLimit)
+	}
+	events, err := session.ReadAll(limitErr.SessionPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	toolResults := 0
+	for _, event := range events {
+		if event.Type == session.EventToolMessage {
+			toolResults++
+		}
+	}
+	if toolResults != customLimit ||
+		events[len(events)-1].Type != session.EventToolMessage {
+
+		t.Fatalf("tool results were not preserved: %#v", events)
 	}
 }
 

@@ -17,9 +17,16 @@ import (
 
 // renderChatCancelNotice prints the cancellation notice around the live prompt.
 func renderChatCancelNotice(composer *terminalChatInput, stdout io.Writer) {
+	renderChatNotice(composer, stdout, chatCancelNotice(stdout))
+}
+
+// renderChatNotice prints a turn stop notice without disrupting the composer.
+func renderChatNotice(composer *terminalChatInput, stdout io.Writer,
+	notice string) {
+
 	write := func() {
 		fmt.Fprintln(stdout)
-		fmt.Fprintln(stdout, chatCancelNotice(stdout))
+		fmt.Fprintln(stdout, notice)
 		fmt.Fprintln(stdout)
 	}
 	if composer == nil {

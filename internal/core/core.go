@@ -26,6 +26,26 @@ const (
 	DefaultAutoCompactThresholdTokens = 120000
 )
 
+// ToolRoundLimitError reports a bounded turn stop whose persisted session can
+// accept another user prompt without replaying completed tool calls.
+type ToolRoundLimitError struct {
+	// Limit is the number of model/tool rounds allowed for this turn.
+	Limit int
+
+	// SessionPath identifies the durable transcript containing the stopped
+	// turn.
+	SessionPath string
+
+	// SessionID identifies the session to continue after the stop.
+	SessionID string
+}
+
+// Error explains why the turn stopped without a final assistant response.
+func (e *ToolRoundLimitError) Error() string {
+	return fmt.Sprintf("tool round limit (%d) reached before final "+
+		"assistant response", e.Limit)
+}
+
 // TurnRequest contains everything needed to run one non-interactive turn.
 type TurnRequest struct {
 	// Prompt is the user text admitted into the session.
@@ -484,12 +504,12 @@ func RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
 			}
 		}
 	}
-	if assistant == nil {
-		return nil, fmt.Errorf("tool round limit exceeded")
-	}
 	if !finalReceived {
-		return nil, fmt.Errorf("tool round limit exceeded before " +
-			"final assistant response")
+		return nil, &ToolRoundLimitError{
+			Limit:       maxToolRounds,
+			SessionPath: store.Path(),
+			SessionID:   store.ID(),
+		}
 	}
 	if err := runTurnCompleteHooks(
 		ctx, req, store, user, assistant, text, toolCallCount,
