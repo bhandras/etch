@@ -17,14 +17,16 @@ and macOS 26.6.2:
 | Model size | 1,099,627,808 bytes |
 | Model SHA-256 | `3793e1e6e2266919d6e015287221b41100175a98eddaba92e111aed3b05c93c4` |
 | Engine | llama.cpp `b11946`, commit `8ca4060b7`, Metal GPU offload |
-| Server context | 32,768 tokens, one slot |
+| Server context | 262,144 tokens (256K), one slot |
 | Sampling | Temperature 0.1, top-k 50, repeat penalty 1.1 |
 | Reasoning | Disabled for these trials |
 
-The model supports up to 256K tokens, but this setup deliberately starts at
-32K. Increase the server context and etch's compaction threshold together after
-measuring memory and latency. Context includes instructions, tool schemas,
-history, and output. Token estimates used for compaction are approximate.
+The server uses the model's full 256K context. etch starts compaction at an
+estimated 200,000 tokens and retains about 65,536 recent tokens after
+compaction. The remaining capacity leaves room for output and token-estimation
+error. Context includes instructions, tool schemas, history, and output.
+Long prompts take more time to process; capacity does not establish retrieval
+accuracy across the whole window.
 
 ### Download
 
@@ -57,7 +59,7 @@ Keep this process running in a terminal. Ctrl-C stops it.
 .etch/local/runtime/llama-b11946/llama-server \
   -m .etch/local/models/LFM3-1.7B-Q4_K_M.gguf \
   --alias lfm3-1.7b --host 127.0.0.1 --port 8081 \
-  -c 32768 -np 1 -ngl 99 --jinja \
+  -c 262144 -np 1 -ngl 99 --jinja \
   --temp 0.1 --top-k 50 --repeat-penalty 1.1 \
   --reasoning off -n 2048
 ```
@@ -93,7 +95,7 @@ bin/etch chat --provider openai --model lfm3-1.7b \
   --openai-transport http --api-key unused \
   --reasoning-effort '' --reasoning-summary '' \
   --max-tool-rounds 12 --auto-compact \
-  --auto-compact-threshold-tokens 24000 --keep-recent-tokens 8000
+  --auto-compact-threshold-tokens 200000 --keep-recent-tokens 65536
 ```
 
 Start with short tasks and a bounded tool loop. Existing tools execute with
@@ -103,6 +105,14 @@ it does not add a tool sandbox.
 ## Measured results
 
 These are smoke tests, not an agent benchmark or a comparison of engines.
+The initial trials below used a 32K server context before the server was
+expanded to 256K.
+
+After expansion, the server's health, properties, and model metadata endpoints
+confirmed 262,144 context tokens and one slot. A synthetic 39,073-token prompt
+completed in 41.2 seconds and recovered all three markers placed at its start,
+middle, and end. This checks requests larger than the previous 32K limit; it
+does not test retrieval quality at the full 256K limit.
 
 | Trial | Observed result |
 | --- | --- |
