@@ -313,12 +313,28 @@ summary context as the model-visible state.
 Local or proxy-compatible endpoints can override the base URL:
 
 ```bash
-OPENAI_API_KEY=unused go run ./cmd/etch \
+go run ./cmd/etch \
   --provider openai \
   --base-url http://localhost:11434/v1 \
+  --openai-api chat \
+  --api-key unused \
   --model qwen2.5-coder \
   -p "say hello"
 ```
+
+Local inference stays outside the kernel. A server such as llama.cpp, MLX,
+Ollama, or Kapitsa owns model loading, quantization, chat templates, sampling,
+and parsing model-specific tool-call syntax. etch sends ordinary Chat
+Completions requests and consumes streamed text and structured tool calls.
+New model architectures therefore need support in the inference server, not a
+new core provider. The current message contract carries text; image and audio
+input would require a separate contract change.
+
+Local invocations should pass `--api-key unused` explicitly. Environment API
+keys have lower precedence than stored OAuth credentials, so an environment
+dummy key alone does not isolate a local run from Codex authentication.
+Use explicit Chat Completions mode and context limits that fit the server.
+The [local-model guide](local-models.md) records a verified LFM3 configuration.
 
 The CLI reads credential material from `OPENAI_API_KEY`,
 `OPENROUTER_API_KEY`, and `CODEX_ACCESS_TOKEN`. Non-secret settings such as

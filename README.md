@@ -171,11 +171,17 @@ OPENROUTER_API_KEY=... go run ./cmd/etch chat \
 Use a local or custom OpenAI-compatible endpoint:
 
 ```bash
-OPENAI_API_KEY=unused go run ./cmd/etch chat \
+go run ./cmd/etch chat \
   --provider openai \
   --base-url http://localhost:11434/v1 \
+  --openai-api chat \
+  --api-key unused \
   --model qwen2.5-coder
 ```
+
+Pass the dummy key explicitly so a stored Codex login cannot take precedence.
+See [Local models](docs/local-models.md) for a tested LFM3 setup on Apple
+Silicon, engine choices, and the limits observed in coding trials.
 
 ## Authentication
 
